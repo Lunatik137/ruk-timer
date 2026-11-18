@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "RukTimer",
+    "slug": "ruk-timer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#020617",
+    "splash": {
+      "backgroundColor": "#020617"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.lunatik137.ruktimer"
+    },
+    "android": {
+      "package": "com.lunatik137.ruktimer",
+      "adaptiveIcon": {
+        "backgroundColor": "#020617"
+      }
+    }
+  }
+}

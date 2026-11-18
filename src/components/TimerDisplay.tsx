@@ -76,9 +76,45 @@ export default function TimerDisplay({
       phaseRef.current = next;
       setPhase(next);
       onPhaseChange(next);
+
+      // Mobile haptic feedback on state transitions
+      if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+        if (next === "ready" || next === "ready_inspect") {
+          navigator.vibrate?.(20);
+        } else if (next === "just_stopped") {
+          navigator.vibrate?.(35);
+        }
+      }
     },
     [onPhaseChange]
   );
+
+  // Keep mobile screen awake during inspection and solving
+  useEffect(() => {
+    const active =
+      phase === "inspecting" ||
+      phase === "running" ||
+      phase === "holding" ||
+      phase === "ready";
+    if (!active || typeof navigator === "undefined" || !("wakeLock" in navigator)) {
+      return;
+    }
+
+    let sentinel: { release: () => Promise<void> } | null = null;
+    const nav = navigator as unknown as {
+      wakeLock: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> };
+    };
+    nav.wakeLock
+      .request("screen")
+      .then((lock) => {
+        sentinel = lock;
+      })
+      .catch(() => {});
+
+    return () => {
+      sentinel?.release().catch(() => {});
+    };
+  }, [phase]);
 
   // Sync display when lastSolve updates externally (e.g. session change or delete)
   useEffect(() => {

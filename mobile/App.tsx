@@ -1,0 +1,1673 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StatusBar as RNStatusBar,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { StatusBar } from "expo-status-bar";
+import * as Haptics from "expo-haptics";
+import { useKeepAwake } from "expo-keep-awake";
+import CubeNetNative from "./src/components/CubeNetNative";
+import { generateScramble } from "./src/lib/scrambles";
+import {
+  calculateSessionStats,
+  formatSolveDisplay,
+  formatTimeMs,
+  getEffectiveMs,
+} from "./src/lib/stats";
+import {
+  createDefaultSession,
+  fetchCloudMobileData,
+  generateUuid,
+  loadGuestMobileData,
+  loadMobileSettings,
+  saveGuestMobileSessions,
+  saveGuestMobileSolves,
+  saveMobileSettings,
+  syncGuestMobileToCloud,
+} from "./src/lib/storage";
+import { supabase } from "./src/lib/supabase";
+import {
+  CubeSession,
+  DEFAULT_MOBILE_SETTINGS,
+  MobileSettings,
+  PenaltyType,
+  PUZZLES,
+  PuzzleType,
+  Solve,
+  SolveWithRollingStats,
+} from "./src/types/cubing";
+
+type TimerPhase =
+  | "idle"
+  | "ready_inspect"
+  | "inspecting"
+  | "holding"
+  | "ready"
+  | "running"
+  | "just_stopped";
+
+export default function App() {
+  useKeepAwake();
+
+  const [readyApp, setReadyApp] = useState(false);
+  const [tab, setTab] = useState<"timer" | "cube" | "history" | "stats">("timer");
+
+  // Data state
+  const [settings, setSettings] = useState<MobileSettings>(DEFAULT_MOBILE_SETTINGS);
+  const [sessions, setSessions] = useState<CubeSession[]>([createDefaultSession()]);
+  const [activeSessionId, setActiveSessionId] = useState<string>("");
+  const [solves, setSolves] = useState<Solve[]>([]);
+  const [scramble, setScramble] = useState<string>("");
+
+  // Auth & Cloud state
+  const [userId, setUserId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [emailInput, setEmailInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
+  // Modals
+  const [sessionModalOpen, setSessionModalOpen] = useState(false);
+  const [newSessionName, setNewSessionName] = useState("");
+  const [selectedSolve, setSelectedSolve] = useState<SolveWithRollingStats | null>(
+    null
+  );
+  const [commentDraft, setCommentDraft] = useState("");
+
+  // Timer state
+  const [phase, setPhase] = useState<TimerPhase>("idle");
+  const [displayMs, setDisplayMs] = useState<number>(0);
+  const [inspectLeft, setInspectLeft] = useState<number>(15);
+  const [inspectPenalty, setInspectPenalty] = useState<PenaltyType>("OK");
+  const [isNewPb, setIsNewPb] = useState(false);
+
+  const phaseRef = useRef<TimerPhase>("idle");
+  const startMsRef = useRef<number>(0);
+  const inspectStartRef = useRef<number>(0);
+  const inspectPenaltyRef = useRef<PenaltyType>("OK");
+  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const inspectIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const triggerHaptic = useCallback(
+    (kind: "light" | "medium" | "success") => {
+      if (!settings.hapticsEnabled) return;
+      if (kind === "success") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+          () => {}
+        );
+      } else if (kind === "medium") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      } else {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      }
+    },
+    [settings.hapticsEnabled]
+  );
+
+  const hydrateCloud = useCallback(async (uid: string, email: string | null) => {
+    setUserId(uid);
+    setUserEmail(email);
+    setSyncing(true);
+    const res = await fetchCloudMobileData(uid);
+    setSyncing(false);
+    if (res.error) {
+      Alert.alert("Lỗi tải Cloud DB", res.error);
+      return;
+    }
+    setSessions(res.sessions);
+    setSolves(res.solves);
+    const target = res.sessions[0];
+    if (target) {
+      setActiveSessionId(target.id);
+      setScramble(generateScramble(target.puzzle));
+    }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const [loadedSettings, guest] = await Promise.all([
+        loadMobileSettings(),
+        loadGuestMobileData(),
+      ]);
+      setSettings(loadedSettings);
+      setSessions(guest.sessions);
+      setSolves(guest.solves);
+      setActiveSessionId(guest.sessions[0].id);
+      setScramble(generateScramble(guest.sessions[0].puzzle));
+      setReadyApp(true);
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (session?.user) {
+        hydrateCloud(session.user.id, session.user.email ?? null);
+      }
+    })();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user && event === "SIGNED_IN") {
+        hydrateCloud(session.user.id, session.user.email ?? null);
+      } else if (event === "SIGNED_OUT") {
+        setUserId(null);
+        setUserEmail(null);
+        loadGuestMobileData().then((g) => {
+          setSessions(g.sessions);
+          setSolves(g.solves);
+          setActiveSessionId(g.sessions[0].id);
+          setScramble(generateScramble(g.sessions[0].puzzle));
+        });
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [hydrateCloud]);
+
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId) || sessions[0],
+    [sessions, activeSessionId]
+  );
+
+  const sessionSolves = useMemo(
+    () =>
+      solves
+        .filter((s) => s.session_id === activeSession.id)
+        .sort(
+          (a, b) =>
+            new Date(a.solved_at).getTime() - new Date(b.solved_at).getTime()
+        ),
+    [solves, activeSession.id]
+  );
+
+  const { summary, enrichedSolves } = useMemo(
+    () => calculateSessionStats(sessionSolves),
+    [sessionSolves]
+  );
+
+  const lastSolve =
+    sessionSolves.length > 0 ? sessionSolves[sessionSolves.length - 1] : null;
+
+  // ==========================================================================
+  // CRUD Operations (Cloud + Guest AsyncStorage)
+  // ==========================================================================
+  const handleRecordSolve = useCallback(
+    async (timeMs: number, initialPenalty: PenaltyType) => {
+      const prevBest = summary.bestSingle;
+      const newSolve: Solve = {
+        id: generateUuid(),
+        user_id: userId ?? undefined,
+        session_id: activeSession.id,
+        puzzle: activeSession.puzzle,
+        time_ms: timeMs,
+        penalty: initialPenalty,
+        scramble,
+        comment: "",
+        solved_at: new Date().toISOString(),
+      };
+
+      const eff = getEffectiveMs(newSolve);
+      const brokePb =
+        typeof eff === "number" &&
+        sessionSolves.length >= 1 &&
+        (prevBest === null || eff < prevBest);
+      setIsNewPb(brokePb);
+      if (brokePb) triggerHaptic("success");
+
+      setSolves((prev) => {
+        const next = [...prev, newSolve];
+        if (!userId) saveGuestMobileSolves(next);
+        return next;
+      });
+
+      setScramble(generateScramble(activeSession.puzzle));
+
+      if (userId) {
+        setSyncing(true);
+        await supabase.from("solves").insert({
+          id: newSolve.id,
+          user_id: userId,
+          session_id: newSolve.session_id,
+          puzzle: newSolve.puzzle,
+          time_ms: newSolve.time_ms,
+          penalty: newSolve.penalty,
+          scramble: newSolve.scramble,
+          comment: newSolve.comment,
+          solved_at: newSolve.solved_at,
+        });
+        setSyncing(false);
+      }
+    },
+    [
+      activeSession.id,
+      activeSession.puzzle,
+      scramble,
+      sessionSolves.length,
+      summary.bestSingle,
+      triggerHaptic,
+      userId,
+    ]
+  );
+
+  const handleUpdatePenalty = async (solveId: string, penalty: PenaltyType) => {
+    setSolves((prev) => {
+      const next = prev.map((s) => (s.id === solveId ? { ...s, penalty } : s));
+      if (!userId) saveGuestMobileSolves(next);
+      return next;
+    });
+    if (selectedSolve?.id === solveId) {
+      setSelectedSolve((prev) => (prev ? { ...prev, penalty } : null));
+    }
+    if (userId) {
+      await supabase
+        .from("solves")
+        .update({ penalty })
+        .eq("id", solveId)
+        .eq("user_id", userId);
+    }
+  };
+
+  const handleUpdateComment = async (solveId: string, comment: string) => {
+    setSolves((prev) => {
+      const next = prev.map((s) => (s.id === solveId ? { ...s, comment } : s));
+      if (!userId) saveGuestMobileSolves(next);
+      return next;
+    });
+    if (userId) {
+      await supabase
+        .from("solves")
+        .update({ comment })
+        .eq("id", solveId)
+        .eq("user_id", userId);
+    }
+  };
+
+  const handleDeleteSolve = async (solveId: string) => {
+    setIsNewPb(false);
+    setSolves((prev) => {
+      const next = prev.filter((s) => s.id !== solveId);
+      if (!userId) saveGuestMobileSolves(next);
+      return next;
+    });
+    if (selectedSolve?.id === solveId) setSelectedSolve(null);
+    if (userId) {
+      await supabase
+        .from("solves")
+        .delete()
+        .eq("id", solveId)
+        .eq("user_id", userId);
+    }
+  };
+
+  const handleChangePuzzle = async (puzzle: PuzzleType) => {
+    const nextSessions = sessions.map((s) =>
+      s.id === activeSession.id ? { ...s, puzzle } : s
+    );
+    setSessions(nextSessions);
+    setIsNewPb(false);
+    setScramble(generateScramble(puzzle));
+    if (userId) {
+      await supabase
+        .from("cube_sessions")
+        .update({ puzzle })
+        .eq("id", activeSession.id)
+        .eq("user_id", userId);
+    } else {
+      await saveGuestMobileSessions(nextSessions);
+    }
+  };
+
+  const handleCreateSession = async () => {
+    const name = newSessionName.trim() || `Session ${sessions.length + 1}`;
+    const created: CubeSession = {
+      id: generateUuid(),
+      user_id: userId ?? undefined,
+      name,
+      puzzle: activeSession.puzzle,
+      created_at: new Date().toISOString(),
+    };
+    const next = [...sessions, created];
+    setSessions(next);
+    setActiveSessionId(created.id);
+    setNewSessionName("");
+    setSessionModalOpen(false);
+    setScramble(generateScramble(created.puzzle));
+
+    if (userId) {
+      await supabase.from("cube_sessions").insert({
+        id: created.id,
+        user_id: userId,
+        name: created.name,
+        puzzle: created.puzzle,
+        created_at: created.created_at,
+      });
+    } else {
+      await saveGuestMobileSessions(next);
+    }
+  };
+
+  // ==========================================================================
+  // High-Precision Touch Timer Engine
+  // ==========================================================================
+  const setPhaseBoth = (next: TimerPhase) => {
+    phaseRef.current = next;
+    setPhase(next);
+  };
+
+  const stopAllTimers = () => {
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    if (inspectIntervalRef.current) {
+      clearInterval(inspectIntervalRef.current);
+      inspectIntervalRef.current = null;
+    }
+  };
+
+  const startInspection = () => {
+    stopAllTimers();
+    inspectStartRef.current = Date.now();
+    inspectPenaltyRef.current = "OK";
+    setInspectPenalty("OK");
+    setInspectLeft(15);
+    setPhaseBoth("inspecting");
+
+    inspectIntervalRef.current = setInterval(() => {
+      const sec = (Date.now() - inspectStartRef.current) / 1000;
+      if (sec < 15) {
+        setInspectLeft(Math.ceil(15 - sec));
+        inspectPenaltyRef.current = "OK";
+        setInspectPenalty("OK");
+      } else if (sec < 17) {
+        setInspectLeft(0);
+        inspectPenaltyRef.current = "+2";
+        setInspectPenalty("+2");
+      } else {
+        setInspectLeft(-1);
+        inspectPenaltyRef.current = "DNF";
+        setInspectPenalty("DNF");
+      }
+    }, 60);
+  };
+
+  const startRunning = () => {
+    stopAllTimers();
+    startMsRef.current = Date.now();
+    setDisplayMs(0);
+    setPhaseBoth("running");
+    triggerHaptic("light");
+
+    timerIntervalRef.current = setInterval(() => {
+      setDisplayMs(Date.now() - startMsRef.current);
+    }, 16);
+  };
+
+  const onPadPressIn = () => {
+    const cur = phaseRef.current;
+
+    if (cur === "running") {
+      const finalMs = Math.max(10, Date.now() - startMsRef.current);
+      stopAllTimers();
+      setDisplayMs(finalMs);
+      const pen = settings.inspectionEnabled ? inspectPenaltyRef.current : "OK";
+      inspectPenaltyRef.current = "OK";
+      setInspectPenalty("OK");
+      setPhaseBoth("just_stopped");
+      triggerHaptic("medium");
+      handleRecordSolve(finalMs, pen);
+      return;
+    }
+
+    if (cur === "idle") {
+      if (settings.inspectionEnabled) {
+        setPhaseBoth("ready_inspect");
+        triggerHaptic("light");
+      } else if (settings.holdDelayMs <= 0) {
+        setPhaseBoth("ready");
+        triggerHaptic("medium");
+      } else {
+        setPhaseBoth("holding");
+        holdTimeoutRef.current = setTimeout(() => {
+          if (phaseRef.current === "holding") {
+            setPhaseBoth("ready");
+            triggerHaptic("medium");
+          }
+        }, settings.holdDelayMs);
+      }
+      return;
+    }
+
+    if (cur === "inspecting") {
+      if (settings.holdDelayMs <= 0) {
+        setPhaseBoth("ready");
+        triggerHaptic("medium");
+      } else {
+        setPhaseBoth("holding");
+        holdTimeoutRef.current = setTimeout(() => {
+          if (phaseRef.current === "holding") {
+            setPhaseBoth("ready");
+            triggerHaptic("medium");
+          }
+        }, settings.holdDelayMs);
+      }
+    }
+  };
+
+  const onPadPressOut = () => {
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    const cur = phaseRef.current;
+
+    if (cur === "just_stopped") {
+      setPhaseBoth("idle");
+      return;
+    }
+    if (cur === "ready_inspect") {
+      startInspection();
+      return;
+    }
+    if (cur === "holding") {
+      if (settings.inspectionEnabled && inspectIntervalRef.current) {
+        setPhaseBoth("inspecting");
+      } else {
+        setPhaseBoth("idle");
+      }
+      return;
+    }
+    if (cur === "ready") {
+      startRunning();
+    }
+  };
+
+  // ==========================================================================
+  // Cloud Auth Handlers
+  // ==========================================================================
+  const handleEmailAuth = async () => {
+    if (!emailInput.trim() || passwordInput.length < 6) {
+      Alert.alert("Thông báo", "Vui lòng nhập email và mật khẩu từ 6 ký tự.");
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      if (authMode === "signin") {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: emailInput.trim(),
+          password: passwordInput,
+        });
+        if (error) Alert.alert("Đăng nhập thất bại", error.message);
+        else {
+          setEmailInput("");
+          setPasswordInput("");
+        }
+      } else {
+        const { data, error } = await supabase.auth.signUp({
+          email: emailInput.trim(),
+          password: passwordInput,
+        });
+        if (error) Alert.alert("Đăng ký thất bại", error.message);
+        else if (!data.session) {
+          Alert.alert(
+            "Kiểm tra Email",
+            "Đã gửi link xác nhận tới hộp thư của bạn!"
+          );
+        }
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSyncGuest = async () => {
+    if (!userId) return;
+    setSyncing(true);
+    const res = await syncGuestMobileToCloud(userId);
+    if (res.error) {
+      setSyncing(false);
+      Alert.alert("Lỗi đồng bộ", res.error);
+      return;
+    }
+    await hydrateCloud(userId, userEmail);
+    Alert.alert("Thành công", `Đã đồng bộ ${res.count} lượt giải lên Cloud!`);
+  };
+
+  const updateSettings = (patch: Partial<MobileSettings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      saveMobileSettings(next);
+      return next;
+    });
+  };
+
+  if (!readyApp) {
+    return (
+      <View style={styles.loadingScreen}>
+        <ActivityIndicator color="#22d3ee" size="large" />
+      </View>
+    );
+  }
+
+  const isBusySolving =
+    phase === "running" ||
+    phase === "inspecting" ||
+    phase === "holding" ||
+    phase === "ready";
+
+  const clockColor =
+    phase === "holding"
+      ? "#fb7185"
+      : phase === "ready" || phase === "ready_inspect"
+      ? "#34d399"
+      : phase === "inspecting"
+      ? "#fcd34d"
+      : "#f8fafc";
+
+  const renderMainDigits = () => {
+    if (
+      phase === "inspecting" ||
+      ((phase === "holding" || phase === "ready") && inspectIntervalRef.current)
+    ) {
+      if (inspectPenalty === "DNF") return "DNF";
+      if (inspectPenalty === "+2") return "+2";
+      return String(inspectLeft);
+    }
+    if (phase === "running") return formatTimeMs(displayMs, settings.decimals);
+    if (phase === "holding" || phase === "ready" || phase === "ready_inspect") {
+      return formatTimeMs(0, settings.decimals);
+    }
+    if (lastSolve) return formatSolveDisplay(lastSolve, settings.decimals);
+    return formatTimeMs(0, settings.decimals);
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar style="light" />
+
+      {/* Top Header (hidden during active solve for zero distraction) */}
+      {!isBusySolving && (
+        <View style={styles.header}>
+          <View style={styles.brandRow}>
+            <Text style={styles.brandText}>
+              Ruk<Text style={{ color: "#22d3ee" }}>Timer</Text>
+            </Text>
+            <View
+              style={[
+                styles.syncBadge,
+                { backgroundColor: userId ? "#064e3b" : "#451a03" },
+              ]}
+            >
+              <Text
+                style={{
+                  fontSize: 10,
+                  fontWeight: "700",
+                  color: userId ? "#6ee7b7" : "#fcd34d",
+                }}
+              >
+                {syncing ? "Syncing..." : userId ? "Cloud" : "Guest"}
+              </Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={styles.sessionBtn}
+            onPress={() => setSessionModalOpen(true)}
+          >
+            <Text style={styles.sessionBtnText} numberOfLines={1}>
+              {activeSession.name} ({activeSession.puzzle.toUpperCase()}) ▾
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* TAB 1: TIMER */}
+      {tab === "timer" && (
+        <View style={styles.flex1}>
+          {!isBusySolving && (
+            <>
+              {/* Horizontal Puzzle Selector */}
+              <View style={{ height: 42 }}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.puzzleChipsRow}
+                >
+                  {PUZZLES.map((p) => {
+                    const selected = activeSession.puzzle === p.id;
+                    return (
+                      <TouchableOpacity
+                        key={p.id}
+                        onPress={() => handleChangePuzzle(p.id)}
+                        style={[
+                          styles.puzzleChip,
+                          selected && styles.puzzleChipActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.puzzleChipText,
+                            selected && styles.puzzleChipTextActive,
+                          ]}
+                        >
+                          {p.shortLabel}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              {/* Scramble Box */}
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setScramble(generateScramble(activeSession.puzzle))}
+                style={styles.scrambleCard}
+              >
+                <Text style={styles.scrambleText}>{scramble}</Text>
+                <Text style={styles.scrambleHint}>
+                  Chạm vào scramble để tạo công thức mới
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* Giant Touch Pad */}
+          <Pressable
+            onPressIn={onPadPressIn}
+            onPressOut={onPadPressOut}
+            style={styles.touchPad}
+          >
+            {isNewPb && !isBusySolving && lastSolve && (
+              <View style={styles.pbPill}>
+                <Text style={styles.pbPillText}>★ Kỷ lục mới (PB)!</Text>
+              </View>
+            )}
+
+            <Text style={[styles.clockDigits, { color: clockColor }]}>
+              {renderMainDigits()}
+            </Text>
+
+            <Text style={styles.padHint}>
+              {phase === "running"
+                ? "Chạm bất kỳ đâu để DỪNG"
+                : phase === "holding"
+                ? "Tiếp tục giữ..."
+                : phase === "ready"
+                ? "THẢ TAY ĐỂ BẮT ĐẦU!"
+                : phase === "inspecting"
+                ? "Chạm giữ màn hình để bắt đầu giải"
+                : settings.inspectionEnabled
+                ? "Chạm 1 lần để bắt đầu 15s Inspection"
+                : "Chạm giữ màn hình để sẵn sàng"}
+            </Text>
+
+            {!isBusySolving && (
+              <View style={styles.inlineAvgRow}>
+                <Text style={styles.inlineAvgLabel}>
+                  Ao5:{" "}
+                  <Text style={styles.inlineAvgVal}>
+                    {formatTimeMs(summary.currentAo5, settings.decimals)}
+                  </Text>
+                </Text>
+                <Text style={styles.inlineAvgDivider}>|</Text>
+                <Text style={styles.inlineAvgLabel}>
+                  Ao12:{" "}
+                  <Text style={[styles.inlineAvgVal, { color: "#a5b4fc" }]}>
+                    {formatTimeMs(summary.currentAo12, settings.decimals)}
+                  </Text>
+                </Text>
+              </View>
+            )}
+          </Pressable>
+
+          {/* Post-Solve Quick Bar */}
+          {!isBusySolving && lastSolve && (
+            <View style={styles.postSolveBar}>
+              <TouchableOpacity
+                onPress={() =>
+                  handleUpdatePenalty(
+                    lastSolve.id,
+                    lastSolve.penalty === "+2" ? "OK" : "+2"
+                  )
+                }
+                style={[
+                  styles.actionPill,
+                  lastSolve.penalty === "+2" && { backgroundColor: "#f59e0b" },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.actionPillText,
+                    lastSolve.penalty === "+2" && { color: "#020617" },
+                  ]}
+                >
+                  +2
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() =>
+                  handleUpdatePenalty(
+                    lastSolve.id,
+                    lastSolve.penalty === "DNF" ? "OK" : "DNF"
+                  )
+                }
+                style={[
+                  styles.actionPill,
+                  lastSolve.penalty === "DNF" && { backgroundColor: "#ef4444" },
+                ]}
+              >
+                <Text style={styles.actionPillText}>DNF</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  const enriched = enrichedSolves[enrichedSolves.length - 1];
+                  if (enriched) {
+                    setCommentDraft(enriched.comment || "");
+                    setSelectedSolve(enriched);
+                  }
+                }}
+                style={styles.actionPill}
+              >
+                <Text style={styles.actionPillText}>Chi tiết / Ghi chú</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() =>
+                  Alert.alert("Xóa lượt giải?", "Xóa lượt giải vừa rồi?", [
+                    { text: "Hủy", style: "cancel" },
+                    {
+                      text: "Xóa",
+                      style: "destructive",
+                      onPress: () => handleDeleteSolve(lastSolve.id),
+                    },
+                  ])
+                }
+                style={styles.actionPill}
+              >
+                <Text style={[styles.actionPillText, { color: "#fda4af" }]}>
+                  Xóa
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* TAB 2: 2D CUBE NET */}
+      {tab === "cube" && (
+        <ScrollView contentContainerStyle={styles.cubeTabContainer}>
+          <Text style={styles.sectionTitle}>
+            Hình trải 2D Scramble ({activeSession.puzzle.toUpperCase()})
+          </Text>
+          <Text style={styles.scrambleText}>{scramble}</Text>
+          <View style={{ marginVertical: 18 }}>
+            <CubeNetNative puzzle={activeSession.puzzle} scramble={scramble} />
+          </View>
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() => setScramble(generateScramble(activeSession.puzzle))}
+          >
+            <Text style={styles.primaryBtnText}>Đổi Scramble mới</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      )}
+
+      {/* TAB 3: HISTORY */}
+      {tab === "history" && (
+        <View style={styles.flex1}>
+          <View style={styles.historyHeader}>
+            <Text style={styles.sectionTitle}>
+              Lịch sử ({enrichedSolves.length} lượt)
+            </Text>
+          </View>
+
+          <FlatList
+            data={[...enrichedSolves].reverse()}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={{ paddingBottom: 24 }}
+            ListEmptyComponent={
+              <Text style={styles.emptyText}>
+                Chưa có lượt giải nào trong session này.
+              </Text>
+            }
+            renderItem={({ item }) => {
+              const isPb = item.id === summary.bestSingleSolveId;
+              return (
+                <TouchableOpacity
+                  onPress={() => {
+                    setCommentDraft(item.comment || "");
+                    setSelectedSolve(item);
+                  }}
+                  style={styles.historyRow}
+                >
+                  <Text style={styles.historyIndex}>#{item.indexNumber}</Text>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Text
+                        style={[
+                          styles.historyTime,
+                          item.penalty === "DNF" && { color: "#fb7185" },
+                          item.penalty === "+2" && { color: "#fcd34d" },
+                          isPb && { color: "#34d399" },
+                        ]}
+                      >
+                        {formatSolveDisplay(item, settings.decimals)}
+                      </Text>
+                      {isPb && <Text style={styles.pbMiniTag}>PB</Text>}
+                    </View>
+                    {item.comment ? (
+                      <Text style={styles.historyComment} numberOfLines={1}>
+                        “{item.comment}”
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Text style={styles.historyAo5}>
+                    Ao5: {formatTimeMs(item.rollingAo5, settings.decimals)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </View>
+      )}
+
+      {/* TAB 4: STATS, CLOUD AUTH & SETTINGS */}
+      {tab === "stats" && (
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+          {/* Stats Summary Cards */}
+          <View style={styles.kpiRow}>
+            <View style={styles.kpiCard}>
+              <Text style={styles.kpiLabel}>Hoàn thành</Text>
+              <Text style={styles.kpiValue}>
+                {summary.validCount}/{summary.totalCount}
+              </Text>
+            </View>
+            <View style={styles.kpiCard}>
+              <Text style={styles.kpiLabel}>Mean</Text>
+              <Text style={[styles.kpiValue, { color: "#22d3ee" }]}>
+                {formatTimeMs(summary.mean, settings.decimals)}
+              </Text>
+            </View>
+            <View style={styles.kpiCard}>
+              <Text style={styles.kpiLabel}>Độ lệch σ</Text>
+              <Text style={styles.kpiValue}>
+                {formatTimeMs(summary.stdDev, settings.decimals)}
+              </Text>
+            </View>
+          </View>
+
+          {/* WCA Table */}
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Bảng thống kê chuẩn WCA</Text>
+            {[
+              { l: "Single", c: summary.currentSingle, b: summary.bestSingle },
+              { l: "Mo3", c: summary.currentMo3, b: summary.bestMo3 },
+              { l: "Ao5", c: summary.currentAo5, b: summary.bestAo5 },
+              { l: "Ao12", c: summary.currentAo12, b: summary.bestAo12 },
+              { l: "Ao50", c: summary.currentAo50, b: summary.bestAo50 },
+              { l: "Ao100", c: summary.currentAo100, b: summary.bestAo100 },
+            ].map((r) => (
+              <View key={r.l} style={styles.statLine}>
+                <Text style={styles.statLineLabel}>{r.l}</Text>
+                <Text style={styles.statLineCur}>
+                  {formatTimeMs(r.c, settings.decimals)}
+                </Text>
+                <Text style={styles.statLineBest}>
+                  {formatTimeMs(r.b, settings.decimals)}
+                </Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Cloud Account Sync */}
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>
+              Tài khoản Cloud (Đồng bộ với Web)
+            </Text>
+            {userId ? (
+              <View style={{ gap: 10, marginTop: 8 }}>
+                <Text style={{ color: "#cbd5e1", fontSize: 13 }}>
+                  Đang đăng nhập:{" "}
+                  <Text style={{ color: "#22d3ee", fontWeight: "700" }}>
+                    {userEmail}
+                  </Text>
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <TouchableOpacity
+                    style={[styles.primaryBtn, { flex: 1 }]}
+                    onPress={() => hydrateCloud(userId, userEmail)}
+                  >
+                    <Text style={styles.primaryBtnText}>Làm mới từ Cloud</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.primaryBtn,
+                      { flex: 1, backgroundColor: "#f59e0b" },
+                    ]}
+                    onPress={handleSyncGuest}
+                  >
+                    <Text style={styles.primaryBtnText}>Đẩy lượt Guest</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.actionPill,
+                    { alignSelf: "flex-start", marginTop: 4 },
+                  ]}
+                  onPress={() => supabase.auth.signOut()}
+                >
+                  <Text style={{ color: "#fda4af", fontSize: 12, fontWeight: "600" }}>
+                    Đăng xuất
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={{ gap: 10, marginTop: 8 }}>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => setAuthMode("signin")}
+                    style={[
+                      styles.actionPill,
+                      authMode === "signin" && { backgroundColor: "#22d3ee" },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.actionPillText,
+                        authMode === "signin" && { color: "#020617" },
+                      ]}
+                    >
+                      Đăng nhập
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setAuthMode("signup")}
+                    style={[
+                      styles.actionPill,
+                      authMode === "signup" && { backgroundColor: "#22d3ee" },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.actionPillText,
+                        authMode === "signup" && { color: "#020617" },
+                      ]}
+                    >
+                      Đăng ký
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TextInput
+                  value={emailInput}
+                  onChangeText={setEmailInput}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  placeholder="Email tài khoản..."
+                  placeholderTextColor="#64748b"
+                  style={styles.input}
+                />
+                <TextInput
+                  value={passwordInput}
+                  onChangeText={setPasswordInput}
+                  secureTextEntry
+                  placeholder="Mật khẩu (tối thiểu 6 ký tự)..."
+                  placeholderTextColor="#64748b"
+                  style={styles.input}
+                />
+                <TouchableOpacity
+                  disabled={authLoading}
+                  onPress={handleEmailAuth}
+                  style={styles.primaryBtn}
+                >
+                  <Text style={styles.primaryBtnText}>
+                    {authLoading
+                      ? "Đang xử lý..."
+                      : authMode === "signin"
+                      ? "Đăng nhập Cloud"
+                      : "Tạo tài khoản"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
+          {/* Mobile Settings */}
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Cài đặt bấm giờ</Text>
+
+            <View style={styles.settingRow}>
+              <Text style={styles.settingLabel}>WCA Inspection (15s)</Text>
+              <Switch
+                value={settings.inspectionEnabled}
+                onValueChange={(v) => updateSettings({ inspectionEnabled: v })}
+              />
+            </View>
+
+            <View style={styles.settingRow}>
+              <Text style={styles.settingLabel}>Rung phản hồi (Haptics)</Text>
+              <Switch
+                value={settings.hapticsEnabled}
+                onValueChange={(v) => updateSettings({ hapticsEnabled: v })}
+              />
+            </View>
+
+            <View style={styles.settingRow}>
+              <Text style={styles.settingLabel}>Hiển thị 3 số lẻ (0.000)</Text>
+              <Switch
+                value={settings.decimals === 3}
+                onValueChange={(v) => updateSettings({ decimals: v ? 3 : 2 })}
+              />
+            </View>
+
+            <View style={[styles.settingRow, { borderBottomWidth: 0 }]}>
+              <Text style={styles.settingLabel}>Độ trễ chạm giữ</Text>
+              <View style={{ flexDirection: "row", gap: 6 }}>
+                {[0, 300, 550].map((ms) => (
+                  <TouchableOpacity
+                    key={ms}
+                    onPress={() => updateSettings({ holdDelayMs: ms })}
+                    style={[
+                      styles.actionPill,
+                      settings.holdDelayMs === ms && {
+                        backgroundColor: "#22d3ee",
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.actionPillText,
+                        settings.holdDelayMs === ms && { color: "#020617" },
+                      ]}
+                    >
+                      {ms === 0 ? "0s" : `${ms / 1000}s`}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
+        </ScrollView>
+      )}
+
+      {/* Bottom Tab Navigation */}
+      {!isBusySolving && (
+        <View style={styles.bottomBar}>
+          {(
+            [
+              { id: "timer", label: "⏱ Timer" },
+              { id: "cube", label: "🧊 2D Cube" },
+              { id: "history", label: `📋 Lịch sử (${enrichedSolves.length})` },
+              { id: "stats", label: "📊 Thống kê" },
+            ] as const
+          ).map((item) => {
+            const active = tab === item.id;
+            return (
+              <TouchableOpacity
+                key={item.id}
+                onPress={() => setTab(item.id)}
+                style={styles.bottomTabBtn}
+              >
+                <Text
+                  style={[
+                    styles.bottomTabText,
+                    active && styles.bottomTabTextActive,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Session Switcher Modal */}
+      <Modal
+        visible={sessionModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSessionModalOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalBox}>
+            <Text style={styles.sectionTitle}>Chọn hoặc tạo Session</Text>
+            <ScrollView style={{ maxHeight: 220, marginVertical: 10 }}>
+              {sessions.map((s) => (
+                <TouchableOpacity
+                  key={s.id}
+                  onPress={() => {
+                    setActiveSessionId(s.id);
+                    setScramble(generateScramble(s.puzzle));
+                    setSessionModalOpen(false);
+                  }}
+                  style={[
+                    styles.sessionOption,
+                    s.id === activeSession.id && {
+                      borderColor: "#22d3ee",
+                      backgroundColor: "rgba(34,211,238,0.12)",
+                    },
+                  ]}
+                >
+                  <Text style={{ color: "#f8fafc", fontWeight: "600" }}>
+                    {s.name} ({s.puzzle.toUpperCase()})
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TextInput
+                value={newSessionName}
+                onChangeText={setNewSessionName}
+                placeholder="Tên session mới..."
+                placeholderTextColor="#64748b"
+                style={[styles.input, { flex: 1 }]}
+              />
+              <TouchableOpacity
+                onPress={handleCreateSession}
+                style={styles.primaryBtn}
+              >
+                <Text style={styles.primaryBtnText}>+ Tạo</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => setSessionModalOpen(false)}
+              style={{ marginTop: 14, alignSelf: "center" }}
+            >
+              <Text style={{ color: "#94a3b8", fontSize: 13 }}>Đóng</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Solve Detail Modal */}
+      <Modal
+        visible={!!selectedSolve}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedSolve(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          {selectedSolve && (
+            <View style={styles.modalBox}>
+              <Text style={styles.sectionTitle}>
+                Lượt giải #{selectedSolve.indexNumber} (
+                {selectedSolve.puzzle.toUpperCase()})
+              </Text>
+              <Text style={[styles.clockDigits, { fontSize: 42, marginVertical: 6 }]}>
+                {formatSolveDisplay(selectedSolve, settings.decimals)}
+              </Text>
+              <Text style={[styles.scrambleText, { marginVertical: 8 }]}>
+                {selectedSolve.scramble}
+              </Text>
+              <View style={{ alignItems: "center", marginVertical: 6 }}>
+                <CubeNetNative
+                  puzzle={selectedSolve.puzzle}
+                  scramble={selectedSolve.scramble}
+                  compact
+                />
+              </View>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "center",
+                  gap: 8,
+                  marginVertical: 10,
+                }}
+              >
+                {(["OK", "+2", "DNF"] as PenaltyType[]).map((pen) => (
+                  <TouchableOpacity
+                    key={pen}
+                    onPress={() => handleUpdatePenalty(selectedSolve.id, pen)}
+                    style={[
+                      styles.actionPill,
+                      selectedSolve.penalty === pen && {
+                        backgroundColor: "#22d3ee",
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.actionPillText,
+                        selectedSolve.penalty === pen && { color: "#020617" },
+                      ]}
+                    >
+                      {pen}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <TextInput
+                  value={commentDraft}
+                  onChangeText={setCommentDraft}
+                  placeholder="Ghi chú lượt giải..."
+                  placeholderTextColor="#64748b"
+                  style={[styles.input, { flex: 1 }]}
+                />
+                <TouchableOpacity
+                  onPress={() => {
+                    handleUpdateComment(selectedSolve.id, commentDraft.trim());
+                    setSelectedSolve(null);
+                  }}
+                  style={styles.primaryBtn}
+                >
+                  <Text style={styles.primaryBtnText}>Lưu</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  marginTop: 14,
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => handleDeleteSolve(selectedSolve.id)}
+                >
+                  <Text style={{ color: "#fb7185", fontWeight: "600" }}>
+                    Xóa lượt này
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setSelectedSolve(null)}>
+                  <Text style={{ color: "#94a3b8" }}>Đóng</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#020617",
+    paddingTop: Platform.OS === "android" ? RNStatusBar.currentHeight || 0 : 0,
+  },
+  flex1: { flex: 1 },
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: "#020617",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.08)",
+  },
+  brandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  brandText: {
+    color: "#f8fafc",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  syncBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 99,
+  },
+  sessionBtn: {
+    maxWidth: 190,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+  },
+  sessionBtnText: {
+    color: "#e2e8f0",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  puzzleChipsRow: {
+    paddingHorizontal: 12,
+    alignItems: "center",
+    gap: 6,
+  },
+  puzzleChip: {
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 99,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  puzzleChipActive: {
+    backgroundColor: "#22d3ee",
+    borderColor: "#22d3ee",
+  },
+  puzzleChipText: {
+    color: "#cbd5e1",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  puzzleChipTextActive: {
+    color: "#020617",
+    fontWeight: "800",
+  },
+  scrambleCard: {
+    marginHorizontal: 12,
+    marginTop: 6,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  scrambleText: {
+    color: "#f1f5f9",
+    fontSize: 15,
+    fontWeight: "600",
+    textAlign: "center",
+    lineHeight: 22,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  scrambleHint: {
+    color: "#64748b",
+    fontSize: 10,
+    textAlign: "center",
+    marginTop: 5,
+  },
+  touchPad: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  clockDigits: {
+    color: "#f8fafc",
+    fontSize: 74,
+    fontWeight: "800",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  padHint: {
+    color: "#64748b",
+    fontSize: 12,
+    marginTop: 10,
+    textAlign: "center",
+  },
+  pbPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 99,
+    backgroundColor: "rgba(251,191,36,0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(251,191,36,0.45)",
+    marginBottom: 8,
+  },
+  pbPillText: {
+    color: "#fde68a",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  inlineAvgRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 22,
+  },
+  inlineAvgLabel: {
+    color: "#94a3b8",
+    fontSize: 13,
+  },
+  inlineAvgVal: {
+    color: "#67e8f9",
+    fontWeight: "700",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  inlineAvgDivider: {
+    color: "rgba(255,255,255,0.18)",
+  },
+  postSolveBar: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
+    paddingBottom: 12,
+    paddingHorizontal: 12,
+  },
+  actionPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  actionPillText: {
+    color: "#e2e8f0",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  cubeTabContainer: {
+    padding: 18,
+    alignItems: "center",
+  },
+  sectionTitle: {
+    color: "#f8fafc",
+    fontSize: 15,
+    fontWeight: "700",
+    marginBottom: 6,
+  },
+  primaryBtn: {
+    backgroundColor: "#22d3ee",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryBtnText: {
+    color: "#020617",
+    fontWeight: "800",
+    fontSize: 13,
+  },
+  historyHeader: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.08)",
+  },
+  emptyText: {
+    color: "#64748b",
+    textAlign: "center",
+    marginTop: 48,
+    fontSize: 13,
+  },
+  historyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.05)",
+    gap: 10,
+  },
+  historyIndex: {
+    color: "#64748b",
+    width: 36,
+    fontSize: 12,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  historyTime: {
+    color: "#f8fafc",
+    fontSize: 15,
+    fontWeight: "700",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  pbMiniTag: {
+    backgroundColor: "rgba(52,211,153,0.2)",
+    color: "#6ee7b7",
+    fontSize: 10,
+    fontWeight: "700",
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  historyComment: {
+    color: "#67e8f9",
+    fontSize: 11,
+    marginTop: 2,
+  },
+  historyAo5: {
+    color: "#94a3b8",
+    fontSize: 12,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  kpiRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  kpiCard: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    alignItems: "center",
+  },
+  kpiLabel: {
+    color: "#94a3b8",
+    fontSize: 11,
+  },
+  kpiValue: {
+    color: "#f8fafc",
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 4,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  card: {
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  statLine: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.05)",
+  },
+  statLineLabel: {
+    color: "#cbd5e1",
+    fontWeight: "600",
+    width: 70,
+  },
+  statLineCur: {
+    color: "#f8fafc",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  statLineBest: {
+    color: "#34d399",
+    fontWeight: "700",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  input: {
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+    paddingHorizontal: 12,
+    color: "#f8fafc",
+    fontSize: 13,
+  },
+  settingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.05)",
+  },
+  settingLabel: {
+    color: "#e2e8f0",
+    fontSize: 13,
+  },
+  bottomBar: {
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "#020617",
+    paddingVertical: 10,
+  },
+  bottomTabBtn: {
+    flex: 1,
+    alignItems: "center",
+  },
+  bottomTabText: {
+    color: "#64748b",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  bottomTabTextActive: {
+    color: "#22d3ee",
+    fontWeight: "800",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.75)",
+    justifyContent: "center",
+    padding: 18,
+  },
+  modalBox: {
+    backgroundColor: "#0f172a",
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+  },
+  sessionOption: {
+    padding: 11,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    marginBottom: 6,
+  },
+});

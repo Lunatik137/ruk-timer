@@ -57,6 +57,27 @@ Mở `http://localhost:3000` để trải nghiệm.
 
 ---
 
+## Phiên bản Điện thoại (Mobile App — iOS & Android)
+
+Dự án hỗ trợ **2 hình thức cài đặt lên điện thoại** dùng chung Cloud Database:
+
+1. **Cài trực tiếp bản PWA từ trình duyệt (Không cần tải qua chợ ứng dụng)**:
+   - Mở `https://ruk-timer.vercel.app` trên điện thoại.
+   - **Android (Chrome/Edge)**: Bấm nút **Cài App** trên thanh thông báo (hoặc menu `⋮` → *Cài đặt ứng dụng / Thêm vào màn hình chính*).
+   - **iPhone / iPad (Safari)**: Bấm nút **Chia sẻ (Share)** → chọn **Thêm vào MH chính (Add to Home Screen)**.
+   - Hỗ trợ chạy toàn màn hình độc lập, giữ sáng màn hình khi giải (*Wake Lock*), rung phản hồi (*Haptics*) và hoạt động cả khi offline.
+
+2. **Ứng dụng gốc React Native + Expo (thư mục [`./mobile`](./mobile/README.md))**:
+   ```bash
+   cd mobile
+   npm install
+   npx expo start
+   ```
+   - Quét mã QR bằng ứng dụng **Expo Go** trên iPhone/Android để chạy ngay.
+   - Xuất file cài đặt `.APK` cho Android: `eas build -p android --profile preview` (đã cấu hình sẵn trong `mobile/eas.json`).
+
+---
+
 ## Hướng dẫn Deploy lên Vercel
 
 1. Đẩy mã nguồn dự án này lên GitHub / GitLab / Bitbucket.

@@ -5,6 +5,14 @@ export const metadata: Metadata = {
   title: "RukTimer — Bấm giờ Rubik chuyên nghiệp & Lưu lịch sử Cloud",
   description:
     "Ứng dụng bấm giờ giải Rubik chuẩn WCA (2x2–7x7, OH, BLD, Pyraminx, Megaminx, Skewb, Square-1, Clock) hỗ trợ đăng nhập và đồng bộ lịch sử giải lên Cloud DB.",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "RukTimer",
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export const viewport: Viewport = {

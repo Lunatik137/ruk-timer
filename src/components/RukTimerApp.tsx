@@ -6,6 +6,7 @@ import AuthModal from "@/components/AuthModal";
 import CubeNetPreview from "@/components/CubeNetPreview";
 import Header from "@/components/Header";
 import HistoryPanel from "@/components/HistoryPanel";
+import PwaInstallBanner from "@/components/PwaInstallBanner";
 import ScrambleBar from "@/components/ScrambleBar";
 import SettingsModal from "@/components/SettingsModal";
 import SolveDetailModal, {
@@ -628,6 +629,7 @@ export default function RukTimerApp() {
           focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
         }`}
       >
+        <PwaInstallBanner />
         <Header
           sessions={sessions}
           activeSession={activeSession}
