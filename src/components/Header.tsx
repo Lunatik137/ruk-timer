@@ -3,10 +3,12 @@
 import React, { useState } from "react";
 import {
   Check,
+  Clock,
   Cloud,
   CloudOff,
   Edit3,
   FolderPlus,
+  GraduationCap,
   Loader2,
   LogIn,
   LogOut,
@@ -18,6 +20,8 @@ import {
 import { CubeSession, PUZZLES, PuzzleType } from "@/types/cubing";
 
 interface HeaderProps {
+  mainView: "timer" | "cfop";
+  onChangeMainView: (view: "timer" | "cfop") => void;
   sessions: CubeSession[];
   activeSession: CubeSession;
   onSelectSession: (id: string) => void;
@@ -35,6 +39,8 @@ interface HeaderProps {
 }
 
 export default function Header({
+  mainView,
+  onChangeMainView,
   sessions,
   activeSession,
   onSelectSession,
@@ -89,6 +95,40 @@ export default function Header({
             <span className="font-bold tracking-tight text-base sm:text-lg">
               Ruk<span className="text-cyan-400">Timer</span>
             </span>
+          </div>
+
+          {/* Primary Mode Switcher: Timer vs CFOP Academy */}
+          <div className="flex items-center p-0.5 rounded-xl bg-white/[0.06] border border-white/10">
+            <button
+              type="button"
+              onClick={(e) => {
+                onChangeMainView("timer");
+                e.currentTarget.blur();
+              }}
+              className={`h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                mainView === "timer"
+                  ? "bg-cyan-500 text-slate-950 shadow"
+                  : "opacity-80 hover:opacity-100"
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>Timer</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                onChangeMainView("cfop");
+                e.currentTarget.blur();
+              }}
+              className={`h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                mainView === "cfop"
+                  ? "bg-gradient-to-r from-cyan-400 to-indigo-400 text-slate-950 shadow"
+                  : "opacity-80 hover:opacity-100"
+              }`}
+            >
+              <GraduationCap className="w-3.5 h-3.5" />
+              <span>Học & Luyện CFOP</span>
+            </button>
           </div>
 
           {/* Puzzle Selector */}

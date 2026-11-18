@@ -1,0 +1,1039 @@
+"use client";
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowUpRight,
+  BookOpen,
+  Check,
+  CheckCircle2,
+  Copy,
+  Eye,
+  EyeOff,
+  Flame,
+  GraduationCap,
+  Play,
+  Search,
+  Sparkles,
+  Timer,
+  Trash2,
+  Trophy,
+  X,
+} from "lucide-react";
+import CfopCaseDiagram from "@/components/CfopCaseDiagram";
+import {
+  CFOP_ALGORITHMS,
+  CFOP_STAGE_META,
+  CfopAlgorithm,
+  CfopStage,
+  getCfopSessionName,
+  simulateCfopCaseState,
+} from "@/lib/cfop";
+import { playPbCelebration } from "@/lib/sound";
+import {
+  calculateSessionStats,
+  formatSolveDisplay,
+  formatTimeMs,
+  getEffectiveMs,
+} from "@/lib/stats";
+import {
+  CubeSession,
+  PenaltyType,
+  Solve,
+  TimerSettings,
+} from "@/types/cubing";
+
+const LS_LEARNED_CFOP_KEY = "ruktimer_cfop_learned_v1";
+
+interface CfopTrainerViewProps {
+  sessions: CubeSession[];
+  solves: Solve[];
+  settings: TimerSettings;
+  onEnsureAlgSession: (alg: CfopAlgorithm) => CubeSession;
+  onRecordAlgSolve: (
+    sessionId: string,
+    timeMs: number,
+    scrambleSetup: string,
+    penalty: PenaltyType
+  ) => void;
+  onUpdateSolvePenalty: (solveId: string, penalty: PenaltyType) => void;
+  onDeleteSolve: (solveId: string) => void;
+  onOpenInMainTimer: (alg: CfopAlgorithm) => void;
+}
+
+type DrillPhase = "idle" | "holding" | "ready" | "running" | "just_stopped";
+
+export default function CfopTrainerView({
+  sessions,
+  solves,
+  settings,
+  onEnsureAlgSession,
+  onRecordAlgSolve,
+  onUpdateSolvePenalty,
+  onDeleteSolve,
+  onOpenInMainTimer,
+}: CfopTrainerViewProps) {
+  const [stageFilter, setStageFilter] = useState<"ALL" | CfopStage>("PLL");
+  const [onlyTwoLook, setOnlyTwoLook] = useState(false);
+  const [onlyUnlearned, setOnlyUnlearned] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [learnedIds, setLearnedIds] = useState<Set<string>>(new Set());
+
+  // Active Algorithm in Dedicated Drill Studio Modal
+  const [drillingAlg, setDrillingAlg] = useState<CfopAlgorithm | null>(null);
+  const [activeDrillSessionId, setActiveDrillSessionId] = useState<string>("");
+  const [blindMode, setBlindMode] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Drill Timer State
+  const [drillPhase, setDrillPhase] = useState<DrillPhase>("idle");
+  const [drillMs, setDrillMs] = useState<number>(0);
+  const [isDrillPb, setIsDrillPb] = useState(false);
+
+  const drillPhaseRef = useRef<DrillPhase>("idle");
+  const startTimeRef = useRef<number>(0);
+  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(LS_LEARNED_CFOP_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) setLearnedIds(new Set(arr));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const toggleLearned = (id: string) => {
+    setLearnedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(LS_LEARNED_CFOP_KEY, JSON.stringify([...next]));
+      }
+      return next;
+    });
+  };
+
+  // Precompute stats per CFOP session name so every card shows live PB / Ao5 / solve count!
+  const sessionStatsByName = useMemo(() => {
+    const sessionByName = new Map<string, CubeSession>();
+    for (const s of sessions) {
+      sessionByName.set(s.name, s);
+    }
+
+    const solvesBySessionId = new Map<string, Solve[]>();
+    for (const sv of solves) {
+      const list = solvesBySessionId.get(sv.session_id);
+      if (list) list.push(sv);
+      else solvesBySessionId.set(sv.session_id, [sv]);
+    }
+
+    const map = new Map<
+      string,
+      ReturnType<typeof calculateSessionStats> & { sessionId: string }
+    >();
+
+    for (const alg of CFOP_ALGORITHMS) {
+      const sName = getCfopSessionName(alg);
+      const sess = sessionByName.get(sName);
+      if (!sess) continue;
+      const list = (solvesBySessionId.get(sess.id) || [])
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(a.solved_at).getTime() - new Date(b.solved_at).getTime()
+        );
+      map.set(sName, {
+        sessionId: sess.id,
+        ...calculateSessionStats(list),
+      });
+    }
+
+    return map;
+  }, [sessions, solves]);
+
+  // Filtered CFOP algorithm cards
+  const filteredAlgs = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return CFOP_ALGORITHMS.filter((alg) => {
+      if (stageFilter !== "ALL" && alg.stage !== stageFilter) return false;
+      if (onlyTwoLook && !alg.isTwoLook) return false;
+      if (onlyUnlearned && learnedIds.has(alg.id)) return false;
+      if (q) {
+        return (
+          alg.name.toLowerCase().includes(q) ||
+          alg.code.toLowerCase().includes(q) ||
+          alg.group.toLowerCase().includes(q) ||
+          alg.formula.toLowerCase().includes(q) ||
+          alg.recognition.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [stageFilter, onlyTwoLook, onlyUnlearned, learnedIds, searchQuery]);
+
+  // Progress counts
+  const progressByStage = useMemo(() => {
+    const counts: Record<string, { learned: number; total: number }> = {
+      ALL: { learned: 0, total: CFOP_ALGORITHMS.length },
+      CROSS: { learned: 0, total: 0 },
+      F2L: { learned: 0, total: 0 },
+      OLL: { learned: 0, total: 0 },
+      PLL: { learned: 0, total: 0 },
+    };
+    for (const alg of CFOP_ALGORITHMS) {
+      counts[alg.stage].total++;
+      if (learnedIds.has(alg.id)) {
+        counts.ALL.learned++;
+        counts[alg.stage].learned++;
+      }
+    }
+    return counts;
+  }, [learnedIds]);
+
+  const handleOpenDrill = (alg: CfopAlgorithm) => {
+    const sess = onEnsureAlgSession(alg);
+    setActiveDrillSessionId(sess.id);
+    setDrillingAlg(alg);
+    setDrillMs(0);
+    setIsDrillPb(false);
+    setBlindMode(false);
+    drillPhaseRef.current = "idle";
+    setDrillPhase("idle");
+  };
+
+  // Active Drill Session data
+  const activeDrillCaseInfo = useMemo(
+    () => (drillingAlg ? simulateCfopCaseState(drillingAlg.formula) : null),
+    [drillingAlg]
+  );
+
+  const activeDrillSolves = useMemo(() => {
+    if (!activeDrillSessionId) return [];
+    return solves
+      .filter((s) => s.session_id === activeDrillSessionId)
+      .sort(
+        (a, b) =>
+          new Date(a.solved_at).getTime() - new Date(b.solved_at).getTime()
+      );
+  }, [solves, activeDrillSessionId]);
+
+  const activeDrillStats = useMemo(
+    () => calculateSessionStats(activeDrillSolves),
+    [activeDrillSolves]
+  );
+
+  const lastDrillSolve =
+    activeDrillSolves.length > 0
+      ? activeDrillSolves[activeDrillSolves.length - 1]
+      : null;
+
+  // ==========================================================================
+  // Dedicated Drill Timer Engine (Spacebar + Touch)
+  // ==========================================================================
+  const setDrillPhaseBoth = useCallback((next: DrillPhase) => {
+    drillPhaseRef.current = next;
+    setDrillPhase(next);
+    if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+      if (next === "ready") navigator.vibrate?.(20);
+      else if (next === "just_stopped") navigator.vibrate?.(35);
+    }
+  }, []);
+
+  const stopDrillLoops = useCallback(() => {
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => stopDrillLoops();
+  }, [stopDrillLoops]);
+
+  const finishDrillSolve = useCallback(() => {
+    if (!drillingAlg || !activeDrillSessionId || !activeDrillCaseInfo) return;
+    const finalMs = Math.max(
+      10,
+      Math.round(performance.now() - startTimeRef.current)
+    );
+    stopDrillLoops();
+    setDrillMs(finalMs);
+    setDrillPhaseBoth("just_stopped");
+
+    const prevBest = activeDrillStats.summary.bestSingle;
+    const brokePb =
+      activeDrillSolves.length >= 1 && (prevBest === null || finalMs < prevBest);
+    setIsDrillPb(brokePb);
+    if (brokePb && settings.soundEnabled) {
+      playPbCelebration();
+    }
+
+    onRecordAlgSolve(
+      activeDrillSessionId,
+      finalMs,
+      `Setup: ${activeDrillCaseInfo.setupMoves}  |  Alg: ${drillingAlg.formula}`,
+      "OK"
+    );
+  }, [
+    activeDrillCaseInfo,
+    activeDrillSessionId,
+    activeDrillSolves.length,
+    activeDrillStats.summary.bestSingle,
+    drillingAlg,
+    onRecordAlgSolve,
+     setDrillPhaseBoth,
+    settings.soundEnabled,
+    stopDrillLoops,
+  ]);
+
+  const handleDrillPressDown = useCallback(() => {
+    const cur = drillPhaseRef.current;
+    if (cur === "running") {
+      finishDrillSolve();
+      return;
+    }
+    if (cur === "idle") {
+      const holdMs = Math.min(settings.holdDelayMs, 300); // snappy hold for alg drills
+      if (holdMs <= 0) {
+        setDrillPhaseBoth("ready");
+      } else {
+        setDrillPhaseBoth("holding");
+        holdTimeoutRef.current = setTimeout(() => {
+          if (drillPhaseRef.current === "holding") {
+            setDrillPhaseBoth("ready");
+          }
+        }, holdMs);
+      }
+    }
+  }, [finishDrillSolve, setDrillPhaseBoth, settings.holdDelayMs]);
+
+  const handleDrillPressUp = useCallback(() => {
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    const cur = drillPhaseRef.current;
+    if (cur === "just_stopped") {
+      setDrillPhaseBoth("idle");
+      return;
+    }
+    if (cur === "holding") {
+      setDrillPhaseBoth("idle");
+      return;
+    }
+    if (cur === "ready") {
+      startTimeRef.current = performance.now();
+      setDrillMs(0);
+      setDrillPhaseBoth("running");
+      const tick = () => {
+        setDrillMs(performance.now() - startTimeRef.current);
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      rafRef.current = requestAnimationFrame(tick);
+    }
+  }, [setDrillPhaseBoth]);
+
+  // Keyboard listener when Drill Modal is open
+  useEffect(() => {
+    if (!drillingAlg) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (drillPhaseRef.current !== "idle") {
+          stopDrillLoops();
+          setDrillPhaseBoth("idle");
+        } else {
+          setDrillingAlg(null);
+        }
+        return;
+      }
+
+      if (drillPhaseRef.current === "running") {
+        if (!e.altKey && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          handleDrillPressDown();
+        }
+        return;
+      }
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (e.repeat) return;
+        handleDrillPressDown();
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (drillPhaseRef.current === "just_stopped") {
+        e.preventDefault();
+        handleDrillPressUp();
+        return;
+      }
+      if (e.code === "Space") {
+        e.preventDefault();
+        handleDrillPressUp();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [
+    drillingAlg,
+    handleDrillPressDown,
+    handleDrillPressUp,
+    setDrillPhaseBoth,
+    stopDrillLoops,
+  ]);
+
+  const copyFormula = async (id: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 1500);
+    } catch {
+      // ignore
+    }
+  };
+
+  // Compute TPS for last drill solve
+  const lastDrillTps = useMemo(() => {
+    if (!lastDrillSolve || !activeDrillCaseInfo) return null;
+    const eff = getEffectiveMs(lastDrillSolve);
+    if (eff === "DNF" || eff <= 0) return null;
+    return (activeDrillCaseInfo.moveCount / (eff / 1000)).toFixed(2);
+  }, [lastDrillSolve, activeDrillCaseInfo]);
+
+  return (
+    <div className="w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-4 pb-24 lg:pb-8 space-y-4">
+      {/* Top Banner & Stage Selector */}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md p-4 sm:p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-gradient-to-br from-cyan-500/20 to-indigo-500/20 border border-cyan-400/30 text-cyan-300">
+              <GraduationCap className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight">
+                Thư viện Học & Luyện Bấm Giờ Phương Pháp CFOP
+              </h1>
+              <p className="text-xs sm:text-sm opacity-65">
+                Mỗi công thức được lưu thành <strong>1 Session Timer riêng biệt</strong>{" "}
+                (đồng bộ Cloud DB, theo dõi PB, Ao5 và tốc độ ngón tay TPS)
+              </p>
+            </div>
+          </div>
+
+          {/* Overall Progress Pill */}
+          <div className="flex items-center gap-3 px-3.5 py-2 rounded-xl bg-black/30 border border-white/10">
+            <div className="text-xs">
+              <span className="opacity-60">Tiến độ thuộc bài: </span>
+              <strong className="text-emerald-400 font-mono">
+                {progressByStage.ALL.learned}/{progressByStage.ALL.total}
+              </strong>
+            </div>
+            <div className="w-24 h-2 rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all"
+                style={{
+                  width: `${Math.round(
+                    (progressByStage.ALL.learned / progressByStage.ALL.total) *
+                      100
+                  )}%`,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Stage Tabs */}
+        <div className="flex flex-wrap items-center gap-2">
+          {(["ALL", "CROSS", "F2L", "OLL", "PLL"] as const).map((st) => {
+            const active = stageFilter === st;
+            const prog = progressByStage[st];
+            const label =
+              st === "ALL"
+                ? "Tất cả CFOP"
+                : st === "CROSS"
+                ? "1. Cross & Trigger"
+                : st === "F2L"
+                ? "2. F2L (2 tầng đầu)"
+                : st === "OLL"
+                ? "3. OLL (Mặt vàng)"
+                : "4. PLL (Đầy đủ 21/21)";
+            return (
+              <button
+                key={st}
+                type="button"
+                onClick={() => setStageFilter(st)}
+                className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition flex items-center gap-2 ${
+                  active
+                    ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-md shadow-cyan-500/20"
+                    : "bg-white/[0.05] hover:bg-white/[0.1] border-white/10"
+                }`}
+              >
+                <span>{label}</span>
+                <span
+                  className={`text-[11px] font-mono px-1.5 py-0.5 rounded-md ${
+                    active ? "bg-slate-950/20 text-slate-950" : "bg-black/35 opacity-75"
+                  }`}
+                >
+                  {prog.learned}/{prog.total}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Search & Smart Filters */}
+        <div className="flex flex-wrap items-center gap-2.5 pt-1">
+          <div className="relative flex-1 min-w-[220px]">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-45" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Tìm tên (VD: Sune, T Perm, Jb, Sexy, H Perm, OLL 27, F2L 17)..."
+              className="w-full h-9 pl-9 pr-8 rounded-xl bg-black/35 border border-white/10 text-xs sm:text-sm focus:outline-none focus:border-cyan-400"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 opacity-60 hover:opacity-100"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setOnlyTwoLook((v) => !v)}
+            className={`h-9 px-3 rounded-xl text-xs font-semibold border inline-flex items-center gap-1.5 transition ${
+              onlyTwoLook
+                ? "bg-amber-400/20 text-amber-300 border-amber-400/50"
+                : "bg-white/[0.05] hover:bg-white/[0.1] border-white/10 opacity-85"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Lộ trình Người mới (2-Look CFOP)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setOnlyUnlearned((v) => !v)}
+            className={`h-9 px-3 rounded-xl text-xs font-semibold border inline-flex items-center gap-1.5 transition ${
+              onlyUnlearned
+                ? "bg-indigo-500/25 text-indigo-200 border-indigo-400/50"
+                : "bg-white/[0.05] hover:bg-white/[0.1] border-white/10 opacity-85"
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Chưa thuộc</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Stage Subtitle Info */}
+      {stageFilter !== "ALL" && (
+        <div className="px-1 flex items-center justify-between text-xs opacity-75">
+          <span>{CFOP_STAGE_META[stageFilter].subtitle}</span>
+          <span>Hiển thị {filteredAlgs.length} công thức</span>
+        </div>
+      )}
+
+      {/* Algorithm Cards Grid */}
+      {filteredAlgs.length === 0 ? (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] py-16 text-center text-sm opacity-60">
+          Không tìm thấy công thức CFOP nào khớp với bộ lọc hiện tại.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+          {filteredAlgs.map((alg) => {
+            const sName = getCfopSessionName(alg);
+            const algStats = sessionStatsByName.get(sName);
+            const isLearned = learnedIds.has(alg.id);
+            const stageMeta = CFOP_STAGE_META[alg.stage];
+
+            return (
+              <div
+                key={alg.id}
+                className={`rounded-2xl border p-4 flex flex-col justify-between gap-3 transition ${
+                  isLearned
+                    ? "border-emerald-500/35 bg-emerald-500/[0.04]"
+                    : "border-white/10 bg-white/[0.04] hover:border-white/20"
+                }`}
+              >
+                {/* Top Row: Diagram + Meta */}
+                <div className="flex items-start gap-3.5">
+                  <CfopCaseDiagram stage={alg.stage} formula={alg.formula} />
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                      <span
+                        className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md border ${stageMeta.badgeColor}`}
+                      >
+                        {alg.code}
+                      </span>
+                      {alg.isTwoLook && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-400/15 text-amber-300 border border-amber-400/30">
+                          2-Look
+                        </span>
+                      )}
+                      <span className="text-[10px] opacity-50 truncate">
+                        {alg.group}
+                      </span>
+                    </div>
+
+                    <h3 className="font-bold text-sm sm:text-base leading-snug">
+                      {alg.name}
+                    </h3>
+
+                    <p className="text-xs opacity-65 mt-1 leading-relaxed">
+                      {alg.recognition}
+                    </p>
+                  </div>
+
+                  {/* Learned Toggle */}
+                  <button
+                    type="button"
+                    title={isLearned ? "Bỏ đánh dấu đã thuộc" : "Đánh dấu đã thuộc"}
+                    onClick={() => toggleLearned(alg.id)}
+                    className={`p-1.5 rounded-lg border transition shrink-0 ${
+                      isLearned
+                        ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300"
+                        : "bg-white/5 border-white/10 opacity-50 hover:opacity-100"
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Formula Box */}
+                <div className="rounded-xl bg-black/40 border border-white/10 px-3 py-2.5 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <code className="font-mono text-xs sm:text-sm font-bold text-cyan-300 break-words">
+                      {alg.formula}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => copyFormula(alg.id, alg.formula)}
+                      title="Copy công thức"
+                      className="p-1 rounded hover:bg-white/10 opacity-65 hover:opacity-100 shrink-0"
+                    >
+                      {copiedId === alg.id ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                  {alg.altFormula && (
+                    <div className="text-[11px] font-mono opacity-60">
+                      Cách 2: {alg.altFormula}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer: Dedicated Session Stats + Practice Button */}
+                <div className="flex items-center justify-between gap-2 pt-0.5">
+                  {algStats && algStats.summary.totalCount > 0 ? (
+                    <div className="flex items-center gap-2.5 text-xs font-mono">
+                      <span className="text-emerald-400 font-semibold inline-flex items-center gap-1">
+                        <Trophy className="w-3 h-3" />
+                        PB:{" "}
+                        {formatTimeMs(
+                          algStats.summary.bestSingle,
+                          settings.decimals
+                        )}
+                      </span>
+                      <span className="opacity-70">
+                        Ao5:{" "}
+                        {formatTimeMs(
+                          algStats.summary.currentAo5,
+                          settings.decimals
+                        )}
+                      </span>
+                      <span className="opacity-45 font-sans text-[11px]">
+                        ({algStats.summary.totalCount} lần)
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-[11px] opacity-45">
+                      Chưa có lịch sử bấm giờ
+                    </span>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDrill(alg)}
+                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 shadow-sm transition shrink-0"
+                  >
+                    <Timer className="w-3.5 h-3.5" />
+                    <span>Luyện bấm giờ</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* DEDICATED ALGORITHM DRILL TIMER STUDIO MODAL                         */}
+      {/* ==================================================================== */}
+      {drillingAlg && activeDrillCaseInfo && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-6"
+          onClick={() => {
+            if (drillPhaseRef.current === "idle") setDrillingAlg(null);
+          }}
+        >
+          <div
+            className="w-full max-w-4xl max-h-[92vh] overflow-y-auto rounded-3xl border border-white/15 bg-slate-950 text-white p-4 sm:p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Studio Header */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-xs font-bold px-2 py-0.5 rounded-md border ${
+                      CFOP_STAGE_META[drillingAlg.stage].badgeColor
+                    }`}
+                  >
+                    {drillingAlg.code}
+                  </span>
+                  <span className="text-xs font-mono text-cyan-300/80">
+                    Session riêng: {getCfopSessionName(drillingAlg)}
+                  </span>
+                </div>
+                <h2 className="text-lg sm:text-xl font-bold mt-1">
+                  {drillingAlg.name}
+                </h2>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetAlg = drillingAlg;
+                    setDrillingAlg(null);
+                    onOpenInMainTimer(targetAlg);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-xs font-medium inline-flex items-center gap-1 transition"
+                >
+                  <span>Mở ở Bàn Timer chính</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopDrillLoops();
+                    setDrillPhaseBoth("idle");
+                    setDrillingAlg(null);
+                  }}
+                  className="p-2 rounded-xl bg-white/[0.07] hover:bg-white/15 transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Top Section: Case Diagram + Formula + Setup Scramble */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center rounded-2xl bg-white/[0.03] border border-white/10 p-4">
+              <div className="md:col-span-3 flex flex-col items-center gap-2">
+                <CfopCaseDiagram
+                  stage={drillingAlg.stage}
+                  formula={drillingAlg.formula}
+                  size="lg"
+                />
+                <span className="text-[11px] opacity-55">
+                  Vàng ở trên (U) • {activeDrillCaseInfo.moveCount} nước
+                </span>
+              </div>
+
+              <div className="md:col-span-9 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs uppercase tracking-wider font-semibold text-cyan-400">
+                    Công thức thực hiện:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      setBlindMode((v) => !v);
+                      e.currentTarget.blur();
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs inline-flex items-center gap-1.5 transition"
+                  >
+                    {blindMode ? (
+                      <>
+                        <Eye className="w-3.5 h-3.5 text-amber-300" />
+                        <span className="text-amber-300">Hiện công thức</span>
+                      </>
+                    ) : (
+                      <>
+                        <EyeOff className="w-3.5 h-3.5" />
+                        <span>Ẩn để tự nhớ</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="rounded-xl bg-black/50 border border-cyan-500/30 px-4 py-3">
+                  {blindMode ? (
+                    <p className="font-mono text-base sm:text-lg text-amber-300/80 italic select-none">
+                      ••• Đang bật chế độ kiểm tra trí nhớ (Nhấn &ldquo;Hiện công thức&rdquo; nếu quên) •••
+                    </p>
+                  ) : (
+                    <p className="font-mono text-lg sm:text-2xl font-bold text-cyan-300 tracking-wide">
+                      {drillingAlg.formula}
+                    </p>
+                  )}
+                  {!blindMode && drillingAlg.altFormula && (
+                    <p className="font-mono text-xs opacity-60 mt-1">
+                      Cách 2: {drillingAlg.altFormula}
+                    </p>
+                  )}
+                </div>
+
+                <div className="text-xs bg-black/30 rounded-xl px-3 py-2 border border-white/5">
+                  <span className="opacity-60">
+                    Cách tạo thế cờ này từ khối Rubik đã giải (để mặt Vàng lên trên):{" "}
+                  </span>
+                  <code className="font-mono text-amber-300 font-semibold">
+                    {activeDrillCaseInfo.setupMoves}
+                  </code>
+                </div>
+              </div>
+            </div>
+
+            {/* Interactive Spacebar / Touch Drill Pad */}
+            <div
+              role="button"
+              tabIndex={-1}
+              onTouchStart={(e) => {
+                if ((e.target as HTMLElement).closest("[data-drill-action]"))
+                  return;
+                e.preventDefault();
+                handleDrillPressDown();
+              }}
+              onTouchEnd={(e) => {
+                if ((e.target as HTMLElement).closest("[data-drill-action]"))
+                  return;
+                e.preventDefault();
+                handleDrillPressUp();
+              }}
+              className="rounded-3xl border border-white/15 bg-gradient-to-b from-white/[0.04] to-black/40 py-8 px-4 flex flex-col items-center justify-center select-none cursor-pointer"
+            >
+              {isDrillPb && drillPhase === "idle" && lastDrillSolve && (
+                <div className="mb-2 px-3 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1.5 animate-bounce">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>PB mới cho {drillingAlg.name}!</span>
+                </div>
+              )}
+
+              <div
+                className={`font-mono font-bold tabular-nums leading-none text-6xl sm:text-7xl transition-transform ${
+                  drillPhase === "holding"
+                    ? "text-rose-400 scale-[0.98]"
+                    : drillPhase === "ready"
+                    ? "text-emerald-400 scale-[1.04]"
+                    : lastDrillSolve?.penalty === "DNF" && drillPhase === "idle"
+                    ? "text-rose-400"
+                    : lastDrillSolve?.penalty === "+2" && drillPhase === "idle"
+                    ? "text-amber-300"
+                    : "text-white"
+                }`}
+              >
+                {drillPhase === "running"
+                  ? formatTimeMs(drillMs, settings.decimals)
+                  : drillPhase === "holding" || drillPhase === "ready"
+                  ? formatTimeMs(0, settings.decimals)
+                  : lastDrillSolve
+                  ? formatSolveDisplay(lastDrillSolve, settings.decimals)
+                  : formatTimeMs(0, settings.decimals)}
+              </div>
+
+              {/* Live TPS Badge */}
+              {drillPhase === "idle" && lastDrillTps && (
+                <div className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-semibold">
+                  <Flame className="w-3.5 h-3.5 text-orange-400" />
+                  <span>
+                    Tốc độ ngón tay: {lastDrillTps} TPS ({activeDrillCaseInfo.moveCount}{" "}
+                    nước)
+                  </span>
+                </div>
+              )}
+
+              <p className="mt-3 text-xs opacity-55 text-center">
+                {drillPhase === "running"
+                  ? "Nhấn phím bất kỳ hoặc chạm màn hình để DỪNG"
+                  : drillPhase === "holding"
+                  ? "Tiếp tục giữ..."
+                  : drillPhase === "ready"
+                  ? "Thả tay để bắt đầu!"
+                  : "Nhấn giữ Space (hoặc chạm giữ vùng này trên điện thoại) để luyện công thức"}
+              </p>
+
+              {/* Quick Penalty / Delete for Last Drill Solve */}
+              {drillPhase === "idle" && lastDrillSolve && (
+                <div
+                  data-drill-action="true"
+                  className="mt-4 flex items-center gap-2"
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      onUpdateSolvePenalty(
+                        lastDrillSolve.id,
+                        lastDrillSolve.penalty === "+2" ? "OK" : "+2"
+                      );
+                      e.currentTarget.blur();
+                    }}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${
+                      lastDrillSolve.penalty === "+2"
+                        ? "bg-amber-400 text-slate-950 border-amber-400"
+                        : "bg-white/5 border-white/10 text-amber-300 hover:bg-amber-400/20"
+                    }`}
+                  >
+                    +2
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      onUpdateSolvePenalty(
+                        lastDrillSolve.id,
+                        lastDrillSolve.penalty === "DNF" ? "OK" : "DNF"
+                      );
+                      e.currentTarget.blur();
+                    }}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${
+                      lastDrillSolve.penalty === "DNF"
+                        ? "bg-rose-500 text-white border-rose-500"
+                        : "bg-white/5 border-white/10 text-rose-300 hover:bg-rose-500/20"
+                    }`}
+                  >
+                    DNF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      onDeleteSolve(lastDrillSolve.id);
+                      e.currentTarget.blur();
+                    }}
+                    className="px-3 py-1 rounded-lg text-xs bg-white/5 hover:bg-rose-500/20 hover:text-rose-300 border border-white/10 inline-flex items-center gap-1 transition"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Xóa lượt cuối</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Section: Algorithm Session Stats & Mini History */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+              <div className="md:col-span-5 grid grid-cols-2 gap-2">
+                <div className="rounded-xl bg-white/[0.04] border border-white/10 p-3">
+                  <div className="text-[11px] opacity-55">Kỷ lục PB</div>
+                  <div className="font-mono text-lg font-bold text-emerald-400 mt-0.5">
+                    {formatTimeMs(
+                      activeDrillStats.summary.bestSingle,
+                      settings.decimals
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-white/[0.04] border border-white/10 p-3">
+                  <div className="text-[11px] opacity-55">Ao5 hiện tại</div>
+                  <div className="font-mono text-lg font-bold text-cyan-300 mt-0.5">
+                    {formatTimeMs(
+                      activeDrillStats.summary.currentAo5,
+                      settings.decimals
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-white/[0.04] border border-white/10 p-3">
+                  <div className="text-[11px] opacity-55">Ao12 hiện tại</div>
+                  <div className="font-mono text-lg font-bold text-indigo-300 mt-0.5">
+                    {formatTimeMs(
+                      activeDrillStats.summary.currentAo12,
+                      settings.decimals
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-white/[0.04] border border-white/10 p-3">
+                  <div className="text-[11px] opacity-55">Mean ({activeDrillStats.summary.validCount} lần)</div>
+                  <div className="font-mono text-lg font-bold mt-0.5">
+                    {formatTimeMs(
+                      activeDrillStats.summary.mean,
+                      settings.decimals
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Recent Solves for this Algorithm Session */}
+              <div className="md:col-span-7 rounded-xl bg-white/[0.04] border border-white/10 p-3 flex flex-col max-h-40">
+                <div className="text-xs font-semibold opacity-75 mb-2 flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Play className="w-3 h-3 text-cyan-400" />
+                    Lịch sử riêng của {drillingAlg.code} ({activeDrillStats.enrichedSolves.length} lần)
+                  </span>
+                </div>
+                <div className="flex-1 overflow-y-auto flex flex-wrap gap-1.5 content-start">
+                  {activeDrillStats.enrichedSolves.length === 0 ? (
+                    <span className="text-xs opacity-45">
+                      Chưa có lượt tập nào. Nhấn Space để lưu lượt đầu tiên vào session riêng này!
+                    </span>
+                  ) : (
+                    [...activeDrillStats.enrichedSolves].reverse().map((sv) => {
+                      const isPb =
+                        sv.id === activeDrillStats.summary.bestSingleSolveId;
+                      return (
+                        <span
+                          key={sv.id}
+                          className={`px-2 py-1 rounded-lg text-xs font-mono border inline-flex items-center gap-1.5 ${
+                            isPb
+                              ? "bg-emerald-500/15 border-emerald-400/40 text-emerald-300 font-bold"
+                              : "bg-black/35 border-white/10"
+                          }`}
+                        >
+                          <span className="opacity-45">#{sv.indexNumber}</span>
+                          <span>{formatSolveDisplay(sv, settings.decimals)}</span>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteSolve(sv.id)}
+                            className="opacity-40 hover:opacity-100 hover:text-rose-400"
+                            title="Xóa"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

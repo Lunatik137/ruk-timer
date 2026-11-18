@@ -1,8 +1,15 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { BarChart2, Box, Clock, ListOrdered } from "lucide-react";
+import {
+  BarChart2,
+  Box,
+  Clock,
+  GraduationCap,
+  ListOrdered,
+} from "lucide-react";
 import AuthModal from "@/components/AuthModal";
+import CfopTrainerView from "@/components/CfopTrainerView";
 import CubeNetPreview from "@/components/CubeNetPreview";
 import Header from "@/components/Header";
 import HistoryPanel from "@/components/HistoryPanel";
@@ -14,7 +21,8 @@ import SolveDetailModal, {
 } from "@/components/SolveDetailModal";
 import StatsPanel from "@/components/StatsPanel";
 import TimerDisplay, { TimerPhase } from "@/components/TimerDisplay";
-import { generateScramble } from "@/lib/scrambles";
+import { CfopAlgorithm, getCfopSessionName } from "@/lib/cfop";
+import { generateScramble, invertAlgorithm } from "@/lib/scrambles";
 import { playPbCelebration } from "@/lib/sound";
 import { calculateSessionStats, getEffectiveMs } from "@/lib/stats";
 import {
@@ -90,6 +98,7 @@ export default function RukTimerApp() {
   const [detailTarget, setDetailTarget] = useState<DetailModalTarget | null>(
     null
   );
+  const [mainView, setMainView] = useState<"timer" | "cfop">("timer");
   const [mobileTab, setMobileTab] = useState<
     "timer" | "history" | "stats" | "cube"
   >("timer");
@@ -337,6 +346,85 @@ export default function RukTimerApp() {
       saveGuestSessions(nextSessions);
     }
   };
+
+  // ==========================================================================
+  // Dedicated CFOP Algorithm Session & Solve Handlers
+  // ==========================================================================
+  const handleEnsureAlgSession = useCallback(
+    (alg: CfopAlgorithm): CubeSession => {
+      const targetName = getCfopSessionName(alg);
+      const existing = sessions.find((s) => s.name === targetName);
+      if (existing) return existing;
+
+      const created: CubeSession = {
+        id: generateUuid(),
+        user_id: userId ?? undefined,
+        name: targetName,
+        puzzle: "3x3",
+        created_at: new Date().toISOString(),
+      };
+
+      setSessions((prev) => {
+        if (prev.some((s) => s.name === targetName)) return prev;
+        const next = [...prev, created];
+        if (!userId) saveGuestSessions(next);
+        return next;
+      });
+
+      if (userId) {
+        runCloudMutation(() => cloudInsertSession(userId, created));
+      }
+      showToast(`Đã tạo Session riêng: "${targetName}"`);
+      return created;
+    },
+    [runCloudMutation, sessions, showToast, userId]
+  );
+
+  const handleRecordAlgSolve = useCallback(
+    (
+      sessionId: string,
+      timeMs: number,
+      scrambleSetup: string,
+      penalty: PenaltyType
+    ) => {
+      const newSolve: Solve = {
+        id: generateUuid(),
+        user_id: userId ?? undefined,
+        session_id: sessionId,
+        puzzle: "3x3",
+        time_ms: timeMs,
+        penalty,
+        scramble: scrambleSetup,
+        comment: "",
+        solved_at: new Date().toISOString(),
+      };
+
+      setSolves((prev) => {
+        const next = [...prev, newSolve];
+        if (!userId) saveGuestSolves(next);
+        return next;
+      });
+
+      if (userId) {
+        runCloudMutation(() => cloudInsertSolve(userId, newSolve));
+      }
+    },
+    [runCloudMutation, userId]
+  );
+
+  const handleOpenInMainTimer = useCallback(
+    (alg: CfopAlgorithm) => {
+      const sess = handleEnsureAlgSession(alg);
+      setActiveSessionId(sess.id);
+      saveActiveSessionId(sess.id);
+      setIsNewPb(false);
+      setScramble(`z2 ${invertAlgorithm(alg.formula)}`);
+      setMainView("timer");
+      setMobileTab("timer");
+      showToast(`Đang luyện "${alg.name}" trên Bàn Timer chính`);
+    },
+    [handleEnsureAlgSession, showToast]
+  );
 
   // ==========================================================================
   // Solve CRUD Handlers
@@ -631,9 +719,14 @@ export default function RukTimerApp() {
       >
         <PwaInstallBanner />
         <Header
+          mainView={mainView}
+          onChangeMainView={setMainView}
           sessions={sessions}
           activeSession={activeSession}
-          onSelectSession={handleSelectSession}
+          onSelectSession={(id) => {
+            handleSelectSession(id);
+            setMainView("timer");
+          }}
           onCreateSession={handleCreateSession}
           onRenameSession={handleRenameSession}
           onDeleteSession={handleDeleteSession}
@@ -656,6 +749,18 @@ export default function RukTimerApp() {
       )}
 
       {/* Main Content Grid (Desktop 3-column / Mobile Tabbed) */}
+      {mainView === "cfop" ? (
+        <CfopTrainerView
+          sessions={sessions}
+          solves={solves}
+          settings={settings}
+          onEnsureAlgSession={handleEnsureAlgSession}
+          onRecordAlgSolve={handleRecordAlgSolve}
+          onUpdateSolvePenalty={handleUpdateSolvePenalty}
+          onDeleteSolve={handleDeleteSolve}
+          onOpenInMainTimer={handleOpenInMainTimer}
+        />
+      ) : (
       <main className="flex-1 w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-3 pb-20 lg:pb-5 grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
         {/* Left Sidebar: Statistics & Chart */}
         <aside
@@ -718,7 +823,7 @@ export default function RukTimerApp() {
             currentAo5={summary.currentAo5}
             currentAo12={summary.currentAo12}
             isNewPb={isNewPb}
-            isModalOpen={isAnyModalOpen}
+            isModalOpen={isAnyModalOpen || mainView !== "timer"}
             onPhaseChange={setTimerPhase}
             onSolveComplete={handleSolveComplete}
             onUpdateLastPenalty={(pen) => {
@@ -789,15 +894,21 @@ export default function RukTimerApp() {
           />
         </aside>
       </main>
+      )}
 
       {/* Mobile Bottom Tab Bar */}
       {!focusDimActive && (
-        <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-slate-950/90 backdrop-blur-md grid grid-cols-4 py-1.5 px-2 text-[11px]">
+        <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-slate-950/90 backdrop-blur-md grid grid-cols-5 py-1.5 px-1.5 text-[10px]">
           <button
             type="button"
-            onClick={() => setMobileTab("timer")}
+            onClick={() => {
+              setMainView("timer");
+              setMobileTab("timer");
+            }}
             className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
-              mobileTab === "timer" ? "text-cyan-400 font-semibold" : "opacity-65"
+              mainView === "timer" && mobileTab === "timer"
+                ? "text-cyan-400 font-semibold"
+                : "opacity-65"
             }`}
           >
             <Clock className="w-4 h-4" />
@@ -805,9 +916,24 @@ export default function RukTimerApp() {
           </button>
           <button
             type="button"
-            onClick={() => setMobileTab("history")}
+            onClick={() => setMainView("cfop")}
             className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
-              mobileTab === "history"
+              mainView === "cfop"
+                ? "text-cyan-400 font-semibold"
+                : "opacity-65"
+            }`}
+          >
+            <GraduationCap className="w-4 h-4" />
+            <span>Học CFOP</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMainView("timer");
+              setMobileTab("history");
+            }}
+            className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
+              mainView === "timer" && mobileTab === "history"
                 ? "text-cyan-400 font-semibold"
                 : "opacity-65"
             }`}
@@ -817,9 +943,14 @@ export default function RukTimerApp() {
           </button>
           <button
             type="button"
-            onClick={() => setMobileTab("stats")}
+            onClick={() => {
+              setMainView("timer");
+              setMobileTab("stats");
+            }}
             className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
-              mobileTab === "stats" ? "text-cyan-400 font-semibold" : "opacity-65"
+              mainView === "timer" && mobileTab === "stats"
+                ? "text-cyan-400 font-semibold"
+                : "opacity-65"
             }`}
           >
             <BarChart2 className="w-4 h-4" />
@@ -827,9 +958,14 @@ export default function RukTimerApp() {
           </button>
           <button
             type="button"
-            onClick={() => setMobileTab("cube")}
+            onClick={() => {
+              setMainView("timer");
+              setMobileTab("cube");
+            }}
             className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
-              mobileTab === "cube" ? "text-cyan-400 font-semibold" : "opacity-65"
+              mainView === "timer" && mobileTab === "cube"
+                ? "text-cyan-400 font-semibold"
+                : "opacity-65"
             }`}
           >
             <Box className="w-4 h-4" />

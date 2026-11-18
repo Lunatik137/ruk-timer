@@ -203,6 +203,50 @@ export function generateScramble(puzzle: PuzzleType): string {
   }
 }
 
+/**
+ * Cleans grouping parentheses/brackets from human-readable CFOP formulas
+ * and returns individual move tokens.
+ */
+export function tokenizeAlgorithm(alg: string): string[] {
+  return alg
+    .replace(/[()[\]]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/**
+ * Inverts a Rubik's cube move sequence (e.g. "R U R' F2" -> "F2 R U' R'").
+ */
+export function invertAlgorithm(alg: string): string {
+  const tokens = tokenizeAlgorithm(alg);
+  return tokens
+    .slice()
+    .reverse()
+    .map((tok) => {
+      if (tok.endsWith("2'") || tok.endsWith("'2")) {
+        return tok.slice(0, -2) + "2";
+      }
+      if (tok.endsWith("2")) return tok;
+      if (tok.endsWith("'")) return tok.slice(0, -1);
+      return `${tok}'`;
+    })
+    .join(" ");
+}
+
+/**
+ * Counts STM (Slice Turn Metric) moves in an algorithm (excludes x/y/z cube rotations).
+ */
+export function countAlgMoves(alg: string): number {
+  const tokens = tokenizeAlgorithm(alg);
+  let count = 0;
+  for (const tok of tokens) {
+    if (/^[xyzXYZ]['2]*$/.test(tok)) continue;
+    count++;
+  }
+  return count;
+}
+
 interface Sticker3D {
   x: number;
   y: number;
@@ -292,26 +336,45 @@ export function simulateCubeScramble(size: number, scramble: string): CubeNetSta
     }
   };
 
-  const tokens = scramble
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const tokens = tokenizeAlgorithm(scramble);
 
-  // Match moves like: R, U', F2, Rw, Uw', 3Rw2, u, r', x, y2, z'
-  const moveRegex = /^(\d+)?([UDLRFBudlrfbxyz])(w)?(['2])?$/;
+  // Match moves like: R, U', F2, Rw, Uw', 3Rw2, u, r', M, M', M2, E, S, x, y2, z'
+  const moveRegex = /^(\d+)?([UDLRFBudlrfbMESxyz])(w)?(['2]+)?$/;
 
   for (const token of tokens) {
     const match = token.match(moveRegex);
     if (!match) continue;
 
     const [, prefixNum, rawFace, wideFlag, suffix] = match;
-    const quarterTurns = suffix === "2" ? 2 : suffix === "'" ? 3 : 1;
+    const quarterTurns =
+      suffix === "2" || suffix === "2'" || suffix === "'2"
+        ? 2
+        : suffix === "'"
+        ? 3
+        : 1;
 
     // Whole cube rotations
     if (rawFace === "x" || rawFace === "y" || rawFace === "z") {
       const rotFace = rawFace === "x" ? "R" : rawFace === "y" ? "U" : "F";
       for (let t = 0; t < quarterTurns; t++) {
         for (const s of stickers) rotateStickerCW(s, rotFace);
+      }
+      continue;
+    }
+
+    // Middle slice moves (M follows L, E follows D, S follows F)
+    if (rawFace === "M" || rawFace === "E" || rawFace === "S") {
+      const rotFace = rawFace === "M" ? "L" : rawFace === "E" ? "D" : "F";
+      for (let t = 0; t < quarterTurns; t++) {
+        for (const s of stickers) {
+          if (
+            (rawFace === "M" && s.x === 0) ||
+            (rawFace === "E" && s.y === 0) ||
+            (rawFace === "S" && s.z === 0)
+          ) {
+            rotateStickerCW(s, rotFace);
+          }
+        }
       }
       continue;
     }
