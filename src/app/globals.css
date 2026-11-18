@@ -11,7 +11,30 @@ body {
   margin: 0;
   padding: 0;
   overscroll-behavior-y: contain;
+  scroll-padding-top: 4.5rem;
   -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: rgba(34, 211, 238, 0.25);
+  color: #f8fafc;
+}
+
+/* Consistent keyboard focus ring across all controls */
+:focus-visible {
+  outline: 2px solid rgba(34, 211, 238, 0.75);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Custom sleek scrollbar */

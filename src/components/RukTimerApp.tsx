@@ -898,9 +898,13 @@ export default function RukTimerApp() {
 
       {/* Mobile Bottom Tab Bar */}
       {!focusDimActive && (
-        <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-slate-950/90 backdrop-blur-md grid grid-cols-5 py-1.5 px-1.5 text-[10px]">
+        <nav
+          aria-label="Điều hướng chính"
+          className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-slate-950/90 backdrop-blur-md grid grid-cols-5 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] px-1.5 text-[10px]"
+        >
           <button
             type="button"
+            aria-current={mainView === "timer" && mobileTab === "timer" ? "page" : undefined}
             onClick={() => {
               setMainView("timer");
               setMobileTab("timer");
@@ -916,6 +920,7 @@ export default function RukTimerApp() {
           </button>
           <button
             type="button"
+            aria-current={mainView === "cfop" ? "page" : undefined}
             onClick={() => setMainView("cfop")}
             className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
               mainView === "cfop"
@@ -928,6 +933,7 @@ export default function RukTimerApp() {
           </button>
           <button
             type="button"
+            aria-current={mainView === "timer" && mobileTab === "history" ? "page" : undefined}
             onClick={() => {
               setMainView("timer");
               setMobileTab("history");
@@ -943,6 +949,7 @@ export default function RukTimerApp() {
           </button>
           <button
             type="button"
+            aria-current={mainView === "timer" && mobileTab === "stats" ? "page" : undefined}
             onClick={() => {
               setMainView("timer");
               setMobileTab("stats");
@@ -958,6 +965,7 @@ export default function RukTimerApp() {
           </button>
           <button
             type="button"
+            aria-current={mainView === "timer" && mobileTab === "cube" ? "page" : undefined}
             onClick={() => {
               setMainView("timer");
               setMobileTab("cube");

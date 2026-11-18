@@ -48,6 +48,15 @@ export default function SolveDetailModal({
     setCopied(false);
   }, [target]);
 
+  React.useEffect(() => {
+    if (!target) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [target, onClose]);
+
   if (!target) return null;
 
   const copyText = async (txt: string) => {
@@ -72,12 +81,16 @@ export default function SolveDetailModal({
         onClick={onClose}
       >
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Chi tiết lượt giải ${solve.puzzle.toUpperCase()}`}
           className="w-full max-w-lg rounded-2xl border border-white/15 bg-slate-900 text-white p-6 shadow-2xl relative space-y-4"
           onClick={(e) => e.stopPropagation()}
         >
           <button
             type="button"
             onClick={onClose}
+            aria-label="Đóng"
             className="absolute right-4 top-4 p-1.5 rounded-lg bg-white/5 hover:bg-white/15 transition"
           >
             <X className="w-4 h-4" />

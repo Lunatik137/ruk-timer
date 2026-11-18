@@ -101,6 +101,7 @@ export default function Header({
           <div className="flex items-center p-0.5 rounded-xl bg-white/[0.06] border border-white/10">
             <button
               type="button"
+              aria-pressed={mainView === "timer"}
               onClick={(e) => {
                 onChangeMainView("timer");
                 e.currentTarget.blur();
@@ -116,6 +117,7 @@ export default function Header({
             </button>
             <button
               type="button"
+              aria-pressed={mainView === "cfop"}
               onClick={(e) => {
                 onChangeMainView("cfop");
                 e.currentTarget.blur();
@@ -174,6 +176,7 @@ export default function Header({
               <button
                 type="button"
                 title="Tạo Session mới"
+                aria-label="Tạo Session mới"
                 onClick={() => setIsCreating(true)}
                 className="h-9 w-9 inline-flex items-center justify-center rounded-lg bg-white/[0.05] hover:bg-white/[0.12] border border-white/10 transition"
               >
@@ -183,6 +186,7 @@ export default function Header({
               <button
                 type="button"
                 title="Đổi tên Session"
+                aria-label="Đổi tên Session"
                 onClick={() => {
                   setRenameValue(activeSession.name);
                   setIsRenaming(true);
@@ -196,6 +200,7 @@ export default function Header({
                 <button
                   type="button"
                   title="Xóa Session hiện tại"
+                  aria-label="Xóa Session hiện tại"
                   onClick={() => {
                     if (
                       window.confirm(
@@ -325,6 +330,7 @@ export default function Header({
                 type="button"
                 onClick={onSignOut}
                 title="Đăng xuất"
+                aria-label="Đăng xuất"
                 className="h-9 w-9 inline-flex items-center justify-center rounded-lg bg-white/[0.06] hover:bg-rose-500/20 hover:text-rose-300 border border-white/10 transition"
               >
                 <LogOut className="w-4 h-4" />
@@ -346,6 +352,7 @@ export default function Header({
             type="button"
             onClick={onOpenSettings}
             title="Cài đặt & Sao lưu"
+            aria-label="Cài đặt & Sao lưu"
             className="h-9 w-9 inline-flex items-center justify-center rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 transition"
           >
             <Settings className="w-4 h-4" />

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import {
   Download,
   FileJson,
@@ -55,6 +55,15 @@ export default function SettingsModal({
 }: SettingsModalProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
@@ -63,12 +72,16 @@ export default function SettingsModal({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-modal-title"
         className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 text-white p-6 shadow-2xl relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onClose}
+          aria-label="Đóng"
           className="absolute right-4 top-4 p-1.5 rounded-lg bg-white/5 hover:bg-white/15 transition"
         >
           <X className="w-4 h-4" />
@@ -79,7 +92,7 @@ export default function SettingsModal({
             <Sliders className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="font-bold text-lg">Cài đặt Timer & Dữ liệu</h2>
+            <h2 id="settings-modal-title" className="font-bold text-lg">Cài đặt Timer & Dữ liệu</h2>
             <p className="text-xs text-slate-400">
               Tùy chỉnh chuẩn thi đấu WCA, giao diện và sao lưu
             </p>

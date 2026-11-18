@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -32,6 +32,15 @@ export default function AuthModal({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -117,12 +126,16 @@ export default function AuthModal({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-modal-title"
         className="w-full max-w-md rounded-2xl border border-white/15 bg-slate-900 text-white p-6 shadow-2xl relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onClose}
+          aria-label="Đóng"
           className="absolute right-4 top-4 p-1.5 rounded-lg bg-white/5 hover:bg-white/15 transition"
         >
           <X className="w-4 h-4" />
@@ -133,7 +146,7 @@ export default function AuthModal({
             <Cloud className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="font-bold text-lg">
+            <h2 id="auth-modal-title" className="font-bold text-lg">
               {mode === "signin" ? "Đăng nhập Cloud" : "Tạo tài khoản mới"}
             </h2>
             <p className="text-xs text-slate-400">

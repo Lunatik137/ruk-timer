@@ -25,6 +25,13 @@ export default function HistoryPanel({
   onClearSession,
 }: HistoryPanelProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  React.useEffect(() => {
+    if (!confirmClear) return;
+    const t = setTimeout(() => setConfirmClear(false), 3000);
+    return () => clearTimeout(t);
+  }, [confirmClear]);
 
   // Reverse chronological so newest solve is on top
   const reversedSolves = useMemo(() => {
@@ -52,18 +59,21 @@ export default function HistoryPanel({
           <button
             type="button"
             onClick={() => {
-              if (
-                window.confirm(
-                  `Xóa toàn bộ ${enrichedSolves.length} lượt giải trong session này?`
-                )
-              ) {
+              if (confirmClear) {
+                setConfirmClear(false);
                 onClearSession();
+              } else {
+                setConfirmClear(true);
               }
             }}
-            className="text-[11px] px-2 py-1 rounded-lg bg-white/[0.05] hover:bg-rose-500/20 hover:text-rose-300 border border-white/10 inline-flex items-center gap-1 transition opacity-75 hover:opacity-100"
+            className={`text-[11px] px-2 py-1 rounded-lg border inline-flex items-center gap-1 transition ${
+              confirmClear
+                ? "bg-rose-500 text-white border-rose-400 font-semibold"
+                : "bg-white/[0.05] hover:bg-rose-500/20 hover:text-rose-300 border-white/10 opacity-75 hover:opacity-100"
+            }`}
           >
             <Trash2 className="w-3 h-3" />
-            <span>Xóa hết</span>
+            <span>{confirmClear ? "Xác nhận xóa?" : "Xóa hết"}</span>
           </button>
         )}
       </div>
@@ -83,6 +93,7 @@ export default function HistoryPanel({
             {searchQuery && (
               <button
                 type="button"
+                aria-label="Xóa từ khóa tìm kiếm"
                 onClick={() => setSearchQuery("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 opacity-60 hover:opacity-100"
               >
@@ -118,11 +129,11 @@ export default function HistoryPanel({
                 onClick={() => onSelectSolve(s)}
                 className="grid grid-cols-12 items-center px-3.5 py-2 text-xs hover:bg-white/[0.05] cursor-pointer transition group"
               >
-                <div className="col-span-2 font-mono opacity-50">
+                <div className="col-span-2 font-mono tabular-nums opacity-50">
                   {s.indexNumber}
                 </div>
 
-                <div className="col-span-4 font-mono font-semibold flex items-center gap-1">
+                <div className="col-span-4 font-mono tabular-nums font-semibold flex items-center gap-1">
                   <span
                     className={
                       s.penalty === "DNF"
@@ -146,21 +157,22 @@ export default function HistoryPanel({
                   )}
                 </div>
 
-                <div className="col-span-3 text-right font-mono opacity-80">
+                <div className="col-span-3 text-right font-mono tabular-nums opacity-80">
                   {formatTimeMs(s.rollingAo5, decimals)}
                 </div>
 
                 <div
-                  className="col-span-3 flex items-center justify-end gap-1"
+                  className="col-span-3 flex items-center justify-end gap-1.5"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <button
                     type="button"
                     title="Phạt +2s"
+                    aria-label={`Phạt +2 giây cho lượt #${s.indexNumber}`}
                     onClick={() =>
                       onTogglePenalty(s.id, s.penalty === "+2" ? "OK" : "+2")
                     }
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition ${
+                    className={`min-h-[26px] px-1.5 py-0.5 rounded text-[10px] font-bold transition ${
                       s.penalty === "+2"
                         ? "bg-amber-400 text-slate-950"
                         : "bg-white/[0.06] hover:bg-amber-400/20 opacity-65 group-hover:opacity-100"
@@ -171,10 +183,11 @@ export default function HistoryPanel({
                   <button
                     type="button"
                     title="Phạt DNF"
+                    aria-label={`Đánh dấu DNF cho lượt #${s.indexNumber}`}
                     onClick={() =>
                       onTogglePenalty(s.id, s.penalty === "DNF" ? "OK" : "DNF")
                     }
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition ${
+                    className={`min-h-[26px] px-1.5 py-0.5 rounded text-[10px] font-bold transition ${
                       s.penalty === "DNF"
                         ? "bg-rose-500 text-white"
                         : "bg-white/[0.06] hover:bg-rose-500/20 opacity-65 group-hover:opacity-100"
@@ -185,8 +198,9 @@ export default function HistoryPanel({
                   <button
                     type="button"
                     title="Xóa lượt giải"
+                    aria-label={`Xóa lượt #${s.indexNumber}`}
                     onClick={() => onDeleteSolve(s.id)}
-                    className="p-1 rounded hover:bg-rose-500/20 hover:text-rose-400 opacity-50 group-hover:opacity-100 transition"
+                    className="min-h-[26px] min-w-[26px] inline-flex items-center justify-center p-1 rounded hover:bg-rose-500/20 hover:text-rose-400 opacity-50 group-hover:opacity-100 transition"
                   >
                     <Trash2 className="w-3 h-3" />
                   </button>
