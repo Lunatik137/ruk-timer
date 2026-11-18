@@ -75,28 +75,39 @@ export async function fetchCloudMobileData(userId: string): Promise<{
   solves: Solve[];
   error?: string;
 }> {
-  const [sessionsRes, solvesRes] = await Promise.all([
-    supabase
-      .from("cube_sessions")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true }),
-    supabase
-      .from("solves")
-      .select("*")
-      .eq("user_id", userId)
-      .order("solved_at", { ascending: true }),
-  ]);
+  const sessionsRes = await supabase
+    .from("cube_sessions")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true });
 
   if (sessionsRes.error) {
     return { sessions: [], solves: [], error: sessionsRes.error.message };
   }
-  if (solvesRes.error) {
-    return { sessions: [], solves: [], error: solvesRes.error.message };
+
+  // Paginated fetch of ALL solves (>1,000 rows support)
+  const solves: Solve[] = [];
+  const PAGE_SIZE = 1000;
+  let offset = 0;
+
+  while (true) {
+    const pageRes = await supabase
+      .from("solves")
+      .select("*")
+      .eq("user_id", userId)
+      .order("solved_at", { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (pageRes.error) {
+      return { sessions: [], solves: [], error: pageRes.error.message };
+    }
+    const batch = (pageRes.data ?? []) as Solve[];
+    solves.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
   }
 
   let sessions = (sessionsRes.data ?? []) as CubeSession[];
-  const solves = (solvesRes.data ?? []) as Solve[];
 
   if (sessions.length === 0) {
     const def: CubeSession = {

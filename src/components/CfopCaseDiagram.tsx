@@ -2,7 +2,7 @@
 
 import React, { useMemo } from "react";
 import { CfopStage, simulateCfopCaseState } from "@/lib/cfop";
-import { FaceColor } from "@/lib/scrambles";
+import { FaceColor, simulateCubeScramble } from "@/lib/scrambles";
 
 const REAL_COLOR_BG: Record<FaceColor, string> = {
   W: "bg-[#f8fafc]",
@@ -16,15 +16,21 @@ const REAL_COLOR_BG: Record<FaceColor, string> = {
 interface CfopCaseDiagramProps {
   stage: CfopStage;
   formula: string;
+  appliedMoves?: string; // Optional partial moves executed from the setup state
   size?: "sm" | "lg";
 }
 
 export default function CfopCaseDiagram({
   stage,
   formula,
+  appliedMoves,
   size = "sm",
 }: CfopCaseDiagramProps) {
-  const { net } = useMemo(() => simulateCfopCaseState(formula), [formula]);
+  const net = useMemo(() => {
+    const base = simulateCfopCaseState(formula);
+    if (!appliedMoves) return base.net;
+    return simulateCubeScramble(3, `z2 ${base.setupMoves} ${appliedMoves}`);
+  }, [formula, appliedMoves]);
 
   const isLarge = size === "lg";
   const cellDim = isLarge ? "w-7 h-7" : "w-5 h-5";
@@ -51,7 +57,6 @@ export default function CfopCaseDiagram({
       return REAL_COLOR_BG[c];
     };
 
-    // Exact geometric mapping around U (row 0 = Back, row 2 = Front, col 0 = Left, col 2 = Right)
     const topBars: FaceColor[] = [net.B[0][2], net.B[0][1], net.B[0][0]];
     const bottomBars: FaceColor[] = [net.F[0][0], net.F[0][1], net.F[0][2]];
     const leftBars: FaceColor[] = [net.L[0][0], net.L[0][1], net.L[0][2]];
@@ -116,7 +121,7 @@ export default function CfopCaseDiagram({
     );
   }
 
-  // F2L & CROSS Diagram: Show U (Top) above F (Front) & R (Right) so the FR slot is crystal clear!
+  // F2L & CROSS Diagram: Show U (Top) above F (Front) & R (Right)
   const miniCell = isLarge ? "w-5 h-5" : "w-3.5 h-3.5";
 
   const renderFace = (grid: FaceColor[][], label: string) => (

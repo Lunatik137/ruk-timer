@@ -4,8 +4,11 @@ import {
   invertAlgorithm,
   simulateCubeScramble,
 } from "@/lib/scrambles";
+import type { CfopMasteryStatus, CfopProgressItem, StatSummary } from "@/types/cubing";
 
 export type CfopStage = "CROSS" | "F2L" | "OLL" | "PLL";
+
+export type CfopLearningTier = 1 | 2 | 3 | 4;
 
 export interface CfopAlgorithm {
   id: string;
@@ -18,6 +21,15 @@ export interface CfopAlgorithm {
   isTwoLook?: boolean;
   recognition: string;
 }
+
+export interface AlgorithmVariantComparison {
+  label: string;
+  formula: string;
+  stmMoves: number;
+  styleTag: string;
+  ergonomics: string;
+}
+
 
 /**
  * Canonical session name used to store each CFOP algorithm's dedicated timer history.
@@ -835,7 +847,373 @@ export const CFOP_ALGORITHMS: CfopAlgorithm[] = [
     name: "Nb Perm (Đối xứng của Na Perm)",
     group: "Hoán vị Góc chéo",
     formula: "(R' U R U') (R' F' U' F) (R U R' F) R' F' (R U' R)",
+    altFormula: "(r' D' F r U' r' F' D r2 U r' U' r' F r F')",
     recognition:
       "Bốn mặt đều có khối 2 ô nằm lệch về bên trái khi nhìn đối diện.",
   },
+  // --- Additional Advanced F2L & OLL Cases for Full Mastery ---
+  {
+    id: "f2l-19",
+    stage: "F2L",
+    code: "F2L 19",
+    name: "Keyhole / Chèn khe Sau-Phải (BR) không xoay khối",
+    group: "F2L Không xoay khối (Back Slot)",
+    formula: "U' (R' U R)",
+    altFormula: "R' U2 R U R' U' R",
+    recognition:
+      "Tận dụng khe Sau-Phải (BR) để đẩy các cặp đã ghép về phía sau, nhường 2 khe mặt Trước cho khả năng nhìn Lookahead tối đa.",
+  },
+  {
+    id: "f2l-20",
+    stage: "F2L",
+    code: "F2L 20",
+    name: "Góc ngửa trắng, Cạnh nằm ngược trong khe FR",
+    group: "Viên nằm sẵn trong khe",
+    formula: "(R U' R' U') (R U R' U2) (R U' R')",
+    altFormula: "F' L' U2 L F (R U R')",
+    recognition:
+      "Góc ở FRU ngửa mặt trắng lên trời, viên cạnh đã nằm trong khe FR nhưng bị ngược màu mặt trước-phải.",
+  },
+  {
+    id: "f2l-21",
+    stage: "F2L",
+    code: "F2L 21",
+    name: "Cả Góc và Cạnh nằm đúng chiều nhưng lệch pha",
+    group: "Cả hai nằm trong khe",
+    formula: "(R U' R' U) (R U2 R' U) (R U' R')",
+    recognition:
+      "Góc ở dưới đáy khe FR (trắng sang phải), cạnh nằm đúng chiều bên trên: nhấc ra tách cặp rồi ghép lại trong 1 chuỗi R-U duy nhất.",
+  },
+  {
+    id: "oll-09",
+    stage: "OLL",
+    code: "OLL 09",
+    name: "Kite / Con diều (Cá nhỏ kèm góc đối)",
+    group: "Full OLL • Cá & Tia chớp",
+    formula: "(R U R' U') R' F (R2 U R' U') F'",
+    recognition:
+      "Hình con cá nhỏ trên mặt U nhưng các mặt bên có thanh đèn pha không đối xứng: cực kỳ phổ biến và chảy tay mượt với R2 U R' U' F'.",
+  },
+  {
+    id: "oll-10",
+    stage: "OLL",
+    code: "OLL 10",
+    name: "Anti-Kite (Con diều trái)",
+    group: "Full OLL • Cá & Tia chớp",
+    formula: "(R U R' U) (R' F R F') (R U2 R')",
+    recognition:
+      "Ghép trực tiếp 3 nhịp: Mở R U R' U + Sledgehammer + Đóng R U2 R'!",
+  },
+  {
+    id: "oll-13",
+    stage: "OLL",
+    code: "OLL 13",
+    name: "Knight Move (Nước đi Quân Mã phải)",
+    group: "Full OLL • Chữ L & Quân Mã",
+    formula: "F (U R U' R2) F' (R U R U' R')",
+    altFormula: "(r U' r' U' r U r') (F' U F)",
+    recognition:
+      "Vạch ngang 3 ô vàng nối thêm 1 ô góc tạo hình chữ L dài (nước nhảy quân mã cờ vua).",
+  },
+  {
+    id: "oll-14",
+    stage: "OLL",
+    code: "OLL 14",
+    name: "Knight Move (Nước đi Quân Mã trái)",
+    group: "Full OLL • Chữ L & Quân Mã",
+    formula: "(R' F R) (U R' F' R) (F U' F')",
+    recognition:
+      "Đối xứng của OLL 13: vạch chữ L quân mã quay về bên trái.",
+  },
+  {
+    id: "oll-35",
+    stage: "OLL",
+    code: "OLL 35",
+    name: "Fish Salad (Con cá chéo góc)",
+    group: "Full OLL • Cá & Tia chớp",
+    formula: "(R U2) (R2 F R F') (R U2 R')",
+    recognition:
+      "Hai góc chéo nhau và hai cạnh kề nhau đã lật vàng: chèn Sledgehammer ngay giữa hai nhịp R U2!",
+  },
+  {
+    id: "oll-43",
+    stage: "OLL",
+    code: "OLL 43",
+    name: "Anti-P (Chữ P ngược siêu tốc)",
+    group: "Full OLL • Chữ P & Chữ W",
+    formula: "f' (L' U' L U) f",
+    altFormula: "R' U' F' U F R",
+    recognition:
+      "Hình chữ P với khối vàng nằm bên phải: dùng R' U' F' U F R không cần đổi tay cầm!",
+  },
+  {
+    id: "oll-48",
+    stage: "OLL",
+    code: "OLL 48",
+    name: "Breakneck L-Shape (Góc L nhỏ x2 Sexy)",
+    group: "Full OLL • Chữ L & Quân Mã",
+    formula: "F (R U R' U') (R U R' U') F'",
+    recognition:
+      "Y hệt công thức OLL 45 tạo dấu cộng nhưng lặp 2 lần Sexy Move ở giữa (F + Double Sexy + F')!",
+  },
 ];
+
+// ============================================================================
+// CFOP Learning Path Tiers, Variant Comparison, SM-2 SRS & Adaptive Selector
+// ============================================================================
+
+export const CFOP_LEARNING_PATH_TIERS: {
+  tier: CfopLearningTier;
+  title: string;
+  targetBadge: string;
+  description: string;
+}[] = [
+  {
+    tier: 1,
+    title: "Chặng 1: Nền tảng & 2-Look CFOP",
+    targetBadge: "Mục tiêu: Sub-35s",
+    description:
+      "Làm chủ các Trigger nền tảng, F2L cơ bản tầng trên, 10 bài 2-Look OLL và 6 bài 2-Look PLL để giải hoàn chỉnh không bao giờ bị tắc.",
+  },
+  {
+    tier: 2,
+    title: "Chặng 2: F2L Toàn diện & Tách cặp trong khe",
+    targetBadge: "Mục tiêu: Sub-22s",
+    description:
+      "Xử lý mượt mọi tình huống góc/cạnh dính sai hoặc kẹt sẵn dưới khe F2L mà không cần xoay khối Rubik liên tục.",
+  },
+  {
+    tier: 3,
+    title: "Chặng 3: Chinh phục Full PLL (21/21)",
+    targetBadge: "Mục tiêu: Sub-16s",
+    description:
+      "Học thuộc toàn bộ 21 trường hợp hoán vị tầng cuối (T, J, A, F, R, V, E, N và bộ tứ G-Perm) để hoàn thiện khối Rubik trong 1 bước nhìn.",
+  },
+  {
+    tier: 4,
+    title: "Chặng 4: Full OLL 1-Look Tốc độ cao",
+    targetBadge: "Mục tiêu: Sub-12s",
+    description:
+      "Định hướng mặt vàng chỉ trong 1 công thức duy nhất với các nhóm Chữ T, Ô vuông, Tia chớp, Chữ P/W, Quân Mã và Dot.",
+  },
+];
+
+export function getAlgLearningTier(alg: CfopAlgorithm): CfopLearningTier {
+  if (alg.isTwoLook || alg.stage === "CROSS") return 1;
+  if (alg.stage === "F2L") return 2;
+  if (alg.stage === "PLL") return 3;
+  return 4;
+}
+
+/**
+ * Compares primary, alternative, and custom formulas for an algorithm (STM move count, fingertrick family).
+ */
+export function getAlgorithmVariants(
+  alg: CfopAlgorithm,
+  customFormula?: string
+): AlgorithmVariantComparison[] {
+  const classifyStyle = (f: string): { tag: string; ergo: string } => {
+    if (/\bM['2]?/.test(f)) {
+      return {
+        tag: "M-Slice (<M, U>)",
+        ergo: "Tốc độ TPS cực cao với ngón áp út + ngón giữa gẩy M; rất ít xoay cổ tay.",
+      };
+    }
+    if (/\b[rlfb]['2]?/.test(f)) {
+      return {
+        tag: "Wide-Turn (<r, U, R>)",
+        ergo: "Xoay 2 tầng mượt mà, thay thế các nước F/B khó gẩy bằng chuyển động cổ tay R-U.",
+      };
+    }
+    if (!/\b[FBxyzD]['2]?/.test(f)) {
+      return {
+        tag: "2-Gen (<R, U>)",
+        ergo: "Thuần 2 mặt Phải-Trên (2-Gen): không bao giờ cần đổi thế cầm (zero regrip), tối ưu cho cả giải 1 tay (OH).",
+      };
+    }
+    return {
+      tag: "Standard WCA",
+      ergo: "Kết hợp Trigger R-U với Sledgehammer/D-move cân bằng cho hai tay.",
+    };
+  };
+
+  const list: AlgorithmVariantComparison[] = [];
+  const s1 = classifyStyle(alg.formula);
+  list.push({
+    label: "Công thức chuẩn #1",
+    formula: alg.formula,
+    stmMoves: countAlgMoves(alg.formula),
+    styleTag: s1.tag,
+    ergonomics: s1.ergo,
+  });
+
+  if (alg.altFormula) {
+    const s2 = classifyStyle(alg.altFormula);
+    list.push({
+      label: "Biến thể #2 (Alt)",
+      formula: alg.altFormula,
+      stmMoves: countAlgMoves(alg.altFormula),
+      styleTag: s2.tag,
+      ergonomics: s2.ergo,
+    });
+  }
+
+  if (
+    customFormula &&
+    customFormula.trim() &&
+    customFormula.trim() !== alg.formula &&
+    customFormula.trim() !== alg.altFormula
+  ) {
+    const sc = classifyStyle(customFormula);
+    list.push({
+      label: "Công thức cá nhân",
+      formula: customFormula.trim(),
+      stmMoves: countAlgMoves(customFormula),
+      styleTag: sc.tag,
+      ergonomics: sc.ergo,
+    });
+  }
+
+  return list;
+}
+
+/**
+ * SuperMemo SM-2 Spaced Repetition Scheduler for CFOP Algorithms.
+ * qualityGrade: 1 (Quên / DNF), 2 (Khó / Chậm), 4 (Tốt / Chuẩn), 5 (Hoàn hảo / Nhớ phản xạ)
+ */
+export function computeNextSm2Progress(
+  algId: string,
+  current: CfopProgressItem | undefined,
+  qualityGrade: 1 | 2 | 4 | 5,
+  preferredFormula?: string
+): CfopProgressItem {
+  const now = new Date();
+  let ease = current?.ease_factor ?? 2.5;
+  let reps = current?.repetitions ?? 0;
+  let interval = current?.interval_days ?? 0;
+
+  if (qualityGrade < 3) {
+    reps = 0;
+    interval = 1;
+  } else {
+    if (reps === 0) {
+      interval = 1;
+    } else if (reps === 1) {
+      interval = 3;
+    } else {
+      interval = Math.min(60, Math.round(interval * ease));
+    }
+    reps += 1;
+  }
+
+  ease = Math.max(
+    1.3,
+    Number(
+      (
+        ease +
+        (0.1 - (5 - qualityGrade) * (0.08 + (5 - qualityGrade) * 0.02))
+      ).toFixed(2)
+    )
+  );
+
+  const status: CfopMasteryStatus =
+    qualityGrade === 1
+      ? "learning"
+      : reps >= 4 && qualityGrade >= 4
+      ? "mastered"
+      : reps >= 1
+      ? "learned"
+      : "learning";
+
+  const nextDate = new Date(now.getTime() + interval * 86400 * 1000);
+
+  return {
+    alg_id: algId,
+    status,
+    preferred_formula: preferredFormula ?? current?.preferred_formula,
+    ease_factor: ease,
+    interval_days: interval,
+    repetitions: reps,
+    next_review_at: nextDate.toISOString(),
+    last_drilled_at: now.toISOString(),
+    updated_at: now.toISOString(),
+  };
+}
+
+export function isCfopDueForReview(item?: CfopProgressItem): boolean {
+  if (!item || item.status === "unlearned") return false;
+  const dueMs = new Date(item.next_review_at).getTime();
+  return !Number.isNaN(dueMs) && dueMs <= Date.now();
+}
+
+/**
+ * Adaptive Case Selector: Picks the next CFOP case to drill based on SRS due date,
+ * weakness score (high Ao5 relative to STM move count), and low repetition count.
+ */
+export function selectAdaptiveCfopCase(
+  candidates: CfopAlgorithm[],
+  statsMap: Map<string, { summary: StatSummary }>,
+  progressMap: Record<string, CfopProgressItem>,
+  lastPickedId?: string
+): {
+  alg: CfopAlgorithm;
+  reason: string;
+  randomAuf: "" | "U" | "U'" | "U2";
+} {
+  const pool =
+    candidates.length > 1
+      ? candidates.filter((c) => c.id !== lastPickedId)
+      : candidates;
+
+  const scored = pool.map((alg) => {
+    const sName = getCfopSessionName(alg);
+    const st = statsMap.get(sName)?.summary;
+    const prog = progressMap[alg.id];
+    const formula = prog?.preferred_formula || alg.formula;
+    const moves = Math.max(4, countAlgMoves(formula));
+    const targetMs = moves * 170; // ~5.8 TPS benchmark
+
+    let weight = 10;
+    let reason = "Ôn tập ngẫu nhiên củng cố phản xạ";
+
+    if (isCfopDueForReview(prog)) {
+      weight += 45;
+      reason = "Đến hạn ôn tập ngắt quãng (SRS Due)";
+    } else if (!st || st.totalCount < 3) {
+      weight += 30;
+      reason = "Cần thêm dữ liệu bấm giờ (< 3 lượt)";
+    } else {
+      const refTime =
+        typeof st.currentAo5 === "number"
+          ? st.currentAo5
+          : st.mean ?? targetMs;
+      if (refTime > targetMs * 1.25) {
+        weight += 35;
+        reason = "Tốc độ thực hiện còn chậm so với số nước STM";
+      }
+      if (st.dnfCount > 0) {
+        weight += 20;
+        reason = "Từng gặp lỗi DNF / quên công thức";
+      }
+    }
+
+    // Add controlled randomness so user doesn't get the exact same card deterministically
+    const jitter = Math.random() * 18;
+    return { alg, score: weight + jitter, reason };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  const chosen = scored[0] || {
+    alg: CFOP_ALGORITHMS[0],
+    reason: "Luyện tập chuẩn",
+  };
+  const aufs: ("" | "U" | "U'" | "U2")[] = ["", "U", "U'", "U2"];
+  const randomAuf = aufs[Math.floor(Math.random() * aufs.length)];
+
+  return {
+    alg: chosen.alg,
+    reason: chosen.reason,
+    randomAuf,
+  };
+}
+

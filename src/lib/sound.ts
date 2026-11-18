@@ -1,4 +1,4 @@
-// Synthesized sound effects via Web Audio API (no external audio assets required)
+// Synthesized sound effects via Web Audio API + Optional WCA Voice Referee (Web Speech API)
 
 let audioCtx: AudioContext | null = null;
 
@@ -44,13 +44,37 @@ export function playBeep(freq = 880, durationMs = 120, volume = 0.12) {
   }
 }
 
-export function playInspection8s() {
-  playBeep(740, 140, 0.15);
+export function speakRefereeCall(text: string) {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  try {
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "en-US";
+    utter.rate = 1.15;
+    utter.volume = 0.85;
+    window.speechSynthesis.speak(utter);
+  } catch {
+    // Ignore speech synthesis errors
+  }
 }
 
-export function playInspection12s() {
+export function playInspection8s(voiceEnabled = false) {
+  playBeep(740, 140, 0.15);
+  if (voiceEnabled) {
+    speakRefereeCall("Eight seconds");
+  }
+}
+
+export function playInspection12s(voiceEnabled = false) {
   playBeep(988, 110, 0.18);
   setTimeout(() => playBeep(988, 140, 0.18), 160);
+  if (voiceEnabled) {
+    speakRefereeCall("Twelve seconds");
+  }
+}
+
+export function playSplitTick() {
+  playBeep(660, 55, 0.1);
 }
 
 export function playPbCelebration() {

@@ -1,18 +1,31 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowUpRight,
   BookOpen,
+  BrainCircuit,
+  CalendarClock,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Eye,
   EyeOff,
   Flame,
   GraduationCap,
+  HelpCircle,
   Play,
+  RotateCcw,
   Search,
+  Shuffle,
   Sparkles,
   Timer,
   Trash2,
@@ -20,14 +33,22 @@ import {
   X,
 } from "lucide-react";
 import CfopCaseDiagram from "@/components/CfopCaseDiagram";
+import { buildCfopTutorGuidance } from "@/lib/analytics/coach";
 import {
   CFOP_ALGORITHMS,
+  CFOP_LEARNING_PATH_TIERS,
   CFOP_STAGE_META,
   CfopAlgorithm,
+  CfopLearningTier,
   CfopStage,
+  computeNextSm2Progress,
+  getAlgLearningTier,
   getCfopSessionName,
+  isCfopDueForReview,
+  selectAdaptiveCfopCase,
   simulateCfopCaseState,
 } from "@/lib/cfop";
+import { tokenizeAlgorithm } from "@/lib/scrambles";
 import { playPbCelebration } from "@/lib/sound";
 import {
   calculateSessionStats,
@@ -36,18 +57,19 @@ import {
   getEffectiveMs,
 } from "@/lib/stats";
 import {
+  CfopProgressItem,
   CubeSession,
   PenaltyType,
   Solve,
   TimerSettings,
 } from "@/types/cubing";
 
-const LS_LEARNED_CFOP_KEY = "ruktimer_cfop_learned_v1";
-
 interface CfopTrainerViewProps {
   sessions: CubeSession[];
   solves: Solve[];
   settings: TimerSettings;
+  cfopProgress: Record<string, CfopProgressItem>;
+  onUpdateCfopProgress: (item: CfopProgressItem) => void;
   onEnsureAlgSession: (alg: CfopAlgorithm) => CubeSession;
   onRecordAlgSolve: (
     sessionId: string,
@@ -66,6 +88,8 @@ export default function CfopTrainerView({
   sessions,
   solves,
   settings,
+  cfopProgress,
+  onUpdateCfopProgress,
   onEnsureAlgSession,
   onRecordAlgSolve,
   onUpdateSolvePenalty,
@@ -73,16 +97,43 @@ export default function CfopTrainerView({
   onOpenInMainTimer,
 }: CfopTrainerViewProps) {
   const [stageFilter, setStageFilter] = useState<"ALL" | CfopStage>("PLL");
+  const [tierFilter, setTierFilter] = useState<"ALL" | CfopLearningTier>("ALL");
   const [onlyTwoLook, setOnlyTwoLook] = useState(false);
   const [onlyUnlearned, setOnlyUnlearned] = useState(false);
+  const [onlyDueReview, setOnlyDueReview] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [learnedIds, setLearnedIds] = useState<Set<string>>(new Set());
 
   // Active Algorithm in Dedicated Drill Studio Modal
   const [drillingAlg, setDrillingAlg] = useState<CfopAlgorithm | null>(null);
   const [activeDrillSessionId, setActiveDrillSessionId] = useState<string>("");
   const [blindMode, setBlindMode] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Adaptive Random Drill Mode state
+  const [adaptiveMode, setAdaptiveMode] = useState(false);
+  const [adaptiveRevealed, setAdaptiveRevealed] = useState(true);
+  const [adaptiveReason, setAdaptiveReason] = useState<string>("");
+  const [adaptiveAuf, setAdaptiveAuf] = useState<"" | "U" | "U'" | "U2">("");
+
+  // Step-by-Step Trigger Scrubber & AI Tutor inside Drill Studio
+  const [scrubberStep, setScrubberStep] = useState<number | null>(null);
+  const [showTutorPanel, setShowTutorPanel] = useState(false);
+  const [tutorQuestion, setTutorQuestion] = useState("");
+  const [tutorAiReply, setTutorAiReply] = useState<string | null>(null);
+  const [tutorLoading, setTutorLoading] = useState(false);
+
+  // Flash Recognition Quiz Mode
+  const [quizOpen, setQuizOpen] = useState(false);
+  const [quizTarget, setQuizTarget] = useState<CfopAlgorithm | null>(null);
+  const [quizChoices, setQuizChoices] = useState<CfopAlgorithm[]>([]);
+  const [quizAuf, setQuizAuf] = useState<string>("");
+  const [quizStartMs, setQuizStartMs] = useState<number>(0);
+  const [quizResult, setQuizResult] = useState<{
+    correct: boolean;
+    pickedId: string;
+    reactionMs: number;
+  } | null>(null);
+  const [quizStreak, setQuizStreak] = useState(0);
 
   // Drill Timer State
   const [drillPhase, setDrillPhase] = useState<DrillPhase>("idle");
@@ -94,32 +145,39 @@ export default function CfopTrainerView({
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rafRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(LS_LEARNED_CFOP_KEY);
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) setLearnedIds(new Set(arr));
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
+  const isAlgLearned = useCallback(
+    (algId: string) => {
+      const p = cfopProgress[algId];
+      return Boolean(p && (p.status === "learned" || p.status === "mastered"));
+    },
+    [cfopProgress]
+  );
 
-  const toggleLearned = (id: string) => {
-    setLearnedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      if (typeof window !== "undefined") {
-        localStorage.setItem(LS_LEARNED_CFOP_KEY, JSON.stringify([...next]));
-      }
-      return next;
-    });
+  const toggleLearned = (alg: CfopAlgorithm) => {
+    const existing = cfopProgress[alg.id];
+    const currentlyLearned =
+      existing &&
+      (existing.status === "learned" || existing.status === "mastered");
+
+    if (currentlyLearned) {
+      const nowIso = new Date().toISOString();
+      onUpdateCfopProgress({
+        alg_id: alg.id,
+        status: "unlearned",
+        preferred_formula: existing?.preferred_formula,
+        ease_factor: 2.5,
+        interval_days: 0,
+        repetitions: 0,
+        next_review_at: nowIso,
+        updated_at: nowIso,
+      });
+    } else {
+      const next = computeNextSm2Progress(alg.id, existing, 4);
+      onUpdateCfopProgress(next);
+    }
   };
 
-  // Precompute stats per CFOP session name so every card shows live PB / Ao5 / solve count!
+  // Precompute stats per CFOP session name
   const sessionStatsByName = useMemo(() => {
     const sessionByName = new Map<string, CubeSession>();
     for (const s of sessions) {
@@ -157,13 +215,25 @@ export default function CfopTrainerView({
     return map;
   }, [sessions, solves]);
 
+  // Due for SRS review count
+  const dueReviewCount = useMemo(
+    () =>
+      CFOP_ALGORITHMS.filter((alg) => isCfopDueForReview(cfopProgress[alg.id]))
+        .length,
+    [cfopProgress]
+  );
+
   // Filtered CFOP algorithm cards
   const filteredAlgs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return CFOP_ALGORITHMS.filter((alg) => {
       if (stageFilter !== "ALL" && alg.stage !== stageFilter) return false;
+      if (tierFilter !== "ALL" && getAlgLearningTier(alg) !== tierFilter)
+        return false;
       if (onlyTwoLook && !alg.isTwoLook) return false;
-      if (onlyUnlearned && learnedIds.has(alg.id)) return false;
+      if (onlyUnlearned && isAlgLearned(alg.id)) return false;
+      if (onlyDueReview && !isCfopDueForReview(cfopProgress[alg.id]))
+        return false;
       if (q) {
         return (
           alg.name.toLowerCase().includes(q) ||
@@ -175,7 +245,16 @@ export default function CfopTrainerView({
       }
       return true;
     });
-  }, [stageFilter, onlyTwoLook, onlyUnlearned, learnedIds, searchQuery]);
+  }, [
+    stageFilter,
+    tierFilter,
+    onlyTwoLook,
+    onlyUnlearned,
+    onlyDueReview,
+    isAlgLearned,
+    cfopProgress,
+    searchQuery,
+  ]);
 
   // Progress counts
   const progressByStage = useMemo(() => {
@@ -188,30 +267,113 @@ export default function CfopTrainerView({
     };
     for (const alg of CFOP_ALGORITHMS) {
       counts[alg.stage].total++;
-      if (learnedIds.has(alg.id)) {
+      if (isAlgLearned(alg.id)) {
         counts.ALL.learned++;
         counts[alg.stage].learned++;
       }
     }
     return counts;
-  }, [learnedIds]);
+  }, [isAlgLearned]);
 
-  const handleOpenDrill = (alg: CfopAlgorithm) => {
+  const handleOpenDrill = (alg: CfopAlgorithm, isAdaptive = false) => {
     const sess = onEnsureAlgSession(alg);
     setActiveDrillSessionId(sess.id);
     setDrillingAlg(alg);
     setDrillMs(0);
     setIsDrillPb(false);
-    setBlindMode(false);
+    setBlindMode(isAdaptive);
+    setAdaptiveMode(isAdaptive);
+    setAdaptiveRevealed(!isAdaptive);
+    setScrubberStep(null);
+    setTutorAiReply(null);
     drillPhaseRef.current = "idle";
     setDrillPhase("idle");
   };
 
-  // Active Drill Session data
-  const activeDrillCaseInfo = useMemo(
-    () => (drillingAlg ? simulateCfopCaseState(drillingAlg.formula) : null),
-    [drillingAlg]
+  // Start Adaptive Random Drill across currently filtered algorithms
+  const handleStartAdaptiveDrill = useCallback(
+    (previousAlgId?: string) => {
+      const pool = filteredAlgs.length > 0 ? filteredAlgs : CFOP_ALGORITHMS;
+      const picked = selectAdaptiveCfopCase(
+        pool,
+        sessionStatsByName,
+        cfopProgress,
+        previousAlgId
+      );
+      setAdaptiveReason(picked.reason);
+      setAdaptiveAuf(picked.randomAuf);
+      handleOpenDrill(picked.alg, true);
+    },
+    [cfopProgress, filteredAlgs, sessionStatsByName]
   );
+
+  // Start Recognition Quiz Round
+  const generateNextQuizQuestion = useCallback(() => {
+    const pool =
+      filteredAlgs.length >= 4
+        ? filteredAlgs
+        : CFOP_ALGORITHMS.filter((a) => a.stage === "PLL" || a.stage === "OLL");
+    const target = pool[Math.floor(Math.random() * pool.length)];
+    const distractors = pool
+      .filter((a) => a.id !== target.id)
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 3);
+    const choices = [target, ...distractors].sort(() => Math.random() - 0.5);
+    const aufs = ["", "U", "U'", "U2"];
+    setQuizTarget(target);
+    setQuizChoices(choices);
+    setQuizAuf(aufs[Math.floor(Math.random() * aufs.length)]);
+    setQuizResult(null);
+    setQuizStartMs(performance.now());
+    setQuizOpen(true);
+  }, [filteredAlgs]);
+
+  const handleAnswerQuiz = (picked: CfopAlgorithm) => {
+    if (!quizTarget || quizResult) return;
+    const reactionMs = Math.max(
+      50,
+      Math.round(performance.now() - quizStartMs)
+    );
+    const correct = picked.id === quizTarget.id;
+    setQuizResult({
+      correct,
+      pickedId: picked.id,
+      reactionMs,
+    });
+    setQuizStreak((s) => (correct ? s + 1 : 0));
+  };
+
+  // Active formula (respecting user's preferred variant)
+  const activeDrillingFormula = useMemo(() => {
+    if (!drillingAlg) return "";
+    return cfopProgress[drillingAlg.id]?.preferred_formula || drillingAlg.formula;
+  }, [drillingAlg, cfopProgress]);
+
+  const activeDrillCaseInfo = useMemo(() => {
+    if (!drillingAlg) return null;
+    const base = simulateCfopCaseState(activeDrillingFormula);
+    const setupWithAuf = adaptiveMode && adaptiveAuf
+      ? `${base.setupMoves} ${adaptiveAuf}`
+      : base.setupMoves;
+    return {
+      ...base,
+      setupMoves: setupWithAuf,
+    };
+  }, [drillingAlg, activeDrillingFormula, adaptiveMode, adaptiveAuf]);
+
+  const activeDrillTokens = useMemo(
+    () => tokenizeAlgorithm(activeDrillingFormula),
+    [activeDrillingFormula]
+  );
+
+  const tutorGuidance = useMemo(() => {
+    if (!drillingAlg) return null;
+    return buildCfopTutorGuidance(
+      drillingAlg,
+      activeDrillingFormula,
+      tutorQuestion
+    );
+  }, [drillingAlg, activeDrillingFormula, tutorQuestion]);
 
   const activeDrillSolves = useMemo(() => {
     if (!activeDrillSessionId) return [];
@@ -269,10 +431,12 @@ export default function CfopTrainerView({
     stopDrillLoops();
     setDrillMs(finalMs);
     setDrillPhaseBoth("just_stopped");
+    setAdaptiveRevealed(true);
 
     const prevBest = activeDrillStats.summary.bestSingle;
     const brokePb =
-      activeDrillSolves.length >= 1 && (prevBest === null || finalMs < prevBest);
+      activeDrillSolves.length >= 1 &&
+      (prevBest === null || finalMs < prevBest);
     setIsDrillPb(brokePb);
     if (brokePb && settings.soundEnabled) {
       playPbCelebration();
@@ -281,17 +445,33 @@ export default function CfopTrainerView({
     onRecordAlgSolve(
       activeDrillSessionId,
       finalMs,
-      `Setup: ${activeDrillCaseInfo.setupMoves}  |  Alg: ${drillingAlg.formula}`,
+      `Setup: ${activeDrillCaseInfo.setupMoves}  |  Alg: ${activeDrillingFormula}`,
       "OK"
     );
+
+    // Auto-update SM-2 Spaced Repetition progress based on TPS performance
+    const tps = activeDrillCaseInfo.moveCount / (finalMs / 1000);
+    const autoGrade: 1 | 2 | 4 | 5 =
+      tps >= 5.5 && blindMode ? 5 : tps >= 3.5 ? 4 : 2;
+    const nextProg = computeNextSm2Progress(
+      drillingAlg.id,
+      cfopProgress[drillingAlg.id],
+      autoGrade,
+      activeDrillingFormula
+    );
+    onUpdateCfopProgress(nextProg);
   }, [
     activeDrillCaseInfo,
     activeDrillSessionId,
     activeDrillSolves.length,
     activeDrillStats.summary.bestSingle,
+    activeDrillingFormula,
+    blindMode,
+    cfopProgress,
     drillingAlg,
     onRecordAlgSolve,
-     setDrillPhaseBoth,
+    onUpdateCfopProgress,
+    setDrillPhaseBoth,
     settings.soundEnabled,
     stopDrillLoops,
   ]);
@@ -303,7 +483,7 @@ export default function CfopTrainerView({
       return;
     }
     if (cur === "idle") {
-      const holdMs = Math.min(settings.holdDelayMs, 300); // snappy hold for alg drills
+      const holdMs = Math.min(settings.holdDelayMs, 300);
       if (holdMs <= 0) {
         setDrillPhaseBoth("ready");
       } else {
@@ -347,7 +527,15 @@ export default function CfopTrainerView({
   useEffect(() => {
     if (!drillingAlg) return;
 
+    const isTyping = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName.toLowerCase();
+      return tag === "input" || tag === "textarea" || tag === "select";
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
+      if (isTyping(e.target)) return;
+
       if (e.key === "Escape") {
         e.preventDefault();
         if (drillPhaseRef.current !== "idle") {
@@ -375,6 +563,7 @@ export default function CfopTrainerView({
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
+      if (isTyping(e.target)) return;
       if (drillPhaseRef.current === "just_stopped") {
         e.preventDefault();
         handleDrillPressUp();
@@ -410,7 +599,44 @@ export default function CfopTrainerView({
     }
   };
 
-  // Compute TPS for last drill solve
+  const askServerAiTutor = async () => {
+    if (!drillingAlg) return;
+    setTutorLoading(true);
+    try {
+      const res = await fetch("/api/ai/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "tutor",
+          algContext: {
+            code: drillingAlg.code,
+            name: drillingAlg.name,
+            stage: drillingAlg.stage,
+            formula: activeDrillingFormula,
+            recognition: drillingAlg.recognition,
+          },
+          userQuestion: tutorQuestion,
+        }),
+      });
+      const data = await res.json();
+      if (data?.aiEnhancedText) {
+        setTutorAiReply(data.aiEnhancedText);
+      } else if (tutorGuidance?.questionAnswer) {
+        setTutorAiReply(tutorGuidance.questionAnswer);
+      } else {
+        setTutorAiReply(tutorGuidance?.fingertrickCoach || null);
+      }
+    } catch {
+      setTutorAiReply(
+        tutorGuidance?.questionAnswer ||
+          tutorGuidance?.fingertrickCoach ||
+          null
+      );
+    } finally {
+      setTutorLoading(false);
+    }
+  };
+
   const lastDrillTps = useMemo(() => {
     if (!lastDrillSolve || !activeDrillCaseInfo) return null;
     const eff = getEffectiveMs(lastDrillSolve);
@@ -424,40 +650,94 @@ export default function CfopTrainerView({
       <div className="rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-gradient-to-br from-cyan-500/20 to-indigo-500/20 border border-cyan-400/30 text-cyan-300">
+            <div className="p-2.5 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-300">
               <GraduationCap className="w-6 h-6" />
             </div>
             <div>
               <h1 className="text-lg sm:text-xl font-bold tracking-tight">
-                Thư viện Học & Luyện Bấm Giờ Phương Pháp CFOP
+                Học viện CFOP 2.0 • Spaced Repetition & Adaptive Drill
               </h1>
-              <p className="text-xs sm:text-sm opacity-65">
-                Mỗi công thức được lưu thành <strong>1 Session Timer riêng biệt</strong>{" "}
-                (đồng bộ Cloud DB, theo dõi PB, Ao5 và tốc độ ngón tay TPS)
+              <p className="text-xs sm:text-sm text-slate-300">
+                Mỗi công thức lưu thành <strong>1 Session Timer riêng</strong>{" "}
+                (đồng bộ Cloud DB, lịch ôn tập ngắt quãng SM-2, trộn ngẫu nhiên & đo TPS)
               </p>
             </div>
           </div>
 
-          {/* Overall Progress Pill */}
-          <div className="flex items-center gap-3 px-3.5 py-2 rounded-xl bg-black/30 border border-white/10">
-            <div className="text-xs">
-              <span className="opacity-60">Tiến độ thuộc bài: </span>
-              <strong className="text-emerald-400 font-mono">
-                {progressByStage.ALL.learned}/{progressByStage.ALL.total}
-              </strong>
-            </div>
-            <div className="w-24 h-2 rounded-full bg-white/10 overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all"
-                style={{
-                  width: `${Math.round(
-                    (progressByStage.ALL.learned / progressByStage.ALL.total) *
-                      100
-                  )}%`,
-                }}
-              />
+          {/* Interactive Practice Launchers + Overall Progress */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleStartAdaptiveDrill()}
+              className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition"
+            >
+              <Shuffle className="w-3.5 h-3.5" />
+              <span>Luyện Trộn Ngẫu Nhiên (Adaptive)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={generateNextQuizQuestion}
+              className="px-3.5 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/40 text-indigo-200 font-semibold text-xs inline-flex items-center gap-1.5 transition"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-indigo-300" />
+              <span>Quiz Nhận Diện Nhanh</span>
+            </button>
+
+            <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-black/30 border border-white/10">
+              <div className="text-xs">
+                <span className="text-slate-400">Đã thuộc: </span>
+                <strong className="text-emerald-400 font-mono">
+                  {progressByStage.ALL.learned}/{progressByStage.ALL.total}
+                </strong>
+              </div>
+              <div className="w-20 h-2 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-400 transition-all"
+                  style={{
+                    width: `${Math.round(
+                      (progressByStage.ALL.learned /
+                        progressByStage.ALL.total) *
+                        100
+                    )}%`,
+                  }}
+                />
+              </div>
             </div>
           </div>
+        </div>
+
+        {/* 4-Tier Structured CFOP Learning Path Selector */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+          {CFOP_LEARNING_PATH_TIERS.map((t) => {
+            const active = tierFilter === t.tier;
+            return (
+              <button
+                key={t.tier}
+                type="button"
+                onClick={() =>
+                  setTierFilter((prev) => (prev === t.tier ? "ALL" : t.tier))
+                }
+                className={`p-3 rounded-xl border text-left transition flex flex-col justify-between gap-1 ${
+                  active
+                    ? "bg-cyan-500/15 border-cyan-400 text-white"
+                    : "bg-black/25 hover:bg-white/[0.06] border-white/10 text-slate-300"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <span className="font-bold text-xs text-cyan-300">
+                    {t.title}
+                  </span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-amber-300 shrink-0">
+                    {t.targetBadge}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 line-clamp-2">
+                  {t.description}
+                </p>
+              </button>
+            );
+          })}
         </div>
 
         {/* Stage Tabs */}
@@ -482,14 +762,16 @@ export default function CfopTrainerView({
                 onClick={() => setStageFilter(st)}
                 className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition flex items-center gap-2 ${
                   active
-                    ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-md shadow-cyan-500/20"
+                    ? "bg-cyan-500 text-slate-950 border-cyan-400"
                     : "bg-white/[0.05] hover:bg-white/[0.1] border-white/10"
                 }`}
               >
                 <span>{label}</span>
                 <span
                   className={`text-[11px] font-mono px-1.5 py-0.5 rounded-md ${
-                    active ? "bg-slate-950/20 text-slate-950" : "bg-black/35 opacity-75"
+                    active
+                      ? "bg-slate-950/20 text-slate-950"
+                      : "bg-black/35 text-slate-300"
                   }`}
                 >
                   {prog.learned}/{prog.total}
@@ -499,10 +781,10 @@ export default function CfopTrainerView({
           })}
         </div>
 
-        {/* Search & Smart Filters */}
+        {/* Search & Smart Filters (Including SRS Due Review Filter) */}
         <div className="flex flex-wrap items-center gap-2.5 pt-1">
           <div className="relative flex-1 min-w-[220px]">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 opacity-45" />
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchQuery}
@@ -514,7 +796,7 @@ export default function CfopTrainerView({
               <button
                 type="button"
                 onClick={() => setSearchQuery("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 opacity-60 hover:opacity-100"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -523,15 +805,28 @@ export default function CfopTrainerView({
 
           <button
             type="button"
+            onClick={() => setOnlyDueReview((v) => !v)}
+            className={`h-9 px-3 rounded-xl text-xs font-semibold border inline-flex items-center gap-1.5 transition ${
+              onlyDueReview
+                ? "bg-rose-500/20 text-rose-200 border-rose-400/50"
+                : "bg-white/[0.05] hover:bg-white/[0.1] border-white/10 text-slate-200"
+            }`}
+          >
+            <CalendarClock className="w-3.5 h-3.5 text-rose-400" />
+            <span>Đến hạn ôn SRS ({dueReviewCount})</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setOnlyTwoLook((v) => !v)}
             className={`h-9 px-3 rounded-xl text-xs font-semibold border inline-flex items-center gap-1.5 transition ${
               onlyTwoLook
                 ? "bg-amber-400/20 text-amber-300 border-amber-400/50"
-                : "bg-white/[0.05] hover:bg-white/[0.1] border-white/10 opacity-85"
+                : "bg-white/[0.05] hover:bg-white/[0.1] border-white/10 text-slate-200"
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Lộ trình Người mới (2-Look CFOP)</span>
+            <span>2-Look CFOP</span>
           </button>
 
           <button
@@ -540,7 +835,7 @@ export default function CfopTrainerView({
             className={`h-9 px-3 rounded-xl text-xs font-semibold border inline-flex items-center gap-1.5 transition ${
               onlyUnlearned
                 ? "bg-indigo-500/25 text-indigo-200 border-indigo-400/50"
-                : "bg-white/[0.05] hover:bg-white/[0.1] border-white/10 opacity-85"
+                : "bg-white/[0.05] hover:bg-white/[0.1] border-white/10 text-slate-200"
             }`}
           >
             <BookOpen className="w-3.5 h-3.5" />
@@ -549,17 +844,9 @@ export default function CfopTrainerView({
         </div>
       </div>
 
-      {/* Stage Subtitle Info */}
-      {stageFilter !== "ALL" && (
-        <div className="px-1 flex items-center justify-between text-xs opacity-75">
-          <span>{CFOP_STAGE_META[stageFilter].subtitle}</span>
-          <span>Hiển thị {filteredAlgs.length} công thức</span>
-        </div>
-      )}
-
       {/* Algorithm Cards Grid */}
       {filteredAlgs.length === 0 ? (
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] py-16 text-center text-sm opacity-60">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] py-16 text-center text-sm text-slate-400">
           Không tìm thấy công thức CFOP nào khớp với bộ lọc hiện tại.
         </div>
       ) : (
@@ -567,7 +854,10 @@ export default function CfopTrainerView({
           {filteredAlgs.map((alg) => {
             const sName = getCfopSessionName(alg);
             const algStats = sessionStatsByName.get(sName);
-            const isLearned = learnedIds.has(alg.id);
+            const prog = cfopProgress[alg.id];
+            const isLearned = isAlgLearned(alg.id);
+            const isDue = isCfopDueForReview(prog);
+            const activeFormula = prog?.preferred_formula || alg.formula;
             const stageMeta = CFOP_STAGE_META[alg.stage];
 
             return (
@@ -581,12 +871,12 @@ export default function CfopTrainerView({
               >
                 {/* Top Row: Diagram + Meta */}
                 <div className="flex items-start gap-3.5">
-                  <CfopCaseDiagram stage={alg.stage} formula={alg.formula} />
+                  <CfopCaseDiagram stage={alg.stage} formula={activeFormula} />
 
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5 mb-1">
                       <span
-                        className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md border ${stageMeta.badgeColor}`}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${stageMeta.badgeColor}`}
                       >
                         {alg.code}
                       </span>
@@ -595,16 +885,23 @@ export default function CfopTrainerView({
                           2-Look
                         </span>
                       )}
-                      <span className="text-[10px] opacity-50 truncate">
-                        {alg.group}
-                      </span>
+                      {prog?.status === "mastered" && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          Thành thạo
+                        </span>
+                      )}
+                      {isDue && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                          Cần ôn SRS
+                        </span>
+                      )}
                     </div>
 
                     <h3 className="font-bold text-sm sm:text-base leading-snug">
                       {alg.name}
                     </h3>
 
-                    <p className="text-xs opacity-65 mt-1 leading-relaxed">
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
                       {alg.recognition}
                     </p>
                   </div>
@@ -612,12 +909,16 @@ export default function CfopTrainerView({
                   {/* Learned Toggle */}
                   <button
                     type="button"
-                    title={isLearned ? "Bỏ đánh dấu đã thuộc" : "Đánh dấu đã thuộc"}
-                    onClick={() => toggleLearned(alg.id)}
+                    title={
+                      isLearned
+                        ? "Bỏ đánh dấu đã thuộc"
+                        : "Đánh dấu đã thuộc (Lên lịch SRS)"
+                    }
+                    onClick={() => toggleLearned(alg)}
                     className={`p-1.5 rounded-lg border transition shrink-0 ${
                       isLearned
                         ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300"
-                        : "bg-white/5 border-white/10 opacity-50 hover:opacity-100"
+                        : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
                     }`}
                   >
                     <CheckCircle2 className="w-4 h-4" />
@@ -628,13 +929,13 @@ export default function CfopTrainerView({
                 <div className="rounded-xl bg-black/40 border border-white/10 px-3 py-2.5 space-y-1">
                   <div className="flex items-center justify-between gap-2">
                     <code className="font-mono text-xs sm:text-sm font-bold text-cyan-300 break-words">
-                      {alg.formula}
+                      {activeFormula}
                     </code>
                     <button
                       type="button"
-                      onClick={() => copyFormula(alg.id, alg.formula)}
+                      onClick={() => copyFormula(alg.id, activeFormula)}
                       title="Copy công thức"
-                      className="p-1 rounded hover:bg-white/10 opacity-65 hover:opacity-100 shrink-0"
+                      className="p-1 rounded hover:bg-white/10 text-slate-300 hover:text-white shrink-0"
                     >
                       {copiedId === alg.id ? (
                         <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -643,9 +944,9 @@ export default function CfopTrainerView({
                       )}
                     </button>
                   </div>
-                  {alg.altFormula && (
-                    <div className="text-[11px] font-mono opacity-60">
-                      Cách 2: {alg.altFormula}
+                  {alg.altFormula && alg.altFormula !== activeFormula && (
+                    <div className="text-[11px] font-mono text-slate-400">
+                      Biến thể 2: {alg.altFormula}
                     </div>
                   )}
                 </div>
@@ -653,7 +954,7 @@ export default function CfopTrainerView({
                 {/* Footer: Dedicated Session Stats + Practice Button */}
                 <div className="flex items-center justify-between gap-2 pt-0.5">
                   {algStats && algStats.summary.totalCount > 0 ? (
-                    <div className="flex items-center gap-2.5 text-xs font-mono">
+                    <div className="flex items-center gap-2.5 text-xs font-mono tabular-nums">
                       <span className="text-emerald-400 font-semibold inline-flex items-center gap-1">
                         <Trophy className="w-3 h-3" />
                         PB:{" "}
@@ -662,27 +963,27 @@ export default function CfopTrainerView({
                           settings.decimals
                         )}
                       </span>
-                      <span className="opacity-70">
+                      <span className="text-slate-300">
                         Ao5:{" "}
                         {formatTimeMs(
                           algStats.summary.currentAo5,
                           settings.decimals
                         )}
                       </span>
-                      <span className="opacity-45 font-sans text-[11px]">
+                      <span className="text-slate-400 font-sans text-[11px]">
                         ({algStats.summary.totalCount} lần)
                       </span>
                     </div>
                   ) : (
-                    <span className="text-[11px] opacity-45">
+                    <span className="text-[11px] text-slate-400">
                       Chưa có lịch sử bấm giờ
                     </span>
                   )}
 
                   <button
                     type="button"
-                    onClick={() => handleOpenDrill(alg)}
-                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 shadow-sm transition shrink-0"
+                    onClick={() => handleOpenDrill(alg, false)}
+                    className="px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition shrink-0"
                   >
                     <Timer className="w-3.5 h-3.5" />
                     <span>Luyện bấm giờ</span>
@@ -691,6 +992,117 @@ export default function CfopTrainerView({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* FLASH RECOGNITION QUIZ MODAL                                         */}
+      {/* ==================================================================== */}
+      {quizOpen && quizTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4"
+          onClick={() => setQuizOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Quiz nhận diện nhanh CFOP"
+            className="w-full max-w-lg rounded-2xl border border-white/15 bg-slate-900 text-white p-6 space-y-4 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setQuizOpen(false)}
+              className="absolute right-4 top-4 p-1.5 rounded-lg bg-white/5 hover:bg-white/15"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center justify-between pr-8">
+              <div>
+                <h2 className="text-lg font-bold">
+                  Quiz Luyện Phản Xạ Nhận Diện CFOP
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Quan sát hình khối (đã xoay AUF ngẫu nhiên) và chọn đúng tên trường hợp
+                </p>
+              </div>
+              <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono text-xs font-bold">
+                Chuỗi đúng: {quizStreak}
+              </span>
+            </div>
+
+            <div className="flex flex-col items-center justify-center py-4 rounded-xl bg-black/40 border border-white/10">
+              <CfopCaseDiagram
+                stage={quizTarget.stage}
+                formula={quizTarget.formula}
+                appliedMoves={quizAuf}
+                size="lg"
+              />
+              <span className="text-[11px] text-slate-400 mt-2">
+                Nhóm: {CFOP_STAGE_META[quizTarget.stage].title}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {quizChoices.map((choice) => {
+                const isTarget = choice.id === quizTarget.id;
+                const isPicked = quizResult?.pickedId === choice.id;
+                return (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    disabled={Boolean(quizResult)}
+                    onClick={() => handleAnswerQuiz(choice)}
+                    className={`p-3 rounded-xl border text-left transition ${
+                      !quizResult
+                        ? "bg-white/[0.05] hover:bg-white/[0.12] border-white/10"
+                        : isTarget
+                        ? "bg-emerald-500/25 border-emerald-400 text-emerald-200"
+                        : isPicked
+                        ? "bg-rose-500/25 border-rose-400 text-rose-200"
+                        : "bg-black/25 border-white/5 opacity-50"
+                    }`}
+                  >
+                    <div className="font-bold text-xs text-cyan-300">
+                      {choice.code}
+                    </div>
+                    <div className="text-sm font-semibold mt-0.5">
+                      {choice.name}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {quizResult && (
+              <div className="rounded-xl bg-black/45 border border-white/10 p-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div>
+                  <strong
+                    className={
+                      quizResult.correct ? "text-emerald-400" : "text-rose-400"
+                    }
+                  >
+                    {quizResult.correct
+                      ? `Chính xác! Phản xạ: ${(
+                          quizResult.reactionMs / 1000
+                        ).toFixed(2)}s`
+                      : `Chưa đúng! Đáp án là ${quizTarget.code}: ${quizTarget.name}`}
+                  </strong>
+                  <p className="text-slate-300 mt-0.5">
+                    Công thức: <code className="text-cyan-300">{quizTarget.formula}</code>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={generateNextQuizQuestion}
+                  className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold"
+                >
+                  Câu tiếp theo →
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -705,30 +1117,63 @@ export default function CfopTrainerView({
           }}
         >
           <div
-            className="w-full max-w-4xl max-h-[92vh] overflow-y-auto rounded-3xl border border-white/15 bg-slate-950 text-white p-4 sm:p-6 shadow-2xl space-y-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Phòng luyện bấm giờ ${drillingAlg.name}`}
+            className="w-full max-w-4xl max-h-[92vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-950 text-white p-4 sm:p-6 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Studio Header */}
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={`text-xs font-bold px-2 py-0.5 rounded-md border ${
                       CFOP_STAGE_META[drillingAlg.stage].badgeColor
                     }`}
                   >
-                    {drillingAlg.code}
+                    {adaptiveMode && !adaptiveRevealed
+                      ? "??? (Chế độ Ẩn Tên Bài)"
+                      : drillingAlg.code}
                   </span>
-                  <span className="text-xs font-mono text-cyan-300/80">
-                    Session riêng: {getCfopSessionName(drillingAlg)}
-                  </span>
+                  {adaptiveMode && (
+                    <span className="text-xs px-2 py-0.5 rounded-md bg-cyan-500/15 border border-cyan-500/30 text-cyan-300">
+                      Adaptive Drill: {adaptiveReason}
+                    </span>
+                  )}
                 </div>
                 <h2 className="text-lg sm:text-xl font-bold mt-1">
-                  {drillingAlg.name}
+                  {adaptiveMode && !adaptiveRevealed
+                    ? "Tráo theo Setup Moves bên dưới, tự nhìn khối Rubik và giải!"
+                    : drillingAlg.name}
                 </h2>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {adaptiveMode && (
+                  <button
+                    type="button"
+                    onClick={() => handleStartAdaptiveDrill(drillingAlg.id)}
+                    className="px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1 transition"
+                  >
+                    <Shuffle className="w-3.5 h-3.5" />
+                    <span>Bốc bài ngẫu nhiên kế tiếp</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowTutorPanel((v) => !v)}
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                    showTutorPanel
+                      ? "bg-indigo-500/25 border-indigo-400 text-indigo-200"
+                      : "bg-white/[0.07] hover:bg-white/[0.14] border-white/10"
+                  }`}
+                >
+                  <BrainCircuit className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>AI CFOP Tutor & So sánh Biến thể</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -756,28 +1201,77 @@ export default function CfopTrainerView({
               </div>
             </div>
 
-            {/* Top Section: Case Diagram + Formula + Setup Scramble */}
+            {/* Top Section: Case Diagram + Step-by-Step Scrubber + Formula + Setup Scramble */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center rounded-2xl bg-white/[0.03] border border-white/10 p-4">
               <div className="md:col-span-3 flex flex-col items-center gap-2">
                 <CfopCaseDiagram
                   stage={drillingAlg.stage}
-                  formula={drillingAlg.formula}
+                  formula={activeDrillingFormula}
+                  appliedMoves={
+                    scrubberStep !== null
+                      ? activeDrillTokens.slice(0, scrubberStep).join(" ")
+                      : adaptiveMode && !adaptiveRevealed
+                      ? adaptiveAuf
+                      : undefined
+                  }
                   size="lg"
                 />
-                <span className="text-[11px] opacity-55">
-                  Vàng ở trên (U) • {activeDrillCaseInfo.moveCount} nước
+                <span className="text-[11px] text-slate-400">
+                  Vàng ở trên (U) • {activeDrillCaseInfo.moveCount} nước STM
                 </span>
+
+                {/* Step-by-Step Move Scrubber Controls */}
+                <div className="flex items-center gap-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setScrubberStep(0)}
+                    className="p-1 rounded bg-white/10 hover:bg-white/20"
+                    title="Về thế cờ bắt đầu"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setScrubberStep((s) =>
+                        Math.max(0, (s ?? activeDrillTokens.length) - 1)
+                      )
+                    }
+                    className="p-1 rounded bg-white/10 hover:bg-white/20"
+                    title="Lùi 1 nước"
+                  >
+                    <ChevronLeft className="w-3 h-3" />
+                  </button>
+                  <span className="font-mono text-[11px] px-1.5 text-cyan-300">
+                    {scrubberStep === null
+                      ? "Thế cờ"
+                      : `${scrubberStep}/${activeDrillTokens.length}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setScrubberStep((s) =>
+                        Math.min(activeDrillTokens.length, (s ?? 0) + 1)
+                      )
+                    }
+                    className="p-1 rounded bg-white/10 hover:bg-white/20"
+                    title="Tiến 1 nước"
+                  >
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
 
               <div className="md:col-span-9 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs uppercase tracking-wider font-semibold text-cyan-400">
+                  <span className="text-xs font-semibold text-cyan-400">
                     Công thức thực hiện:
                   </span>
                   <button
                     type="button"
                     onClick={(e) => {
                       setBlindMode((v) => !v);
+                      setAdaptiveRevealed(true);
                       e.currentTarget.blur();
                     }}
                     className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs inline-flex items-center gap-1.5 transition"
@@ -799,30 +1293,190 @@ export default function CfopTrainerView({
                 <div className="rounded-xl bg-black/50 border border-cyan-500/30 px-4 py-3">
                   {blindMode ? (
                     <p className="font-mono text-base sm:text-lg text-amber-300/80 italic select-none">
-                      ••• Đang bật chế độ kiểm tra trí nhớ (Nhấn &ldquo;Hiện công thức&rdquo; nếu quên) •••
+                      ••• Đang bật chế độ kiểm tra phản xạ & trí nhớ (Giải xong sẽ tự hiện kết quả) •••
                     </p>
                   ) : (
                     <p className="font-mono text-lg sm:text-2xl font-bold text-cyan-300 tracking-wide">
-                      {drillingAlg.formula}
-                    </p>
-                  )}
-                  {!blindMode && drillingAlg.altFormula && (
-                    <p className="font-mono text-xs opacity-60 mt-1">
-                      Cách 2: {drillingAlg.altFormula}
+                      {activeDrillingFormula}
                     </p>
                   )}
                 </div>
 
-                <div className="text-xs bg-black/30 rounded-xl px-3 py-2 border border-white/5">
-                  <span className="opacity-60">
-                    Cách tạo thế cờ này từ khối Rubik đã giải (để mặt Vàng lên trên):{" "}
-                  </span>
-                  <code className="font-mono text-amber-300 font-semibold">
-                    {activeDrillCaseInfo.setupMoves}
-                  </code>
+                <div className="text-xs bg-black/30 rounded-xl px-3 py-2 border border-white/5 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-slate-400">
+                      Setup tạo thế cờ này từ khối Rubik đã giải (để Vàng lên trên):{" "}
+                    </span>
+                    <code className="font-mono text-amber-300 font-semibold">
+                      {activeDrillCaseInfo.setupMoves}
+                    </code>
+                  </div>
+
+                  {/* Quick SM-2 Spaced Repetition Self-Grading Buttons */}
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] text-slate-400 mr-1">
+                      Độ nhớ SRS:
+                    </span>
+                    {(
+                      [
+                        { q: 1, label: "Quên", cls: "hover:bg-rose-500/20 text-rose-300" },
+                        { q: 2, label: "Khó", cls: "hover:bg-amber-500/20 text-amber-300" },
+                        { q: 4, label: "Thuộc", cls: "hover:bg-cyan-500/20 text-cyan-300" },
+                        { q: 5, label: "Thành thạo", cls: "hover:bg-emerald-500/20 text-emerald-300" },
+                      ] as const
+                    ).map((btn) => (
+                      <button
+                        key={btn.q}
+                        type="button"
+                        onClick={() => {
+                          const updated = computeNextSm2Progress(
+                            drillingAlg.id,
+                            cfopProgress[drillingAlg.id],
+                            btn.q,
+                            activeDrillingFormula
+                          );
+                          onUpdateCfopProgress(updated);
+                        }}
+                        className={`px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[11px] font-medium transition ${btn.cls}`}
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
+
+            {/* Collapsible AI CFOP Tutor & Algorithm Variant Comparison Panel */}
+            {showTutorPanel && tutorGuidance && (
+              <div className="rounded-2xl bg-indigo-950/30 border border-indigo-400/30 p-4 space-y-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <strong className="text-sm text-indigo-200 flex items-center gap-1.5">
+                    <BrainCircuit className="w-4 h-4 text-cyan-400" />
+                    <span>
+                      Gia sư AI CFOP & So sánh Biến thể Công thức ({drillingAlg.code})
+                    </span>
+                  </strong>
+                  <span className="text-[11px] text-slate-400">
+                    Chọn công thức hợp tay nhất để tính đúng STM & TPS
+                  </span>
+                </div>
+
+                {/* Variant Comparator */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {tutorGuidance.variants.map((v) => {
+                    const isSelected = v.formula === activeDrillingFormula;
+                    return (
+                      <div
+                        key={v.label}
+                        className={`rounded-xl p-3 border flex flex-col justify-between gap-2 ${
+                          isSelected
+                            ? "bg-cyan-500/15 border-cyan-400"
+                            : "bg-black/40 border-white/10"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-200">
+                              {v.label}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-white/10 font-mono text-[11px] text-cyan-300">
+                              {v.stmMoves} STM • {v.styleTag}
+                            </span>
+                          </div>
+                          <code className="block font-mono text-sm font-bold text-white mt-1.5">
+                            {v.formula}
+                          </code>
+                          <p className="text-[11px] text-slate-300 mt-1">
+                            {v.ergonomics}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const existing = cfopProgress[drillingAlg.id];
+                            const nowIso = new Date().toISOString();
+                            onUpdateCfopProgress({
+                              alg_id: drillingAlg.id,
+                              status: existing?.status || "learning",
+                              preferred_formula: v.formula,
+                              ease_factor: existing?.ease_factor ?? 2.5,
+                              interval_days: existing?.interval_days ?? 1,
+                              repetitions: existing?.repetitions ?? 0,
+                              next_review_at: existing?.next_review_at || nowIso,
+                              updated_at: nowIso,
+                            });
+                          }}
+                          className={`self-start px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
+                            isSelected
+                              ? "bg-cyan-400 text-slate-950"
+                              : "bg-white/10 hover:bg-white/20 text-slate-200"
+                          }`}
+                        >
+                          {isSelected
+                            ? "✓ Đang dùng làm công thức chính"
+                            : "Chọn làm công thức chính"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Trigger Breakdown Steps */}
+                <div className="space-y-1.5">
+                  <div className="font-semibold text-cyan-300">
+                    Phân tách cấu trúc Trigger & Hướng dẫn Fingertrick:
+                  </div>
+                  <p className="text-slate-200 leading-relaxed">
+                    {tutorGuidance.fingertrickCoach}
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                    {tutorGuidance.triggers.map((tr, idx) => (
+                      <div
+                        key={idx}
+                        className="rounded-lg bg-black/35 border border-white/10 p-2.5"
+                      >
+                        <div className="text-[11px] font-semibold text-amber-300">
+                          {tr.label}
+                        </div>
+                        <code className="font-mono text-xs font-bold text-white">
+                          {tr.moves}
+                        </code>
+                        <p className="text-[11px] text-slate-300 mt-1">
+                          {tr.explanation}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Interactive Ask AI Tutor Input */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={tutorQuestion}
+                    onChange={(e) => setTutorQuestion(e.target.value)}
+                    placeholder="Hỏi thêm AI Gia sư (VD: Mẹo nhớ công thức này? Cách nhận diện 2 mặt?)..."
+                    className="flex-1 min-w-[220px] h-8 rounded-lg bg-black/50 border border-white/15 px-3 text-xs focus:outline-none focus:border-cyan-400"
+                  />
+                  <button
+                    type="button"
+                    disabled={tutorLoading}
+                    onClick={askServerAiTutor}
+                    className="h-8 px-3 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition"
+                  >
+                    {tutorLoading ? "Đang phân tích..." : "Hỏi AI Gia sư"}
+                  </button>
+                </div>
+
+                {tutorAiReply && (
+                  <div className="rounded-xl bg-black/50 border border-cyan-500/30 p-3 text-slate-200 leading-relaxed whitespace-pre-wrap">
+                    {tutorAiReply}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Interactive Spacebar / Touch Drill Pad */}
             <div
@@ -840,10 +1494,10 @@ export default function CfopTrainerView({
                 e.preventDefault();
                 handleDrillPressUp();
               }}
-              className="rounded-3xl border border-white/15 bg-gradient-to-b from-white/[0.04] to-black/40 py-8 px-4 flex flex-col items-center justify-center select-none cursor-pointer"
+              className="rounded-2xl border border-white/15 bg-white/[0.03] py-8 px-4 flex flex-col items-center justify-center select-none cursor-pointer"
             >
               {isDrillPb && drillPhase === "idle" && lastDrillSolve && (
-                <div className="mb-2 px-3 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1.5 animate-bounce">
+                <div className="mb-2 px-3 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1.5 transition-all duration-300 ease-out">
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>PB mới cho {drillingAlg.name}!</span>
                 </div>
@@ -876,13 +1530,13 @@ export default function CfopTrainerView({
                 <div className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-semibold">
                   <Flame className="w-3.5 h-3.5 text-orange-400" />
                   <span>
-                    Tốc độ ngón tay: {lastDrillTps} TPS ({activeDrillCaseInfo.moveCount}{" "}
-                    nước)
+                    Tốc độ ngón tay: {lastDrillTps} TPS (
+                    {activeDrillCaseInfo.moveCount} nước STM)
                   </span>
                 </div>
               )}
 
-              <p className="mt-3 text-xs opacity-55 text-center">
+              <p className="mt-3 text-xs text-slate-400 text-center">
                 {drillPhase === "running"
                   ? "Nhấn phím bất kỳ hoặc chạm màn hình để DỪNG"
                   : drillPhase === "holding"
@@ -951,8 +1605,8 @@ export default function CfopTrainerView({
             <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
               <div className="md:col-span-5 grid grid-cols-2 gap-2">
                 <div className="rounded-xl bg-white/[0.04] border border-white/10 p-3">
-                  <div className="text-[11px] opacity-55">Kỷ lục PB</div>
-                  <div className="font-mono text-lg font-bold text-emerald-400 mt-0.5">
+                  <div className="text-[11px] text-slate-400">Kỷ lục PB</div>
+                  <div className="font-mono text-lg font-bold text-emerald-400 mt-0.5 tabular-nums">
                     {formatTimeMs(
                       activeDrillStats.summary.bestSingle,
                       settings.decimals
@@ -960,8 +1614,8 @@ export default function CfopTrainerView({
                   </div>
                 </div>
                 <div className="rounded-xl bg-white/[0.04] border border-white/10 p-3">
-                  <div className="text-[11px] opacity-55">Ao5 hiện tại</div>
-                  <div className="font-mono text-lg font-bold text-cyan-300 mt-0.5">
+                  <div className="text-[11px] text-slate-400">Ao5 hiện tại</div>
+                  <div className="font-mono text-lg font-bold text-cyan-300 mt-0.5 tabular-nums">
                     {formatTimeMs(
                       activeDrillStats.summary.currentAo5,
                       settings.decimals
@@ -969,8 +1623,8 @@ export default function CfopTrainerView({
                   </div>
                 </div>
                 <div className="rounded-xl bg-white/[0.04] border border-white/10 p-3">
-                  <div className="text-[11px] opacity-55">Ao12 hiện tại</div>
-                  <div className="font-mono text-lg font-bold text-indigo-300 mt-0.5">
+                  <div className="text-[11px] text-slate-400">Ao12 hiện tại</div>
+                  <div className="font-mono text-lg font-bold text-indigo-300 mt-0.5 tabular-nums">
                     {formatTimeMs(
                       activeDrillStats.summary.currentAo12,
                       settings.decimals
@@ -978,8 +1632,10 @@ export default function CfopTrainerView({
                   </div>
                 </div>
                 <div className="rounded-xl bg-white/[0.04] border border-white/10 p-3">
-                  <div className="text-[11px] opacity-55">Mean ({activeDrillStats.summary.validCount} lần)</div>
-                  <div className="font-mono text-lg font-bold mt-0.5">
+                  <div className="text-[11px] text-slate-400">
+                    Mean ({activeDrillStats.summary.validCount} lần)
+                  </div>
+                  <div className="font-mono text-lg font-bold mt-0.5 tabular-nums">
                     {formatTimeMs(
                       activeDrillStats.summary.mean,
                       settings.decimals
@@ -990,43 +1646,50 @@ export default function CfopTrainerView({
 
               {/* Recent Solves for this Algorithm Session */}
               <div className="md:col-span-7 rounded-xl bg-white/[0.04] border border-white/10 p-3 flex flex-col max-h-40">
-                <div className="text-xs font-semibold opacity-75 mb-2 flex items-center justify-between">
+                <div className="text-xs font-semibold text-slate-300 mb-2 flex items-center justify-between">
                   <span className="inline-flex items-center gap-1.5">
                     <Play className="w-3 h-3 text-cyan-400" />
-                    Lịch sử riêng của {drillingAlg.code} ({activeDrillStats.enrichedSolves.length} lần)
+                    Lịch sử riêng của {drillingAlg.code} (
+                    {activeDrillStats.enrichedSolves.length} lần)
                   </span>
                 </div>
                 <div className="flex-1 overflow-y-auto flex flex-wrap gap-1.5 content-start">
                   {activeDrillStats.enrichedSolves.length === 0 ? (
-                    <span className="text-xs opacity-45">
+                    <span className="text-xs text-slate-400">
                       Chưa có lượt tập nào. Nhấn Space để lưu lượt đầu tiên vào session riêng này!
                     </span>
                   ) : (
-                    [...activeDrillStats.enrichedSolves].reverse().map((sv) => {
-                      const isPb =
-                        sv.id === activeDrillStats.summary.bestSingleSolveId;
-                      return (
-                        <span
-                          key={sv.id}
-                          className={`px-2 py-1 rounded-lg text-xs font-mono border inline-flex items-center gap-1.5 ${
-                            isPb
-                              ? "bg-emerald-500/15 border-emerald-400/40 text-emerald-300 font-bold"
-                              : "bg-black/35 border-white/10"
-                          }`}
-                        >
-                          <span className="opacity-45">#{sv.indexNumber}</span>
-                          <span>{formatSolveDisplay(sv, settings.decimals)}</span>
-                          <button
-                            type="button"
-                            onClick={() => onDeleteSolve(sv.id)}
-                            className="opacity-40 hover:opacity-100 hover:text-rose-400"
-                            title="Xóa"
+                    [...activeDrillStats.enrichedSolves]
+                      .reverse()
+                      .map((sv) => {
+                        const isPb =
+                          sv.id === activeDrillStats.summary.bestSingleSolveId;
+                        return (
+                          <span
+                            key={sv.id}
+                            className={`px-2 py-1 rounded-lg text-xs font-mono border inline-flex items-center gap-1.5 ${
+                              isPb
+                                ? "bg-emerald-500/15 border-emerald-400/40 text-emerald-300 font-bold"
+                                : "bg-black/35 border-white/10"
+                            }`}
                           >
-                            ×
-                          </button>
-                        </span>
-                      );
-                    })
+                            <span className="text-slate-400">
+                              #{sv.indexNumber}
+                            </span>
+                            <span>
+                              {formatSolveDisplay(sv, settings.decimals)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => onDeleteSolve(sv.id)}
+                              className="text-slate-400 hover:text-rose-400"
+                              title="Xóa"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })
                   )}
                 </div>
               </div>

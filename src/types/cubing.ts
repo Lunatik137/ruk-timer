@@ -15,11 +15,22 @@ export type PuzzleType =
 
 export type PenaltyType = "OK" | "+2" | "DNF";
 
+export type SplitMode = "off" | "cfop4";
+
+export type TimerUpdateMode = "live" | "seconds" | "hidden";
+
+export type TrainingSubset =
+  | "wca"
+  | "cross_easy"
+  | "cross_hard"
+  | "f2l_only"
+  | "ll_only";
+
 export interface PuzzleMetadata {
   id: PuzzleType;
   label: string;
   shortLabel: string;
-  cubeSize?: number; // For NxN 2D net simulation (2, 3, 4, 5)
+  cubeSize?: number; // For NxN 2D net simulation (2..7)
 }
 
 export const PUZZLES: PuzzleMetadata[] = [
@@ -56,6 +67,8 @@ export interface Solve {
   penalty: PenaltyType;
   scramble: string;
   comment: string;
+  splits_ms?: number[]; // Cumulative or phase duration ms for [Cross, F2L, OLL, PLL]
+  reconstruction?: string; // Move sequence for solve replay
   solved_at: string; // ISO string
 }
 
@@ -67,9 +80,13 @@ export interface TimerSettings {
   decimals: 2 | 3;
   hideUiWhileSolving: boolean;
   soundEnabled: boolean;
+  voiceAlertsEnabled: boolean; // WCA Referee voice "8 seconds", "12 seconds"
   manualInput: boolean;
   showCubePreview: boolean;
   theme: ThemeId;
+  splitMode: SplitMode;
+  timerUpdateMode: TimerUpdateMode;
+  targetGoalMs: number; // Default target average goal in ms (e.g., 15000 for Sub-15)
 }
 
 export const DEFAULT_SETTINGS: TimerSettings = {
@@ -78,9 +95,13 @@ export const DEFAULT_SETTINGS: TimerSettings = {
   decimals: 2,
   hideUiWhileSolving: true,
   soundEnabled: true,
+  voiceAlertsEnabled: false,
   manualInput: false,
   showCubePreview: true,
   theme: "midnight",
+  splitMode: "off",
+  timerUpdateMode: "live",
+  targetGoalMs: 15000,
 };
 
 export interface StatSummary {
@@ -102,8 +123,10 @@ export interface StatSummary {
   bestAo12Index: number | null;
   currentAo50: number | "DNF" | null;
   bestAo50: number | null;
+  bestAo50Index: number | null;
   currentAo100: number | "DNF" | null;
   bestAo100: number | null;
+  bestAo100Index: number | null;
 }
 
 export interface SolveWithRollingStats extends Solve {
@@ -111,4 +134,65 @@ export interface SolveWithRollingStats extends Solve {
   effectiveMs: number | "DNF";
   rollingAo5: number | "DNF" | null;
   rollingAo12: number | "DNF" | null;
+}
+
+export type CfopMasteryStatus =
+  | "unlearned"
+  | "learning"
+  | "learned"
+  | "mastered";
+
+export interface CfopProgressItem {
+  alg_id: string;
+  status: CfopMasteryStatus;
+  preferred_formula?: string;
+  ease_factor: number; // SM-2 default 2.5
+  interval_days: number;
+  repetitions: number;
+  next_review_at: string; // ISO timestamp
+  last_drilled_at?: string;
+  updated_at: string;
+}
+
+export interface HistogramBucket {
+  label: string;
+  minMs: number;
+  maxMs: number;
+  count: number;
+  percentage: number;
+}
+
+export interface SplitStageBreakdown {
+  sampleCount: number;
+  stages: {
+    key: "CROSS" | "F2L" | "OLL" | "PLL";
+    label: string;
+    avgMs: number;
+    actualPct: number;
+    idealPct: number;
+    deltaPct: number; // positive means slower than ideal ratio
+  }[];
+}
+
+export interface PersonalAchievement {
+  id: string;
+  title: string;
+  description: string;
+  unlocked: boolean;
+  progressText: string;
+  category: "volume" | "speed" | "cfop" | "consistency";
+}
+
+export interface DailySubmissionRecord {
+  id?: string;
+  user_id?: string;
+  challenge_date: string;
+  puzzle: PuzzleType;
+  display_name: string;
+  division: "sub12" | "sub18" | "sub25" | "open";
+  ao5_ms: number | null;
+  best_single_ms: number | null;
+  times_ms: number[];
+  penalties: PenaltyType[];
+  created_at?: string;
 }

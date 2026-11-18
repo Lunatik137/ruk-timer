@@ -1,20 +1,37 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
+  Award,
   Flag,
   Keyboard,
+  Layers,
   MessageSquarePlus,
+  RotateCcw,
   Sparkles,
   Trash2,
+  Trophy,
 } from "lucide-react";
 import {
+  computeBpaWpa,
+  computeTrimmedAverage,
   formatSolveDisplay,
   formatTimeMs,
+  getEffectiveMs,
   parseManualTimeInput,
 } from "@/lib/stats";
-import { playInspection12s, playInspection8s } from "@/lib/sound";
-import { PenaltyType, Solve, TimerSettings } from "@/types/cubing";
+import {
+  playInspection12s,
+  playInspection8s,
+  playSplitTick,
+} from "@/lib/sound";
+import {
+  PenaltyType,
+  Solve,
+  SplitMode,
+  TimerSettings,
+} from "@/types/cubing";
 
 export type TimerPhase =
   | "idle"
@@ -26,6 +43,14 @@ export type TimerPhase =
   | "running"
   | "just_stopped";
 
+const CFOP_SPLIT_LABELS = ["1. Cross", "2. F2L", "3. OLL", "4. PLL"] as const;
+const CFOP_SPLIT_COLORS = [
+  "bg-emerald-400 text-slate-950",
+  "bg-cyan-400 text-slate-950",
+  "bg-amber-400 text-slate-950",
+  "bg-indigo-400 text-slate-950",
+] as const;
+
 interface TimerDisplayProps {
   settings: TimerSettings;
   lastSolve: Solve | null;
@@ -33,11 +58,17 @@ interface TimerDisplayProps {
   currentAo12: number | "DNF" | null;
   isNewPb: boolean;
   isModalOpen: boolean;
+  fatigueAlert: string | null;
   onPhaseChange: (phase: TimerPhase) => void;
-  onSolveComplete: (timeMs: number, initialPenalty: PenaltyType) => void;
+  onSolveComplete: (
+    timeMs: number,
+    initialPenalty: PenaltyType,
+    splitsMs?: number[]
+  ) => void;
   onUpdateLastPenalty: (penalty: PenaltyType) => void;
   onDeleteLastSolve: () => void;
   onCommentLastSolve: (comment: string) => void;
+  onToggleSplitMode: (next: SplitMode) => void;
 }
 
 export default function TimerDisplay({
@@ -47,11 +78,13 @@ export default function TimerDisplay({
   currentAo12,
   isNewPb,
   isModalOpen,
+  fatigueAlert,
   onPhaseChange,
   onSolveComplete,
   onUpdateLastPenalty,
   onDeleteLastSolve,
   onCommentLastSolve,
+  onToggleSplitMode,
 }: TimerDisplayProps) {
   const [phase, setPhase] = useState<TimerPhase>("idle");
   const [displayMs, setDisplayMs] = useState<number>(0);
@@ -60,6 +93,15 @@ export default function TimerDisplay({
   const [manualText, setManualText] = useState("");
   const [showCommentBox, setShowCommentBox] = useState(false);
   const [commentText, setCommentText] = useState("");
+
+  // Multi-Phase Split Timer State (durations of completed stages during active solve)
+  const [liveSplitsMs, setLiveSplitsMs] = useState<number[]>([]);
+  const liveSplitsRef = useRef<number[]>([]);
+  const lastSplitTimestampRef = useRef<number>(0);
+
+  // WCA Competition Simulator Mode (5-solve Ao5 round with BPA/WPA)
+  const [compModeActive, setCompModeActive] = useState(false);
+  const [compRoundSolves, setCompRoundSolves] = useState<Solve[]>([]);
 
   const phaseRef = useRef<TimerPhase>("idle");
   const startTimeRef = useRef<number>(0);
@@ -77,7 +119,6 @@ export default function TimerDisplay({
       setPhase(next);
       onPhaseChange(next);
 
-      // Mobile haptic feedback on state transitions
       if (typeof navigator !== "undefined" && "vibrate" in navigator) {
         if (next === "ready" || next === "ready_inspect") {
           navigator.vibrate?.(20);
@@ -96,13 +137,19 @@ export default function TimerDisplay({
       phase === "running" ||
       phase === "holding" ||
       phase === "ready";
-    if (!active || typeof navigator === "undefined" || !("wakeLock" in navigator)) {
+    if (
+      !active ||
+      typeof navigator === "undefined" ||
+      !("wakeLock" in navigator)
+    ) {
       return;
     }
 
     let sentinel: { release: () => Promise<void> } | null = null;
     const nav = navigator as unknown as {
-      wakeLock: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> };
+      wakeLock: {
+        request: (type: "screen") => Promise<{ release: () => Promise<void> }>;
+      };
     };
     nav.wakeLock
       .request("screen")
@@ -116,7 +163,7 @@ export default function TimerDisplay({
     };
   }, [phase]);
 
-  // Sync display when lastSolve updates externally (e.g. session change or delete)
+  // Sync display when lastSolve updates externally
   useEffect(() => {
     if (phaseRef.current === "idle") {
       setDisplayMs(lastSolve ? lastSolve.time_ms : 0);
@@ -153,6 +200,9 @@ export default function TimerDisplay({
     };
   }, []);
 
+  const effectiveInspectionEnabled =
+    settings.inspectionEnabled || compModeActive;
+
   const beginInspection = useCallback(() => {
     stopInspectionLoop();
     inspectStartRef.current = performance.now();
@@ -169,11 +219,11 @@ export default function TimerDisplay({
       if (settings.soundEnabled) {
         if (elapsedSec >= 8 && !alert8PlayedRef.current) {
           alert8PlayedRef.current = true;
-          playInspection8s();
+          playInspection8s(settings.voiceAlertsEnabled);
         }
         if (elapsedSec >= 12 && !alert12PlayedRef.current) {
           alert12PlayedRef.current = true;
-          playInspection12s();
+          playInspection12s(settings.voiceAlertsEnabled);
         }
       }
 
@@ -191,12 +241,16 @@ export default function TimerDisplay({
         setInspectPenalty("DNF");
       }
     }, 50);
-  }, [settings.soundEnabled, updatePhase]);
+  }, [settings.soundEnabled, settings.voiceAlertsEnabled, updatePhase]);
 
   const beginRunningTimer = useCallback(() => {
     stopInspectionLoop();
     stopSolveRaf();
-    startTimeRef.current = performance.now();
+    const now = performance.now();
+    startTimeRef.current = now;
+    lastSplitTimestampRef.current = now;
+    liveSplitsRef.current = [];
+    setLiveSplitsMs([]);
     setDisplayMs(0);
     setShowCommentBox(false);
     updatePhase("running");
@@ -209,18 +263,46 @@ export default function TimerDisplay({
     rafRef.current = requestAnimationFrame(tick);
   }, [updatePhase]);
 
-  const finishRunningTimer = useCallback(() => {
-    const finalMs = Math.max(10, Math.round(performance.now() - startTimeRef.current));
-    stopSolveRaf();
-    setDisplayMs(finalMs);
-    const appliedPenalty = settings.inspectionEnabled
-      ? inspectPenaltyRef.current
-      : "OK";
-    inspectPenaltyRef.current = "OK";
-    setInspectPenalty("OK");
-    updatePhase("just_stopped");
-    onSolveComplete(finalMs, appliedPenalty);
-  }, [onSolveComplete, settings.inspectionEnabled, updatePhase]);
+  const finishRunningTimer = useCallback(
+    (finalSplits?: number[]) => {
+      const now = performance.now();
+      const finalMs = Math.max(10, Math.round(now - startTimeRef.current));
+      stopSolveRaf();
+      setDisplayMs(finalMs);
+      const appliedPenalty = effectiveInspectionEnabled
+        ? inspectPenaltyRef.current
+        : "OK";
+      inspectPenaltyRef.current = "OK";
+      setInspectPenalty("OK");
+      updatePhase("just_stopped");
+
+      if (compModeActive) {
+        setCompRoundSolves((prev) => {
+          if (prev.length >= 5) return prev;
+          const mockSolve: Solve = {
+            id: `comp-${prev.length + 1}`,
+            session_id: "comp",
+            puzzle: "3x3",
+            time_ms: finalMs,
+            penalty: appliedPenalty,
+            scramble: "",
+            comment: "",
+            splits_ms: finalSplits,
+            solved_at: new Date().toISOString(),
+          };
+          return [...prev, mockSolve];
+        });
+      }
+
+      onSolveComplete(finalMs, appliedPenalty, finalSplits);
+    },
+    [
+      compModeActive,
+      effectiveInspectionEnabled,
+      onSolveComplete,
+      updatePhase,
+    ]
+  );
 
   const cancelEverything = useCallback(() => {
     clearHoldTimeout();
@@ -228,6 +310,8 @@ export default function TimerDisplay({
     stopSolveRaf();
     inspectPenaltyRef.current = "OK";
     setInspectPenalty("OK");
+    liveSplitsRef.current = [];
+    setLiveSplitsMs([]);
     setDisplayMs(lastSolve ? lastSolve.time_ms : 0);
     updatePhase("idle");
   }, [lastSolve, updatePhase]);
@@ -237,13 +321,37 @@ export default function TimerDisplay({
     const current = phaseRef.current;
 
     if (current === "running") {
-      finishRunningTimer();
+      // Check if Multi-Phase CFOP Split Timer is enabled (4 stages: Cross, F2L, OLL, PLL)
+      if (settings.splitMode === "cfop4") {
+        const now = performance.now();
+        const stageDuration = Math.max(
+          10,
+          Math.round(now - lastSplitTimestampRef.current)
+        );
+        lastSplitTimestampRef.current = now;
+        const nextSplits = [...liveSplitsRef.current, stageDuration];
+        liveSplitsRef.current = nextSplits;
+        setLiveSplitsMs(nextSplits);
+
+        if (nextSplits.length < 4) {
+          if (settings.soundEnabled) playSplitTick();
+          return;
+        }
+        finishRunningTimer(nextSplits);
+        return;
+      }
+
+      finishRunningTimer(undefined);
       return;
     }
 
     if (current === "idle") {
-      if (settings.inspectionEnabled) {
-        // Quick tap starts inspection
+      if (compModeActive && compRoundSolves.length >= 5) {
+        // Reset competition round for a new 5-solve round
+        setCompRoundSolves([]);
+      }
+
+      if (effectiveInspectionEnabled) {
         updatePhase("ready_inspect");
       } else {
         if (settings.holdDelayMs <= 0) {
@@ -275,9 +383,13 @@ export default function TimerDisplay({
       }
     }
   }, [
+    compModeActive,
+    compRoundSolves.length,
+    effectiveInspectionEnabled,
     finishRunningTimer,
     settings.holdDelayMs,
-    settings.inspectionEnabled,
+    settings.soundEnabled,
+    settings.splitMode,
     updatePhase,
   ]);
 
@@ -297,8 +409,7 @@ export default function TimerDisplay({
     }
 
     if (current === "holding") {
-      // Released too early before holdDelayMs elapsed
-      if (settings.inspectionEnabled && inspectIntervalRef.current) {
+      if (effectiveInspectionEnabled && inspectIntervalRef.current) {
         updatePhase("inspecting");
       } else {
         updatePhase("idle");
@@ -309,7 +420,12 @@ export default function TimerDisplay({
     if (current === "ready") {
       beginRunningTimer();
     }
-  }, [beginInspection, beginRunningTimer, settings.inspectionEnabled, updatePhase]);
+  }, [
+    beginInspection,
+    beginRunningTimer,
+    effectiveInspectionEnabled,
+    updatePhase,
+  ]);
 
   // Global Keyboard Listeners
   useEffect(() => {
@@ -329,7 +445,6 @@ export default function TimerDisplay({
     const onKeyDown = (e: KeyboardEvent) => {
       if (isTypingInInput(e.target)) return;
 
-      // Escape cancels inspection or running timer
       if (e.key === "Escape") {
         if (phaseRef.current !== "idle") {
           e.preventDefault();
@@ -338,9 +453,9 @@ export default function TimerDisplay({
         return;
       }
 
-      // If timer is running, ANY non-modifier key stops the timer (WCA/csTimer feel)
       if (phaseRef.current === "running") {
         if (!e.altKey && !e.ctrlKey && !e.metaKey) {
+          if (e.repeat) return;
           e.preventDefault();
           handlePressDown();
         }
@@ -392,7 +507,17 @@ export default function TimerDisplay({
     }
   };
 
-  // Determine timer color class
+  // Competition Mode BPA / WPA & Round Average calculations
+  const compBpaWpa = useMemo(() => {
+    if (!compModeActive || compRoundSolves.length !== 4) return null;
+    return computeBpaWpa(compRoundSolves, settings.targetGoalMs || 15000);
+  }, [compModeActive, compRoundSolves, settings.targetGoalMs]);
+
+  const compFinalAo5 = useMemo(() => {
+    if (!compModeActive || compRoundSolves.length < 5) return null;
+    return computeTrimmedAverage(compRoundSolves.map(getEffectiveMs), 5);
+  }, [compModeActive, compRoundSolves]);
+
   const getTimerColorClass = () => {
     if (phase === "holding") return "text-rose-400 scale-[0.99]";
     if (phase === "ready" || phase === "ready_inspect")
@@ -408,7 +533,6 @@ export default function TimerDisplay({
     return "text-white";
   };
 
-  // Determine displayed text inside main clock
   const renderMainClockText = () => {
     if (
       phase === "inspecting" ||
@@ -420,6 +544,12 @@ export default function TimerDisplay({
     }
 
     if (phase === "running") {
+      if (settings.timerUpdateMode === "hidden") {
+        return "GIẢI...";
+      }
+      if (settings.timerUpdateMode === "seconds") {
+        return `${Math.floor(displayMs / 1000)}s`;
+      }
       return formatTimeMs(displayMs, settings.decimals);
     }
 
@@ -440,14 +570,159 @@ export default function TimerDisplay({
     phase === "holding" ||
     phase === "ready";
 
+  const displayedSplits =
+    phase === "running"
+      ? liveSplitsMs
+      : lastSolve?.splits_ms && lastSolve.splits_ms.length === 4
+      ? lastSolve.splits_ms
+      : [];
+
   return (
-    <div className="flex-1 flex flex-col items-center justify-center w-full select-none relative px-4 py-4">
+    <div className="flex-1 flex flex-col items-center justify-center w-full select-none relative px-4 py-3">
+      {/* Quick Mode Switch Bar (Split Timer & WCA Competition Simulator) */}
+      {!isSolvingOrInspecting && !settings.manualInput && (
+        <div className="flex flex-wrap items-center justify-center gap-2 mb-2">
+          <button
+            type="button"
+            onClick={(e) => {
+              onToggleSplitMode(
+                settings.splitMode === "cfop4" ? "off" : "cfop4"
+              );
+              e.currentTarget.blur();
+            }}
+            className={`px-3 py-1 rounded-full text-xs font-medium border inline-flex items-center gap-1.5 transition ${
+              settings.splitMode === "cfop4"
+                ? "bg-cyan-500/20 text-cyan-200 border-cyan-400/50"
+                : "bg-white/[0.04] hover:bg-white/[0.08] border-white/10 text-slate-300"
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <span>
+              {settings.splitMode === "cfop4"
+                ? "Split Timer: 4 Pha CFOP (Đang bật)"
+                : "Bật Split Timer (Cross/F2L/OLL/PLL)"}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              setCompModeActive((v) => !v);
+              setCompRoundSolves([]);
+              e.currentTarget.blur();
+            }}
+            className={`px-3 py-1 rounded-full text-xs font-medium border inline-flex items-center gap-1.5 transition ${
+              compModeActive
+                ? "bg-amber-500/20 text-amber-200 border-amber-400/50"
+                : "bg-white/[0.04] hover:bg-white/[0.08] border-white/10 text-slate-300"
+            }`}
+          >
+            <Award className="w-3.5 h-3.5 text-amber-400" />
+            <span>
+              {compModeActive
+                ? `Phòng thi WCA (${compRoundSolves.length}/5 lượt)`
+                : "Mô phỏng Thi đấu WCA (Ao5)"}
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* WCA Competition Round Progress Card */}
+      {compModeActive && !isSolvingOrInspecting && (
+        <div className="w-full max-w-xl mb-2 rounded-2xl border border-amber-400/30 bg-amber-500/[0.06] px-4 py-2.5 text-xs space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-semibold text-amber-200 inline-flex items-center gap-1.5">
+              <Trophy className="w-3.5 h-3.5 text-amber-400" />
+              <span>
+                Vòng thi đấu WCA Ao5 (Tự động bật 15s Inspection • Mục tiêu:{" "}
+                {formatTimeMs(settings.targetGoalMs || 15000, settings.decimals)})
+              </span>
+            </div>
+            {compRoundSolves.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setCompRoundSolves([])}
+                className="text-[11px] px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-slate-200 inline-flex items-center gap-1"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Thi lại vòng mới</span>
+              </button>
+            )}
+          </div>
+
+          {/* 5 Solve Slots */}
+          <div className="grid grid-cols-5 gap-1.5 font-mono">
+            {[0, 1, 2, 3, 4].map((idx) => {
+              const sv = compRoundSolves[idx];
+              const isCurrent = idx === compRoundSolves.length;
+              return (
+                <div
+                  key={idx}
+                  className={`rounded-lg py-1.5 px-2 text-center border ${
+                    sv
+                      ? "bg-black/40 border-emerald-500/30 text-emerald-300 font-bold"
+                      : isCurrent
+                      ? "bg-amber-400/15 border-amber-400/50 text-amber-200 font-semibold"
+                      : "bg-black/20 border-white/10 text-slate-400"
+                  }`}
+                >
+                  <div className="text-[10px] opacity-60">Lượt #{idx + 1}</div>
+                  <div>
+                    {sv ? formatSolveDisplay(sv, settings.decimals) : "—"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* After Solve #4: Show Official BPA & WPA */}
+          {compBpaWpa && (
+            <div className="rounded-xl bg-black/40 border border-white/10 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="text-slate-400">BPA (Tốt nhất có thể): </span>
+                <strong className="font-mono text-emerald-300">
+                  {formatTimeMs(compBpaWpa.bpa, settings.decimals)}
+                </strong>
+              </div>
+              <div>
+                <span className="text-slate-400">WPA (Tệ nhất nếu lượt 5 DNF): </span>
+                <strong className="font-mono text-amber-300">
+                  {formatTimeMs(compBpaWpa.wpa, settings.decimals)}
+                </strong>
+              </div>
+              <div className="w-full text-[11px] text-cyan-300 font-medium">
+                {compBpaWpa.neededForTargetMs === "GUARANTEED"
+                  ? "Chúc mừng! Bạn đã chắc chắn đạt mục tiêu Ao5 dù kết quả lượt 5 ra sao!"
+                  : compBpaWpa.neededForTargetMs === "IMPOSSIBLE"
+                  ? "Không thể đạt mục tiêu Ao5 ở vòng này, hãy cố gắng phá PB Single ở lượt 5!"
+                  : `Ở lượt #5 cuối cùng, bạn cần giải dưới ${formatTimeMs(
+                      compBpaWpa.neededForTargetMs,
+                      settings.decimals
+                    )} để đạt mục tiêu!`}
+              </div>
+            </div>
+          )}
+
+          {/* After Solve #5: Final Official Round Result */}
+          {compRoundSolves.length === 5 && (
+            <div className="rounded-xl bg-emerald-500/15 border border-emerald-400/40 px-3 py-2 flex items-center justify-between">
+              <span className="font-semibold text-emerald-200">
+                Kết quả chung cuộc WCA Round Ao5:
+              </span>
+              <span className="font-mono text-base font-bold text-emerald-300">
+                {formatTimeMs(compFinalAo5, settings.decimals)}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
       {settings.manualInput ? (
         <form
           onSubmit={handleManualSubmit}
           className="w-full max-w-md flex flex-col items-center gap-3 my-6"
         >
-          <div className="inline-flex items-center gap-2 text-xs uppercase tracking-widest text-cyan-400 font-semibold">
+          <div className="inline-flex items-center gap-2 text-xs text-cyan-400 font-semibold">
             <Keyboard className="w-4 h-4" />
             <span>Chế độ nhập thời gian thủ công</span>
           </div>
@@ -470,7 +745,6 @@ export default function TimerDisplay({
           role="button"
           tabIndex={-1}
           onTouchStart={(e) => {
-            // Allow clicking quick action buttons underneath without triggering touch zone
             if ((e.target as HTMLElement).closest("[data-timer-action]")) return;
             e.preventDefault();
             handlePressDown();
@@ -480,20 +754,21 @@ export default function TimerDisplay({
             e.preventDefault();
             handlePressUp();
           }}
-          className="w-full flex-1 min-h-[210px] sm:min-h-[260px] flex flex-col items-center justify-center cursor-pointer rounded-3xl transition"
+          className="w-full flex-1 min-h-[200px] sm:min-h-[250px] flex flex-col items-center justify-center cursor-pointer rounded-3xl transition"
         >
           {/* PB Celebration Pill */}
           {isNewPb && !isSolvingOrInspecting && lastSolve && (
-            <div className="mb-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-amber-400/20 via-emerald-400/20 to-cyan-400/20 border border-amber-400/40 text-amber-300 text-xs font-semibold animate-bounce">
+            <div className="mb-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-xs font-semibold transition-all duration-300 ease-out">
               <Sparkles className="w-3.5 h-3.5" />
               <span>Kỷ lục mới (Personal Best)!</span>
             </div>
           )}
 
           {/* Inspection Status Label */}
-          {settings.inspectionEnabled && !isSolvingOrInspecting && (
-            <div className="mb-1 text-[11px] uppercase tracking-widest text-amber-300/80 font-medium">
+          {effectiveInspectionEnabled && !isSolvingOrInspecting && (
+            <div className="mb-1 text-[11px] text-amber-300/80 font-medium">
               WCA Inspection 15s đang bật
+              {settings.voiceAlertsEnabled ? " (Kèm giọng Trọng tài 8s/12s)" : ""}
             </div>
           )}
 
@@ -504,17 +779,81 @@ export default function TimerDisplay({
             {renderMainClockText()}
           </div>
 
+          {/* Live / Post-Solve CFOP 4-Stage Split Pills */}
+          {(settings.splitMode === "cfop4" || displayedSplits.length === 4) && (
+            <div className="mt-3 w-full max-w-md space-y-1.5">
+              <div className="grid grid-cols-4 gap-1.5 text-center font-mono text-xs">
+                {CFOP_SPLIT_LABELS.map((label, idx) => {
+                  const stageMs = displayedSplits[idx];
+                  const isActiveStage =
+                    phase === "running" && liveSplitsMs.length === idx;
+                  return (
+                    <div
+                      key={label}
+                      className={`rounded-xl py-1.5 px-2 border transition ${
+                        typeof stageMs === "number"
+                          ? "bg-white/[0.07] border-cyan-500/40 text-white"
+                          : isActiveStage
+                          ? "bg-cyan-500/20 border-cyan-400 text-cyan-200 animate-pulse"
+                          : "bg-black/30 border-white/10 text-slate-400"
+                      }`}
+                    >
+                      <div className="text-[10px] font-sans font-semibold opacity-75">
+                        {label}
+                      </div>
+                      <div className="font-bold">
+                        {typeof stageMs === "number"
+                          ? formatTimeMs(stageMs, settings.decimals)
+                          : isActiveStage
+                          ? "Đang giải..."
+                          : "—"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Proportional Stacked Progress Bar after solve completes */}
+              {!isSolvingOrInspecting && displayedSplits.length === 4 && (
+                <div className="w-full h-2.5 rounded-full overflow-hidden flex bg-black/40 border border-white/10">
+                  {displayedSplits.map((ms, idx) => {
+                    const total = Math.max(
+                      1,
+                      displayedSplits.reduce((a, b) => a + b, 0)
+                    );
+                    const pct = Math.round((ms / total) * 100);
+                    return (
+                      <div
+                        key={idx}
+                        style={{ width: `${pct}%` }}
+                        title={`${CFOP_SPLIT_LABELS[idx]}: ${formatTimeMs(
+                          ms,
+                          settings.decimals
+                        )} (${pct}%)`}
+                        className={`h-full ${CFOP_SPLIT_COLORS[idx]}`}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Hint Caption */}
           <p className="mt-3 text-xs sm:text-sm opacity-55 text-center">
             {phase === "running"
-              ? "Nhấn phím bất kỳ hoặc chạm màn hình để dừng"
+              ? settings.splitMode === "cfop4"
+                ? `Nhấn Space / Chạm màn hình để chốt pha ${
+                    CFOP_SPLIT_LABELS[liveSplitsMs.length] || "PLL"
+                  } (${liveSplitsMs.length + 1}/4)`
+                : "Nhấn phím bất kỳ hoặc chạm màn hình để dừng"
               : phase === "inspecting"
               ? "Nhấn giữ Space (hoặc chạm giữ) để bắt đầu giải • ESC để hủy"
               : phase === "holding"
               ? "Tiếp tục giữ..."
               : phase === "ready"
               ? "Thả tay để bắt đầu!"
-              : settings.inspectionEnabled
+              : effectiveInspectionEnabled
               ? "Nhấn Space (hoặc chạm) để bắt đầu 15s Inspection"
               : "Nhấn giữ Space (hoặc chạm giữ màn hình) để sẵn sàng"}
           </p>
@@ -523,7 +862,7 @@ export default function TimerDisplay({
           {!isSolvingOrInspecting && lastSolve && (
             <div
               data-timer-action="true"
-              className="mt-5 flex flex-col items-center gap-2.5"
+              className="mt-4 flex flex-col items-center gap-2.5"
             >
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <button
@@ -627,22 +966,26 @@ export default function TimerDisplay({
             </div>
           )}
 
+          {/* Smart Session Fatigue Alert */}
+          {!isSolvingOrInspecting && fatigueAlert && (
+            <div className="mt-3 max-w-md rounded-xl bg-amber-500/10 border border-amber-400/30 px-3 py-2 text-[11px] text-amber-200 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>{fatigueAlert}</span>
+            </div>
+          )}
+
           {/* Quick Inline Rolling Averages Summary */}
           {!isSolvingOrInspecting && (
-            <div className="mt-6 flex items-center gap-6 text-sm sm:text-base font-mono">
+            <div className="mt-4 flex items-center gap-6 text-sm sm:text-base font-mono tabular-nums">
               <div className="flex items-center gap-2">
-                <span className="opacity-50 font-sans text-xs uppercase tracking-wider">
-                  Ao5:
-                </span>
+                <span className="opacity-50 font-sans text-xs">Ao5:</span>
                 <span className="font-semibold text-cyan-300">
                   {formatTimeMs(currentAo5, settings.decimals)}
                 </span>
               </div>
               <div className="w-px h-4 bg-white/15" />
               <div className="flex items-center gap-2">
-                <span className="opacity-50 font-sans text-xs uppercase tracking-wider">
-                  Ao12:
-                </span>
+                <span className="opacity-50 font-sans text-xs">Ao12:</span>
                 <span className="font-semibold text-indigo-300">
                   {formatTimeMs(currentAo12, settings.decimals)}
                 </span>

@@ -119,18 +119,103 @@ function generateMegaminxScramble(): string {
 }
 
 function generateSquare1Scramble(): string {
-  const ops: string[] = [];
-  for (let i = 0; i < 12; i++) {
-    let top = 0;
-    let bottom = 0;
-    while (top === 0 && bottom === 0) {
-      top = Math.floor(Math.random() * 12) - 5;
-      bottom = Math.floor(Math.random() * 12) - 5;
+  // Shape-valid Square-1 scramble generator (ensures / never cuts across a 60° corner)
+  let top = [1, 2, 1, 2, 1, 2, 1, 2];
+  let bottom = [2, 1, 2, 1, 2, 1, 2, 1];
+
+  const canSlice = (layer: number[]) => {
+    let sum = 0;
+    for (const w of layer) {
+      sum += w;
+      if (sum === 6) return true;
+      if (sum > 6) return false;
     }
-    ops.push(`(${top},${bottom})`);
+    return false;
+  };
+
+  const rotateLayer = (layer: number[], steps: number): number[] | null => {
+    const n = ((steps % 12) + 12) % 12;
+    if (n === 0) return [...layer];
+    const target = (12 - n) % 12;
+    let total = 0;
+    let idx = -1;
+    for (let i = 0; i < layer.length; i++) {
+      if (total === target) {
+        idx = i;
+        break;
+      }
+      total += layer[i];
+    }
+    if (idx === -1) return null;
+    const next = [...layer.slice(idx), ...layer.slice(0, idx)];
+    return canSlice(next) ? next : null;
+  };
+
+  const slash = (tLayer: number[], bLayer: number[]) => {
+    const split = (arr: number[]) => {
+      let s = 0;
+      const r: number[] = [];
+      const l: number[] = [];
+      for (const w of arr) {
+        if (s < 6) {
+          r.push(w);
+          s += w;
+        } else {
+          l.push(w);
+        }
+      }
+      return { r, l };
+    };
+    const ts = split(tLayer);
+    const bs = split(bLayer);
+    return {
+      top: [...bs.r.reverse(), ...ts.l],
+      bottom: [...ts.r.reverse(), ...bs.l],
+    };
+  };
+
+  const ops: string[] = [];
+  const candidates = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6];
+
+  for (let i = 0; i < 12; i++) {
+    const valid: { t: number; b: number; nt: number[]; nb: number[] }[] = [];
+    for (const t of candidates) {
+      const nt = rotateLayer(top, t);
+      if (!nt) continue;
+      for (const b of candidates) {
+        if (t === 0 && b === 0) continue;
+        const nb = rotateLayer(bottom, b);
+        if (!nb) continue;
+        valid.push({ t, b, nt, nb });
+      }
+    }
+    if (valid.length === 0) break;
+    const pick = randomItem(valid);
+    ops.push(`(${pick.t},${pick.b})`);
     ops.push("/");
+    const after = slash(pick.nt, pick.nb);
+    top = after.top;
+    bottom = after.bottom;
   }
   return ops.join(" ");
+}
+
+export function invertAlgorithm(alg: string): string {
+  const tokens = alg
+    .replace(/[()[\]]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  return tokens
+    .slice()
+    .reverse()
+    .map((tok) => {
+      if (tok.endsWith("2'") || tok.endsWith("'2")) return tok.slice(0, -2) + "2";
+      if (tok.endsWith("2")) return tok;
+      if (tok.endsWith("'")) return tok.slice(0, -1);
+      return `${tok}'`;
+    })
+    .join(" ");
 }
 
 function generateClockScramble(): string {
@@ -254,19 +339,45 @@ export function simulateCubeScramble(size: number, scramble: string): CubeNetSta
     }
   };
 
-  const tokens = scramble.trim().split(/\s+/).filter(Boolean);
-  const moveRegex = /^(\d+)?([UDLRFBudlrfbxyz])(w)?(['2])?$/;
+  const tokens = scramble
+    .replace(/[’‘`´]/g, "'")
+    .replace(/[()[\]]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const moveRegex = /^(\d+)?([UDLRFBudlrfbMESxyz])(w)?(['2]+)?$/;
 
   for (const token of tokens) {
     const match = token.match(moveRegex);
     if (!match) continue;
     const [, prefixNum, rawFace, wideFlag, suffix] = match;
-    const quarterTurns = suffix === "2" ? 2 : suffix === "'" ? 3 : 1;
+    const quarterTurns =
+      suffix === "2" || suffix === "2'" || suffix === "'2"
+        ? 2
+        : suffix === "'"
+        ? 3
+        : 1;
 
     if (rawFace === "x" || rawFace === "y" || rawFace === "z") {
       const rotFace = rawFace === "x" ? "R" : rawFace === "y" ? "U" : "F";
       for (let t = 0; t < quarterTurns; t++) {
         for (const s of stickers) rotateStickerCW(s, rotFace);
+      }
+      continue;
+    }
+
+    if (rawFace === "M" || rawFace === "E" || rawFace === "S") {
+      const rotFace = rawFace === "M" ? "L" : rawFace === "E" ? "D" : "F";
+      for (let t = 0; t < quarterTurns; t++) {
+        for (const s of stickers) {
+          if (
+            (rawFace === "M" && s.x === 0) ||
+            (rawFace === "E" && s.y === 0) ||
+            (rawFace === "S" && s.z === 0)
+          ) {
+            rotateStickerCW(s, rotFace);
+          }
+        }
       }
       continue;
     }

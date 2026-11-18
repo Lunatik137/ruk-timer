@@ -20,7 +20,7 @@ import { StatusBar } from "expo-status-bar";
 import * as Haptics from "expo-haptics";
 import { useKeepAwake } from "expo-keep-awake";
 import CubeNetNative from "./src/components/CubeNetNative";
-import { generateScramble } from "./src/lib/scrambles";
+import { generateScramble, invertAlgorithm } from "./src/lib/scrambles";
 import {
   calculateSessionStats,
   formatSolveDisplay,
@@ -59,11 +59,103 @@ type TimerPhase =
   | "running"
   | "just_stopped";
 
+const getNowMs = () =>
+  typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+
+const MOBILE_CFOP_CASES = [
+  {
+    code: "Trigger 01",
+    stage: "CROSS",
+    name: "Sexy Move x6 (Luyện tốc độ tay)",
+    formula: "(R U R' U') (R U R' U') (R U R' U') (R U R' U') (R U R' U') (R U R' U')",
+    recognition: "Lặp chuỗi 4 nước R U R' U' đúng 6 lần liên tiếp (mục tiêu < 2.5s).",
+  },
+  {
+    code: "F2L 01",
+    stage: "F2L",
+    name: "Chèn cơ bản khe Phải",
+    formula: "U (R U' R')",
+    recognition: "Góc trắng hướng sang phải, mặt trên góc & cạnh khác màu.",
+  },
+  {
+    code: "F2L 17",
+    stage: "F2L",
+    name: "Đúng góc nhưng Cạnh bị ngược trong khe",
+    formula: "(R U' R') U' (R U R') U2 (R U' R')",
+    recognition: "Cả góc và cạnh nằm trong khe FR nhưng cạnh bị lật ngược màu.",
+  },
+  {
+    code: "OLL 45",
+    stage: "OLL",
+    name: "Chữ I ngang (Tạo dấu cộng vàng)",
+    formula: "F (R U R' U') F'",
+    recognition: "[2-Look OLL] Vạch ngang 3 ô vàng trên mặt U.",
+  },
+  {
+    code: "OLL 27",
+    stage: "OLL",
+    name: "Sune (Con cá bơi sang trái)",
+    formula: "(R U R' U) (R U2 R')",
+    recognition: "[2-Look OLL] Hình con cá có 1 góc vàng ở Trước-Trái.",
+  },
+  {
+    code: "OLL 33",
+    stage: "OLL",
+    name: "T-Shape (Sexy + Sledge)",
+    formula: "(R U R' U') (R' F R F')",
+    recognition: "[Full OLL] Hình chữ T nằm ngang, tổ hợp 8 nước siêu tốc.",
+  },
+  {
+    code: "PLL - T",
+    stage: "PLL",
+    name: "T Perm (Hoán vị hình chữ T)",
+    formula: "(R U R' U') R' F R2 U' R' U' (R U R' F')",
+    recognition: "[2-Look PLL] Đèn pha bên Trái, đổi 2 góc bên Phải và 2 cạnh.",
+  },
+  {
+    code: "PLL - Y",
+    stage: "PLL",
+    name: "Y Perm (Đổi 2 góc chéo nhau)",
+    formula: "F (R U' R' U') (R U R' F') (R U R' U') (R' F R F')",
+    recognition: "[2-Look PLL] Không có đèn pha ở cả 4 mặt, đổi 2 góc chéo.",
+  },
+  {
+    code: "PLL - Ua",
+    stage: "PLL",
+    name: "Ua Perm (Đổi 3 cạnh ngược chiều KĐH)",
+    formula: "(R U' R U) (R U) (R U' R' U') R2",
+    recognition: "[2-Look PLL] Thanh 3 ô đã giải đặt ở mặt Sau.",
+  },
+  {
+    code: "PLL - Ub",
+    stage: "PLL",
+    name: "Ub Perm (Đổi 3 cạnh cùng chiều KĐH)",
+    formula: "R2 U (R U R' U') R' U' (R' U R')",
+    recognition: "[2-Look PLL] Thanh 3 ô đã giải ở mặt Sau, 3 cạnh xoay chiều KĐH.",
+  },
+  {
+    code: "PLL - H",
+    stage: "PLL",
+    name: "H Perm (Đổi chéo 2 cặp cạnh đối diện)",
+    formula: "M2 U M2 U2 M2 U M2",
+    recognition: "[2-Look PLL] Cả 4 mặt có đèn pha kèm viên cạnh đối diện ở giữa.",
+  },
+  {
+    code: "PLL - Jb",
+    stage: "PLL",
+    name: "Jb Perm (Chữ J phải siêu tốc)",
+    formula: "(R U R' F') (R U R' U') R' F R2 U' R'",
+    recognition: "[Full PLL] Nguyên thanh 3 ô đã giải đặt ở bên Trái.",
+  },
+] as const;
+
 export default function App() {
   useKeepAwake();
 
   const [readyApp, setReadyApp] = useState(false);
-  const [tab, setTab] = useState<"timer" | "cube" | "history" | "stats">("timer");
+  const [tab, setTab] = useState<"timer" | "cfop" | "cube" | "history" | "stats">("timer");
 
   // Data state
   const [settings, setSettings] = useState<MobileSettings>(DEFAULT_MOBILE_SETTINGS);
@@ -83,6 +175,7 @@ export default function App() {
 
   // Modals
   const [sessionModalOpen, setSessionModalOpen] = useState(false);
+  const [cubeModalOpen, setCubeModalOpen] = useState(false);
   const [newSessionName, setNewSessionName] = useState("");
   const [selectedSolve, setSelectedSolve] = useState<SolveWithRollingStats | null>(
     null
@@ -186,6 +279,21 @@ export default function App() {
     () => sessions.find((s) => s.id === activeSessionId) || sessions[0],
     [sessions, activeSessionId]
   );
+
+  // Keep scramble and 2D cube net in sync whenever the active puzzle changes
+  // (session switch, cloud hydration, sign-out, import...).
+  const scramblePuzzleRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!readyApp || !activeSession) return;
+    if (scramblePuzzleRef.current === null) {
+      scramblePuzzleRef.current = activeSession.puzzle;
+      return;
+    }
+    if (scramblePuzzleRef.current !== activeSession.puzzle) {
+      scramblePuzzleRef.current = activeSession.puzzle;
+      setScramble(generateScramble(activeSession.puzzle));
+    }
+  }, [readyApp, activeSession]);
 
   const sessionSolves = useMemo(
     () =>
@@ -389,14 +497,24 @@ export default function App() {
 
   const startInspection = () => {
     stopAllTimers();
-    inspectStartRef.current = Date.now();
+    inspectStartRef.current = getNowMs();
     inspectPenaltyRef.current = "OK";
     setInspectPenalty("OK");
     setInspectLeft(15);
     setPhaseBoth("inspecting");
+    let alert8 = false;
+    let alert12 = false;
 
     inspectIntervalRef.current = setInterval(() => {
-      const sec = (Date.now() - inspectStartRef.current) / 1000;
+      const sec = (getNowMs() - inspectStartRef.current) / 1000;
+      if (sec >= 8 && !alert8) {
+        alert8 = true;
+        triggerHaptic("medium");
+      }
+      if (sec >= 12 && !alert12) {
+        alert12 = true;
+        triggerHaptic("success");
+      }
       if (sec < 15) {
         setInspectLeft(Math.ceil(15 - sec));
         inspectPenaltyRef.current = "OK";
@@ -410,18 +528,18 @@ export default function App() {
         inspectPenaltyRef.current = "DNF";
         setInspectPenalty("DNF");
       }
-    }, 60);
+    }, 50);
   };
 
   const startRunning = () => {
     stopAllTimers();
-    startMsRef.current = Date.now();
+    startMsRef.current = getNowMs();
     setDisplayMs(0);
     setPhaseBoth("running");
     triggerHaptic("light");
 
     timerIntervalRef.current = setInterval(() => {
-      setDisplayMs(Date.now() - startMsRef.current);
+      setDisplayMs(getNowMs() - startMsRef.current);
     }, 16);
   };
 
@@ -429,7 +547,7 @@ export default function App() {
     const cur = phaseRef.current;
 
     if (cur === "running") {
-      const finalMs = Math.max(10, Date.now() - startMsRef.current);
+      const finalMs = Math.max(10, Math.round(getNowMs() - startMsRef.current));
       stopAllTimers();
       setDisplayMs(finalMs);
       const pen = settings.inspectionEnabled ? inspectPenaltyRef.current : "OK";
@@ -691,6 +809,19 @@ export default function App() {
                   Chạm vào scramble để tạo công thức mới
                 </Text>
               </TouchableOpacity>
+
+              {/* Main-screen 2D Cube button (replaces the bottom nav tab) */}
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setCubeModalOpen(true)}
+                style={styles.cubeOpenBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Xem hình trải 2D Cube"
+              >
+                <Text style={styles.cubeOpenBtnText}>
+                  Xem hình 2D Cube ({activeSession.puzzle.toUpperCase()})
+                </Text>
+              </TouchableOpacity>
             </>
           )}
 
@@ -818,7 +949,89 @@ export default function App() {
         </View>
       )}
 
-      {/* TAB 2: 2D CUBE NET */}
+      {/* TAB 2: CFOP TRAINER */}
+      {tab === "cfop" && (
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+          <Text style={styles.sectionTitle}>
+            Học viện CFOP & Luyện Bấm Giờ (Đồng bộ Cloud với Web)
+          </Text>
+          {MOBILE_CFOP_CASES.map((alg) => (
+            <View key={alg.code} style={styles.card}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ color: "#22d3ee", fontWeight: "800", fontSize: 12 }}>
+                  {alg.code} • {alg.stage}
+                </Text>
+                <TouchableOpacity
+                  style={styles.primaryBtn}
+                  onPress={async () => {
+                    const targetName = `CFOP • ${alg.code}: ${alg.name}`;
+                    let targetSess = sessions.find((s) => s.name === targetName);
+                    if (!targetSess) {
+                      targetSess = {
+                        id: generateUuid(),
+                        user_id: userId ?? undefined,
+                        name: targetName,
+                        puzzle: "3x3",
+                        created_at: new Date().toISOString(),
+                      };
+                      const next = [...sessions, targetSess];
+                      setSessions(next);
+                      if (userId) {
+                        await supabase.from("cube_sessions").insert({
+                          id: targetSess.id,
+                          user_id: userId,
+                          name: targetSess.name,
+                          puzzle: targetSess.puzzle,
+                          created_at: targetSess.created_at,
+                        });
+                      } else {
+                        await saveGuestMobileSessions(next);
+                      }
+                    }
+                    setActiveSessionId(targetSess.id);
+                    setScramble(`z2 ${invertAlgorithm(alg.formula)}`);
+                    setTab("timer");
+                  }}
+                >
+                  <Text style={styles.primaryBtnText}>Luyện trên Timer</Text>
+                </TouchableOpacity>
+              </View>
+              <Text
+                style={{
+                  color: "#f8fafc",
+                  fontWeight: "700",
+                  fontSize: 14,
+                  marginTop: 6,
+                }}
+              >
+                {alg.name}
+              </Text>
+              <Text
+                style={{
+                  color: "#67e8f9",
+                  fontWeight: "700",
+                  fontSize: 13,
+                  marginTop: 6,
+                  fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+                }}
+              >
+                {alg.formula}
+              </Text>
+              <Text style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>
+                {alg.recognition}
+              </Text>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+
+      {/* TAB 2B: 2D CUBE NET */}
       {tab === "cube" && (
         <ScrollView contentContainerStyle={styles.cubeTabContainer}>
           <Text style={styles.sectionTitle}>
@@ -1120,10 +1333,10 @@ export default function App() {
         <View style={styles.bottomBar}>
           {(
             [
-              { id: "timer", label: "⏱ Timer" },
-              { id: "cube", label: "🧊 2D Cube" },
-              { id: "history", label: `📋 Lịch sử (${enrichedSolves.length})` },
-              { id: "stats", label: "📊 Thống kê" },
+              { id: "timer", label: "Timer" },
+              { id: "cfop", label: "CFOP" },
+              { id: "history", label: `Lịch sử (${enrichedSolves.length})` },
+              { id: "stats", label: "Thống kê" },
             ] as const
           ).map((item) => {
             const active = tab === item.id;
@@ -1146,6 +1359,46 @@ export default function App() {
           })}
         </View>
       )}
+
+      {/* Session Switcher Modal */}
+      <Modal
+        visible={cubeModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCubeModalOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalBox}>
+            <Text style={styles.sectionTitle}>
+              Hình trải 2D ({activeSession.puzzle.toUpperCase()})
+            </Text>
+            <Text style={[styles.scrambleText, { fontSize: 13, marginVertical: 8 }]}>
+              {scramble}
+            </Text>
+            <View style={{ alignItems: "center", marginVertical: 10 }}>
+              <CubeNetNative
+                key={`${activeSession.puzzle}-${scramble}`}
+                puzzle={activeSession.puzzle}
+                scramble={scramble}
+              />
+            </View>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+              <TouchableOpacity
+                style={[styles.primaryBtn, { flex: 1 }]}
+                onPress={() => setScramble(generateScramble(activeSession.puzzle))}
+              >
+                <Text style={styles.primaryBtnText}>Scramble mới</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionPill, { justifyContent: "center" }]}
+                onPress={() => setCubeModalOpen(false)}
+              >
+                <Text style={styles.actionPillText}>Đóng</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Session Switcher Modal */}
       <Modal
@@ -1410,6 +1663,23 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textAlign: "center",
     marginTop: 5,
+  },
+  cubeOpenBtn: {
+    alignSelf: "center",
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    minHeight: 44,
+    justifyContent: "center",
+    borderRadius: 99,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(34,211,238,0.35)",
+  },
+  cubeOpenBtnText: {
+    color: "#a5f3fc",
+    fontSize: 12,
+    fontWeight: "700",
   },
   touchPad: {
     flex: 1,

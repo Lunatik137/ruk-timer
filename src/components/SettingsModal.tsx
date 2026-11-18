@@ -9,7 +9,12 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { ThemeId, TimerSettings } from "@/types/cubing";
+import {
+  SplitMode,
+  ThemeId,
+  TimerSettings,
+  TimerUpdateMode,
+} from "@/types/cubing";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -68,14 +73,14 @@ export default function SettingsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
-        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 text-white p-6 shadow-2xl relative"
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 text-white p-6 relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -92,14 +97,16 @@ export default function SettingsModal({
             <Sliders className="w-5 h-5" />
           </div>
           <div>
-            <h2 id="settings-modal-title" className="font-bold text-lg">Cài đặt Timer & Dữ liệu</h2>
+            <h2 id="settings-modal-title" className="font-bold text-lg">
+              Cài đặt Timer & Dữ liệu
+            </h2>
             <p className="text-xs text-slate-400">
-              Tùy chỉnh chuẩn thi đấu WCA, giao diện và sao lưu
+              Tùy chỉnh chuẩn thi đấu WCA, Split Timer, giao diện và nhập dữ liệu csTimer
             </p>
           </div>
         </div>
 
-        <div className="space-y-4 text-sm">
+        <div className="space-y-3.5 text-sm">
           {/* WCA Inspection */}
           <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
             <div>
@@ -116,6 +123,71 @@ export default function SettingsModal({
               }
               className="w-5 h-5 accent-cyan-400 cursor-pointer"
             />
+          </div>
+
+          {/* WCA Voice Referee */}
+          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
+            <div>
+              <div className="font-medium">
+                Giọng đọc Trọng tài WCA (8s / 12s)
+              </div>
+              <div className="text-xs text-slate-400">
+                Đọc to &ldquo;Eight seconds&rdquo; và &ldquo;Twelve seconds&rdquo; khi đang Inspection
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={Boolean(settings.voiceAlertsEnabled)}
+              onChange={(e) =>
+                onUpdateSettings({ voiceAlertsEnabled: e.target.checked })
+              }
+              className="w-5 h-5 accent-cyan-400 cursor-pointer"
+            />
+          </div>
+
+          {/* Multi-Phase Split Timer */}
+          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
+            <div>
+              <div className="font-medium">
+                Chế độ Split Timer (Tách giai đoạn)
+              </div>
+              <div className="text-xs text-slate-400">
+                Nhấn Space sau mỗi bước để đo riêng Cross, F2L, OLL, PLL
+              </div>
+            </div>
+            <select
+              value={settings.splitMode || "off"}
+              onChange={(e) =>
+                onUpdateSettings({ splitMode: e.target.value as SplitMode })
+              }
+              className="h-9 rounded-lg bg-slate-950 border border-white/15 px-2.5 text-xs"
+            >
+              <option value="off">Tắt (1 pha tiêu chuẩn)</option>
+              <option value="cfop4">4 Pha CFOP (Cross/F2L/OLL/PLL)</option>
+            </select>
+          </div>
+
+          {/* Timer Display Update Mode */}
+          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
+            <div>
+              <div className="font-medium">Hiển thị đồng hồ khi đang chạy</div>
+              <div className="text-xs text-slate-400">
+                Ẩn số nhảy liên tục giúp mắt tập trung tối đa vào Lookahead
+              </div>
+            </div>
+            <select
+              value={settings.timerUpdateMode || "live"}
+              onChange={(e) =>
+                onUpdateSettings({
+                  timerUpdateMode: e.target.value as TimerUpdateMode,
+                })
+              }
+              className="h-9 rounded-lg bg-slate-950 border border-white/15 px-2.5 text-xs"
+            >
+              <option value="live">Cập nhật liên tục (0.01s)</option>
+              <option value="seconds">Chỉ hiện số giây (1s)</option>
+              <option value="hidden">Ẩn số (&ldquo;GIẢI...&rdquo;)</option>
+            </select>
           </div>
 
           {/* Hold Delay */}
@@ -136,6 +208,31 @@ export default function SettingsModal({
               <option value={0}>0.0s (Tức thì)</option>
               <option value={300}>0.30s (Mặc định)</option>
               <option value={550}>0.55s (Chuẩn WCA)</option>
+            </select>
+          </div>
+
+          {/* Target Sub-X Goal */}
+          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
+            <div>
+              <div className="font-medium">Mục tiêu cá nhân (Sub-X Goal)</div>
+              <div className="text-xs text-slate-400">
+                Dùng để tính tỷ lệ đạt mục tiêu và thời gian cần ở vòng thi WCA
+              </div>
+            </div>
+            <select
+              value={settings.targetGoalMs || 15000}
+              onChange={(e) =>
+                onUpdateSettings({ targetGoalMs: Number(e.target.value) })
+              }
+              className="h-9 rounded-lg bg-slate-950 border border-white/15 px-2.5 text-xs"
+            >
+              <option value={8000}>Sub-8 giây</option>
+              <option value={10000}>Sub-10 giây</option>
+              <option value={12000}>Sub-12 giây</option>
+              <option value={15000}>Sub-15 giây</option>
+              <option value={20000}>Sub-20 giây</option>
+              <option value={30000}>Sub-30 giây</option>
+              <option value={45000}>Sub-45 giây</option>
             </select>
           </div>
 
@@ -220,7 +317,7 @@ export default function SettingsModal({
             <div>
               <div className="font-medium">Hiển thị hình trải 2D Scramble</div>
               <div className="text-xs text-slate-400">
-                Kiểm tra trạng thái màu Rubik sau khi tráo
+                Kiểm tra trạng thái màu Rubik sau khi tráo (hỗ trợ đủ 13 bộ môn)
               </div>
             </div>
             <input
@@ -257,11 +354,18 @@ export default function SettingsModal({
             </div>
           </div>
 
-          {/* Backup Import / Export */}
+          {/* Universal Backup Import / Export (RukTimer / csTimer / Twisty Timer) */}
           <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-2.5">
-            <div className="font-medium flex items-center gap-1.5">
-              <Download className="w-4 h-4 text-cyan-400" />
-              <span>Sao lưu & Khôi phục dữ liệu</span>
+            <div>
+              <div className="font-medium flex items-center gap-1.5">
+                <Download className="w-4 h-4 text-cyan-400" />
+                <span>Sao lưu & Nhập dữ liệu Đa nền tảng</span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Hỗ trợ nhập trực tiếp file sao lưu từ <strong>RukTimer (.json)</strong>,{" "}
+                <strong>csTimer (.txt / .json)</strong> và{" "}
+                <strong>Twisty Timer (.csv)</strong>.
+              </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -286,12 +390,12 @@ export default function SettingsModal({
                 className="px-3 py-2 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 text-xs font-medium inline-flex items-center gap-1.5 transition"
               >
                 <Upload className="w-3.5 h-3.5" />
-                <span>Nhập JSON</span>
+                <span>Nhập JSON / csTimer / CSV</span>
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".json,application/json"
+                accept=".json,.txt,.csv,application/json,text/plain,text/csv"
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -310,7 +414,7 @@ export default function SettingsModal({
             <div className="grid grid-cols-2 gap-1">
               <span>
                 <kbd className="px-1.5 py-0.5 rounded bg-white/10">Space</kbd>{" "}
-                Bắt đầu / Dừng
+                Bắt đầu / Chốt Split / Dừng
               </span>
               <span>
                 <kbd className="px-1.5 py-0.5 rounded bg-white/10">Alt + N</kbd>{" "}

@@ -4,14 +4,20 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BarChart2,
   Box,
+  BrainCircuit,
   Clock,
   GraduationCap,
   ListOrdered,
+  Shuffle,
+  X,
 } from "lucide-react";
+import AiCoachAndCommunityView, {
+  HubSubTab,
+} from "@/components/AiCoachAndCommunityView";
 import AuthModal from "@/components/AuthModal";
 import CfopTrainerView from "@/components/CfopTrainerView";
 import CubeNetPreview from "@/components/CubeNetPreview";
-import Header from "@/components/Header";
+import Header, { MainAppView } from "@/components/Header";
 import HistoryPanel from "@/components/HistoryPanel";
 import PwaInstallBanner from "@/components/PwaInstallBanner";
 import ScrambleBar from "@/components/ScrambleBar";
@@ -21,36 +27,53 @@ import SolveDetailModal, {
 } from "@/components/SolveDetailModal";
 import StatsPanel from "@/components/StatsPanel";
 import TimerDisplay, { TimerPhase } from "@/components/TimerDisplay";
+import { PracticeRecommendation } from "@/lib/analytics/coach";
 import { CfopAlgorithm, getCfopSessionName } from "@/lib/cfop";
-import { generateScramble, invertAlgorithm } from "@/lib/scrambles";
+import {
+  generateScramble,
+  generateTrainingSubsetScramble,
+  invertAlgorithm,
+} from "@/lib/scrambles";
 import { playPbCelebration } from "@/lib/sound";
-import { calculateSessionStats, getEffectiveMs } from "@/lib/stats";
+import {
+  calculateSessionStats,
+  computeSessionFatigueAlert,
+  computeStreakAndHeatmap,
+  getEffectiveMs,
+} from "@/lib/stats";
 import {
   cloudClearSessionSolves,
   cloudDeleteSession,
   cloudDeleteSolve,
   cloudInsertSession,
   cloudInsertSolve,
+  cloudSaveUserSettings,
   cloudUpdateSession,
   cloudUpdateSolve,
+  cloudUpsertCfopProgress,
   createDefaultSession,
   exportDataAsJson,
   exportSolvesAsCsv,
   fetchCloudData,
+  flushSyncOutbox,
   generateUuid,
   getGuestSolveCount,
   loadActiveSessionId,
   loadGuestData,
+  loadLocalCfopProgress,
   loadLocalSettings,
-  parseImportedJson,
+  loadSyncOutbox,
+  parseUniversalImport,
   saveActiveSessionId,
   saveGuestSessions,
   saveGuestSolves,
+  saveLocalCfopProgress,
   saveLocalSettings,
   syncGuestToCloud,
 } from "@/lib/storage";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
+  CfopProgressItem,
   CubeSession,
   DEFAULT_SETTINGS,
   PenaltyType,
@@ -58,6 +81,7 @@ import {
   Solve,
   ThemeId,
   TimerSettings,
+  TrainingSubset,
 } from "@/types/cubing";
 
 const THEME_BG_CLASSES: Record<ThemeId, string> = {
@@ -77,8 +101,13 @@ export default function RukTimerApp() {
   const [sessions, setSessions] = useState<CubeSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   const [solves, setSolves] = useState<Solve[]>([]);
+  const [cfopProgress, setCfopProgress] = useState<
+    Record<string, CfopProgressItem>
+  >({});
 
+  const [trainingSubset, setTrainingSubset] = useState<TrainingSubset>("wca");
   const [scramble, setScramble] = useState<string>("Đang tạo scramble...");
+  const [scramblePuzzle, setScramblePuzzle] = useState<PuzzleType>("3x3");
   const [previousScramble, setPreviousScramble] = useState<string | null>(null);
   const [timerPhase, setTimerPhase] = useState<TimerPhase>("idle");
   const [isNewPb, setIsNewPb] = useState<boolean>(false);
@@ -90,17 +119,20 @@ export default function RukTimerApp() {
     "guest" | "synced" | "syncing" | "error"
   >("guest");
   const [guestPendingCount, setGuestPendingCount] = useState<number>(0);
+  const [outboxCount, setOutboxCount] = useState<number>(0);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  // Modals & Mobile Tabs
+  // Modals & Navigation Views
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [mobileCubeModalOpen, setMobileCubeModalOpen] = useState(false);
   const [detailTarget, setDetailTarget] = useState<DetailModalTarget | null>(
     null
   );
-  const [mainView, setMainView] = useState<"timer" | "cfop">("timer");
+  const [mainView, setMainView] = useState<MainAppView>("timer");
+  const [hubSubTab, setHubSubTab] = useState<HubSubTab>("coach");
   const [mobileTab, setMobileTab] = useState<
-    "timer" | "history" | "stats" | "cube"
+    "timer" | "history" | "stats"
   >("timer");
 
   const showToast = useCallback((msg: string) => {
@@ -110,10 +142,14 @@ export default function RukTimerApp() {
     }, 3200);
   }, []);
 
-  // Load initial local state + subscribe to Supabase Auth
+  // Load initial local state + subscribe to Supabase Auth + Auto-flush offline outbox
   useEffect(() => {
     const loadedSettings = loadLocalSettings();
     setSettings(loadedSettings);
+
+    const localCfop = loadLocalCfopProgress();
+    setCfopProgress(localCfop);
+    setOutboxCount(loadSyncOutbox().length);
 
     const guest = loadGuestData();
     const savedActiveId = loadActiveSessionId();
@@ -135,15 +171,36 @@ export default function RukTimerApp() {
       setGuestPendingCount(getGuestSolveCount());
       setSyncStatus("syncing");
 
+      // First flush any pending offline mutations
+      await flushSyncOutbox(uid);
+      setOutboxCount(loadSyncOutbox().length);
+
       const res = await fetchCloudData(uid);
       if (res.error) {
         setSyncStatus("error");
-        showToast(`Lỗi tải Cloud DB: ${res.error}`);
+        showToast(`Đang chạy chế độ Offline Cache: ${res.error}`);
         return;
       }
 
       setSessions(res.sessions);
       setSolves(res.solves);
+
+      if (res.cfopProgress && Object.keys(res.cfopProgress).length > 0) {
+        setCfopProgress((prev) => {
+          const merged = { ...prev, ...res.cfopProgress };
+          saveLocalCfopProgress(merged);
+          return merged;
+        });
+      }
+
+      if (res.remoteSettings) {
+        setSettings((prev) => {
+          const merged = { ...prev, ...res.remoteSettings };
+          saveLocalSettings(merged);
+          return merged;
+        });
+      }
+
       const savedId = loadActiveSessionId();
       const targetSession =
         res.sessions.find((s) => s.id === savedId) || res.sessions[0];
@@ -185,6 +242,21 @@ export default function RukTimerApp() {
     };
   }, [showToast]);
 
+  // Listen to browser online recovery to automatically flush offline outbox
+  useEffect(() => {
+    if (!userId || typeof window === "undefined") return;
+    const handleOnline = async () => {
+      const flushed = await flushSyncOutbox(userId);
+      setOutboxCount(loadSyncOutbox().length);
+      if (flushed > 0) {
+        setSyncStatus("synced");
+        showToast(`Đã tự động đồng bộ ${flushed} thao tác Offline lên Cloud!`);
+      }
+    };
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [userId, showToast]);
+
   const activeSession: CubeSession = useMemo(() => {
     return (
       sessions.find((s) => s.id === activeSessionId) ||
@@ -193,7 +265,23 @@ export default function RukTimerApp() {
     );
   }, [sessions, activeSessionId]);
 
-  // Solves belonging to the active session sorted chronologically (oldest -> newest)
+  // Strict Scramble <-> 2D Cube synchronization guard:
+  // Whenever the active session's puzzle changes (via switch, import, delete, or cloud hydration),
+  // guarantee scramble matches activeSession.puzzle so 2D Cube Net can never desync.
+  useEffect(() => {
+    if (!mounted) return;
+    if (scramblePuzzle !== activeSession.puzzle) {
+      const next =
+        (activeSession.puzzle === "3x3" || activeSession.puzzle === "3x3oh") &&
+        trainingSubset !== "wca"
+          ? generateTrainingSubsetScramble(trainingSubset)
+          : generateScramble(activeSession.puzzle);
+      setScramble(next);
+      setScramblePuzzle(activeSession.puzzle);
+      setPreviousScramble(null);
+    }
+  }, [mounted, activeSession.puzzle, scramblePuzzle, trainingSubset]);
+
   const sessionSolves = useMemo(() => {
     return solves
       .filter((s) => s.session_id === activeSession.id)
@@ -208,10 +296,19 @@ export default function RukTimerApp() {
     [sessionSolves]
   );
 
+  const fatigueAlert = useMemo(
+    () => computeSessionFatigueAlert(sessionSolves),
+    [sessionSolves]
+  );
+
+  const streakSummary = useMemo(
+    () => computeStreakAndHeatmap(solves),
+    [solves]
+  );
+
   const lastSolve: Solve | null =
     sessionSolves.length > 0 ? sessionSolves[sessionSolves.length - 1] : null;
 
-  // Keep detail modal solve in sync if user edits penalty/comment inside modal
   useEffect(() => {
     if (detailTarget?.type === "solve") {
       const updated = enrichedSolves.find(
@@ -227,15 +324,15 @@ export default function RukTimerApp() {
     }
   }, [enrichedSolves, detailTarget?.type]);
 
-  // Persist helper for Guest vs Cloud
   const runCloudMutation = useCallback(
     async (task: () => Promise<string | null>) => {
       if (!userId) return;
       setSyncStatus("syncing");
       const err = await task();
+      setOutboxCount(loadSyncOutbox().length);
       if (err) {
         setSyncStatus("error");
-        showToast(`Lỗi lưu Cloud DB: ${err}`);
+        showToast("Đã lưu vào bộ nhớ đệm Offline (Sẽ tự đồng bộ khi có mạng)");
       } else {
         setSyncStatus("synced");
       }
@@ -246,12 +343,29 @@ export default function RukTimerApp() {
   // ==========================================================================
   // Scramble Controls
   // ==========================================================================
-  const handleNextScramble = useCallback(
-    (forPuzzle?: PuzzleType) => {
-      setPreviousScramble(scramble);
-      setScramble(generateScramble(forPuzzle ?? activeSession.puzzle));
+  const generateNextScrambleForState = useCallback(
+    (puzzle: PuzzleType, subset: TrainingSubset) => {
+      if ((puzzle === "3x3" || puzzle === "3x3oh") && subset !== "wca") {
+        return generateTrainingSubsetScramble(subset);
+      }
+      return generateScramble(puzzle);
     },
-    [scramble, activeSession.puzzle]
+    []
+  );
+
+  const handleNextScramble = useCallback(
+    (forPuzzle?: PuzzleType, forSubset?: TrainingSubset) => {
+      setPreviousScramble(scramble);
+      const targetPuzzle = forPuzzle ?? activeSession.puzzle;
+      const targetSubset = forSubset ?? trainingSubset;
+      setScramble(generateNextScrambleForState(targetPuzzle, targetSubset));
+    },
+    [
+      scramble,
+      activeSession.puzzle,
+      trainingSubset,
+      generateNextScrambleForState,
+    ]
   );
 
   const handleRestorePreviousScramble = useCallback(() => {
@@ -260,6 +374,14 @@ export default function RukTimerApp() {
       setPreviousScramble(null);
     }
   }, [previousScramble]);
+
+  const handleChangeTrainingSubset = useCallback(
+    (subset: TrainingSubset) => {
+      setTrainingSubset(subset);
+      handleNextScramble(activeSession.puzzle, subset);
+    },
+    [activeSession.puzzle, handleNextScramble]
+  );
 
   // ==========================================================================
   // Session & Puzzle Handlers
@@ -270,7 +392,7 @@ export default function RukTimerApp() {
     setActiveSessionId(id);
     saveActiveSessionId(id);
     setIsNewPb(false);
-    setScramble(generateScramble(found.puzzle));
+    setScramble(generateNextScrambleForState(found.puzzle, trainingSubset));
   };
 
   const handleCreateSession = (name: string, puzzle: PuzzleType) => {
@@ -286,7 +408,7 @@ export default function RukTimerApp() {
     setActiveSessionId(newSess.id);
     saveActiveSessionId(newSess.id);
     setIsNewPb(false);
-    setScramble(generateScramble(puzzle));
+    setScramble(generateNextScrambleForState(puzzle, trainingSubset));
 
     if (userId) {
       runCloudMutation(() => cloudInsertSession(userId, newSess));
@@ -319,7 +441,7 @@ export default function RukTimerApp() {
     const fallback = nextSessions[0];
     setActiveSessionId(fallback.id);
     saveActiveSessionId(fallback.id);
-    setScramble(generateScramble(fallback.puzzle));
+    setScramble(generateNextScrambleForState(fallback.puzzle, trainingSubset));
 
     if (userId) {
       runCloudMutation(() => cloudDeleteSession(userId, id));
@@ -336,7 +458,7 @@ export default function RukTimerApp() {
     );
     setSessions(nextSessions);
     setIsNewPb(false);
-    setScramble(generateScramble(puzzle));
+    setScramble(generateNextScrambleForState(puzzle, trainingSubset));
 
     if (userId) {
       runCloudMutation(() =>
@@ -348,8 +470,22 @@ export default function RukTimerApp() {
   };
 
   // ==========================================================================
-  // Dedicated CFOP Algorithm Session & Solve Handlers
+  // Dedicated CFOP Algorithm Session, SRS Progress & Solve Handlers
   // ==========================================================================
+  const handleUpdateCfopProgress = useCallback(
+    (item: CfopProgressItem) => {
+      setCfopProgress((prev) => {
+        const next = { ...prev, [item.alg_id]: item };
+        saveLocalCfopProgress(next);
+        return next;
+      });
+      if (userId) {
+        runCloudMutation(() => cloudUpsertCfopProgress(userId, item));
+      }
+    },
+    [runCloudMutation, userId]
+  );
+
   const handleEnsureAlgSession = useCallback(
     (alg: CfopAlgorithm): CubeSession => {
       const targetName = getCfopSessionName(alg);
@@ -418,19 +554,21 @@ export default function RukTimerApp() {
       setActiveSessionId(sess.id);
       saveActiveSessionId(sess.id);
       setIsNewPb(false);
-      setScramble(`z2 ${invertAlgorithm(alg.formula)}`);
+      const activeFormula =
+        cfopProgress[alg.id]?.preferred_formula || alg.formula;
+      setScramble(`z2 ${invertAlgorithm(activeFormula)}`);
       setMainView("timer");
       setMobileTab("timer");
       showToast(`Đang luyện "${alg.name}" trên Bàn Timer chính`);
     },
-    [handleEnsureAlgSession, showToast]
+    [cfopProgress, handleEnsureAlgSession, showToast]
   );
 
   // ==========================================================================
   // Solve CRUD Handlers
   // ==========================================================================
   const handleSolveComplete = useCallback(
-    (timeMs: number, initialPenalty: PenaltyType) => {
+    (timeMs: number, initialPenalty: PenaltyType, splitsMs?: number[]) => {
       const prevBest = summary.bestSingle;
 
       const newSolve: Solve = {
@@ -442,6 +580,7 @@ export default function RukTimerApp() {
         penalty: initialPenalty,
         scramble,
         comment: "",
+        splits_ms: splitsMs,
         solved_at: new Date().toISOString(),
       };
 
@@ -466,18 +605,21 @@ export default function RukTimerApp() {
         runCloudMutation(() => cloudInsertSolve(userId, newSolve));
       }
 
-      // Generate next scramble automatically
       setPreviousScramble(scramble);
-      setScramble(generateScramble(activeSession.puzzle));
+      setScramble(
+        generateNextScrambleForState(activeSession.puzzle, trainingSubset)
+      );
     },
     [
       activeSession.id,
       activeSession.puzzle,
+      generateNextScrambleForState,
       runCloudMutation,
       scramble,
       sessionSolves.length,
       settings.soundEnabled,
       summary.bestSingle,
+      trainingSubset,
       userId,
     ]
   );
@@ -485,7 +627,9 @@ export default function RukTimerApp() {
   const handleUpdateSolvePenalty = useCallback(
     (solveId: string, penalty: PenaltyType) => {
       setSolves((prev) => {
-        const next = prev.map((s) => (s.id === solveId ? { ...s, penalty } : s));
+        const next = prev.map((s) =>
+          s.id === solveId ? { ...s, penalty } : s
+        );
         if (!userId) saveGuestSolves(next);
         return next;
       });
@@ -498,17 +642,33 @@ export default function RukTimerApp() {
   );
 
   const handleUpdateSolveComment = useCallback(
-    (solveId: string, comment: string) => {
+    (solveId: string, comment: string, reconstruction?: string) => {
       setSolves((prev) => {
-        const next = prev.map((s) => (s.id === solveId ? { ...s, comment } : s));
+        const next = prev.map((s) =>
+          s.id === solveId
+            ? {
+                ...s,
+                comment,
+                reconstruction:
+                  reconstruction !== undefined
+                    ? reconstruction
+                    : s.reconstruction,
+              }
+            : s
+        );
         if (!userId) saveGuestSolves(next);
         return next;
       });
 
       if (userId) {
-        runCloudMutation(() => cloudUpdateSolve(userId, solveId, { comment }));
+        runCloudMutation(() =>
+          cloudUpdateSolve(userId, solveId, {
+            comment,
+            ...(reconstruction !== undefined ? { reconstruction } : {}),
+          })
+        );
       }
-      showToast("Đã lưu ghi chú");
+      showToast("Đã lưu chi tiết lượt giải");
     },
     [runCloudMutation, showToast, userId]
   );
@@ -582,7 +742,7 @@ export default function RukTimerApp() {
   ]);
 
   // ==========================================================================
-  // Guest Sync, Auth, Settings & Backup Handlers
+  // Guest Sync, Auth, Settings & Universal Backup Handlers
   // ==========================================================================
   const handleSyncGuestData = async () => {
     if (!userId) return;
@@ -615,6 +775,9 @@ export default function RukTimerApp() {
     setSettings((prev) => {
       const next = { ...prev, ...patch };
       saveLocalSettings(next);
+      if (userId) {
+        cloudSaveUserSettings(userId, next);
+      }
       return next;
     });
   };
@@ -640,15 +803,21 @@ export default function RukTimerApp() {
     const map = new Map(sessions.map((s) => [s.id, s.name]));
     const csv = exportSolvesAsCsv(solves, map);
     const stamp = new Date().toISOString().slice(0, 10);
-    downloadBlob(csv, `ruktimer-solves-${stamp}.csv`, "text/csv;charset=utf-8");
+    downloadBlob(
+      csv,
+      `ruktimer-solves-${stamp}.csv`,
+      "text/csv;charset=utf-8"
+    );
     showToast("Đã xuất file CSV");
   };
 
   const handleImportJsonFile = async (file: File) => {
     const text = await file.text();
-    const parsed = parseImportedJson(text);
+    const parsed = parseUniversalImport(text);
     if (!parsed) {
-      showToast("File JSON không hợp lệ!");
+      showToast(
+        "File không hợp lệ! Hỗ trợ định dạng RukTimer (.json), csTimer (.txt/.json) và CSV (.csv)"
+      );
       return;
     }
 
@@ -657,17 +826,34 @@ export default function RukTimerApp() {
       const supabase = getSupabaseBrowserClient();
       if (supabase) {
         const sPayload = parsed.sessions.map((s) => ({
-          ...s,
+          id: s.id,
           user_id: userId,
-        }));
-        const svPayload = parsed.solves.map((sv) => ({
-          ...sv,
-          user_id: userId,
+          name: s.name,
+          puzzle: s.puzzle,
+          created_at: s.created_at,
         }));
         await supabase
           .from("cube_sessions")
           .upsert(sPayload, { onConflict: "id" });
-        await supabase.from("solves").upsert(svPayload, { onConflict: "id" });
+
+        const CHUNK = 500;
+        for (let i = 0; i < parsed.solves.length; i += CHUNK) {
+          const svPayload = parsed.solves.slice(i, i + CHUNK).map((sv) => ({
+            id: sv.id,
+            user_id: userId,
+            session_id: sv.session_id,
+            puzzle: sv.puzzle,
+            time_ms: sv.time_ms,
+            penalty: sv.penalty,
+            scramble: sv.scramble,
+            comment: sv.comment,
+            solved_at: sv.solved_at,
+          }));
+          await supabase
+            .from("solves")
+            .upsert(svPayload, { onConflict: "id" });
+        }
+
         const refreshed = await fetchCloudData(userId);
         if (!refreshed.error) {
           setSessions(refreshed.sessions);
@@ -677,18 +863,62 @@ export default function RukTimerApp() {
       }
       setSyncStatus("synced");
     } else {
-      setSessions(parsed.sessions);
-      setSolves(parsed.solves);
+      const mergedSessions = [...sessions];
+      for (const s of parsed.sessions) {
+        if (!mergedSessions.some((ex) => ex.id === s.id)) {
+          mergedSessions.push(s);
+        }
+      }
+      const existingIds = new Set(solves.map((sv) => sv.id));
+      const mergedSolves = [
+        ...solves,
+        ...parsed.solves.filter((sv) => !existingIds.has(sv.id)),
+      ];
+      setSessions(mergedSessions);
+      setSolves(mergedSolves);
       setActiveSessionId(parsed.sessions[0].id);
-      saveGuestSessions(parsed.sessions);
-      saveGuestSolves(parsed.solves);
+      saveGuestSessions(mergedSessions);
+      saveGuestSolves(mergedSolves);
     }
 
-    showToast(`Đã nhập ${parsed.solves.length} lượt giải thành công!`);
+    showToast(
+      `Đã nhập ${parsed.solves.length} lượt giải từ ${parsed.sourceFormat} thành công!`
+    );
+  };
+
+  // Handler when user clicks an Action Card inside AI Practice Coach
+  const handleExecuteCoachRecommendation = (rec: PracticeRecommendation) => {
+    if (rec.actionType === "DRILL_ALG" && rec.targetAlg) {
+      handleOpenInMainTimer(rec.targetAlg);
+      return;
+    }
+    if (rec.actionType === "ADAPTIVE_CFOP") {
+      setMainView("cfop");
+      return;
+    }
+    if (rec.actionType === "CROSS_TRAINER") {
+      setMainView("timer");
+      setMobileTab("timer");
+      handleChangeTrainingSubset("cross_easy");
+      showToast("Đã bật chế độ Luyện Cross (3–5 nước) trên Bàn Timer chính!");
+      return;
+    }
+    if (rec.actionType === "SPLIT_TIMER") {
+      handleUpdateSettings({ splitMode: "cfop4" });
+      setMainView("timer");
+      setMobileTab("timer");
+      showToast("Đã bật chế độ Split Timer (4 pha CFOP)!");
+      return;
+    }
+    setMainView("timer");
+    setMobileTab("timer");
   };
 
   const isAnyModalOpen =
-    authModalOpen || settingsModalOpen || detailTarget !== null;
+    authModalOpen ||
+    settingsModalOpen ||
+    mobileCubeModalOpen ||
+    detailTarget !== null;
 
   const focusDimActive =
     settings.hideUiWhileSolving &&
@@ -734,7 +964,13 @@ export default function RukTimerApp() {
           userEmail={userEmail}
           syncStatus={syncStatus}
           guestPendingCount={guestPendingCount}
+          outboxPendingCount={outboxCount}
+          currentStreakDays={streakSummary.currentStreak}
           onSyncGuestData={handleSyncGuestData}
+          onOpenStreakTab={() => {
+            setHubSubTab("weekly");
+            setMainView("coach");
+          }}
           onOpenAuth={() => setAuthModalOpen(true)}
           onSignOut={handleSignOut}
           onOpenSettings={() => setSettingsModalOpen(true)}
@@ -743,157 +979,216 @@ export default function RukTimerApp() {
 
       {/* Toast Notification */}
       {toastMsg && (
-        <div className="fixed bottom-16 lg:bottom-6 right-4 z-50 px-4 py-2.5 rounded-xl bg-slate-900/95 border border-cyan-500/40 text-cyan-200 text-xs font-medium shadow-xl">
+        <div className="fixed bottom-16 lg:bottom-6 right-4 z-50 px-4 py-2.5 rounded-xl bg-slate-900/95 border border-cyan-500/40 text-cyan-200 text-xs font-medium">
           {toastMsg}
         </div>
       )}
 
-      {/* Main Content Grid (Desktop 3-column / Mobile Tabbed) */}
+      {/* Main Content Router */}
       {mainView === "cfop" ? (
         <CfopTrainerView
           sessions={sessions}
           solves={solves}
           settings={settings}
+          cfopProgress={cfopProgress}
+          onUpdateCfopProgress={handleUpdateCfopProgress}
           onEnsureAlgSession={handleEnsureAlgSession}
           onRecordAlgSolve={handleRecordAlgSolve}
           onUpdateSolvePenalty={handleUpdateSolvePenalty}
           onDeleteSolve={handleDeleteSolve}
           onOpenInMainTimer={handleOpenInMainTimer}
         />
+      ) : mainView === "coach" ? (
+        <AiCoachAndCommunityView
+          initialTab={hubSubTab}
+          sessions={sessions}
+          solves={solves}
+          settings={settings}
+          cfopProgress={cfopProgress}
+          userId={userId}
+          userEmail={userEmail}
+          onExecuteRecommendation={handleExecuteCoachRecommendation}
+          onOpenAlgDrill={(alg) => handleOpenInMainTimer(alg)}
+          onLoadScrambleInMainTimer={(customScramble) => {
+            setScramble(customScramble);
+            setMainView("timer");
+            setMobileTab("timer");
+            showToast("Đã nạp Scramble thử thách vào Bàn Timer chính!");
+          }}
+          onSaveVideoAnalyzedSolve={(timeMs, splitsMs, comment) => {
+            const newSolve: Solve = {
+              id: generateUuid(),
+              user_id: userId ?? undefined,
+              session_id: activeSession.id,
+              puzzle: activeSession.puzzle,
+              time_ms: timeMs,
+              penalty: "OK",
+              scramble,
+              comment,
+              splits_ms: splitsMs,
+              solved_at: new Date().toISOString(),
+            };
+            setSolves((prev) => {
+              const next = [...prev, newSolve];
+              if (!userId) saveGuestSolves(next);
+              return next;
+            });
+            if (userId) {
+              runCloudMutation(() => cloudInsertSolve(userId, newSolve));
+            }
+            showToast("Đã lưu lượt giải phân tích từ Video vào Session!");
+          }}
+        />
       ) : (
-      <main className="flex-1 w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-3 pb-20 lg:pb-5 grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
-        {/* Left Sidebar: Statistics & Chart */}
-        <aside
-          className={`lg:col-span-3 transition-opacity duration-200 ${
-            focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
-          } ${mobileTab === "stats" ? "block" : "hidden lg:block"}`}
-        >
-          <StatsPanel
-            summary={summary}
-            enrichedSolves={enrichedSolves}
-            decimals={settings.decimals}
-            onInspectAverage={(label, avgVal, endIdx, winSize) => {
-              const slice = sessionSolves.slice(
-                Math.max(0, endIdx - winSize + 1),
-                endIdx + 1
-              );
-              setDetailTarget({
-                type: "average",
-                label,
-                avgValue: avgVal,
-                solves: slice,
-              });
-            }}
-            onInspectSolveById={(id) => {
-              const found = enrichedSolves.find((s) => s.id === id);
-              if (found) {
-                setDetailTarget({
-                  type: "solve",
-                  solve: found,
-                  indexNumber: found.indexNumber,
-                });
-              }
-            }}
-          />
-        </aside>
-
-        {/* Center Stage: Scramble + Timer + 2D Cube Preview */}
-        <section
-          className={`lg:col-span-6 flex flex-col justify-between ${
-            mobileTab === "timer" ? "flex" : "hidden lg:flex"
-          }`}
-        >
-          <div
-            className={`transition-opacity duration-200 ${
+        <main className="flex-1 w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-3 pb-20 lg:pb-5 grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+          {/* Left Sidebar: Statistics & Chart */}
+          <aside
+            className={`lg:col-span-3 transition-opacity duration-200 ${
               focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
+            } ${mobileTab === "stats" ? "block" : "hidden lg:block"}`}
+          >
+            <StatsPanel
+              summary={summary}
+              enrichedSolves={enrichedSolves}
+              decimals={settings.decimals}
+              targetGoalMs={settings.targetGoalMs}
+              onInspectAverage={(label, avgVal, endIdx, winSize) => {
+                const slice = sessionSolves.slice(
+                  Math.max(0, endIdx - winSize + 1),
+                  endIdx + 1
+                );
+                setDetailTarget({
+                  type: "average",
+                  label,
+                  avgValue: avgVal,
+                  solves: slice,
+                });
+              }}
+              onInspectSolveById={(id) => {
+                const found = enrichedSolves.find((s) => s.id === id);
+                if (found) {
+                  setDetailTarget({
+                    type: "solve",
+                    solve: found,
+                    indexNumber: found.indexNumber,
+                  });
+                }
+              }}
+              onOpenAiCoach={() => {
+                setHubSubTab("coach");
+                setMainView("coach");
+              }}
+            />
+          </aside>
+
+          {/* Center Stage: Scramble + Timer + 2D Cube Preview */}
+          <section
+            className={`lg:col-span-6 flex flex-col justify-between ${
+              mobileTab === "timer" ? "flex" : "hidden lg:flex"
             }`}
           >
-            <ScrambleBar
-              scramble={scramble}
-              previousScramble={previousScramble}
-              onNextScramble={() => handleNextScramble()}
-              onRestorePreviousScramble={handleRestorePreviousScramble}
-              onSetCustomScramble={(custom) => setScramble(custom)}
-            />
-          </div>
-
-          <TimerDisplay
-            settings={settings}
-            lastSolve={lastSolve}
-            currentAo5={summary.currentAo5}
-            currentAo12={summary.currentAo12}
-            isNewPb={isNewPb}
-            isModalOpen={isAnyModalOpen || mainView !== "timer"}
-            onPhaseChange={setTimerPhase}
-            onSolveComplete={handleSolveComplete}
-            onUpdateLastPenalty={(pen) => {
-              if (lastSolve) handleUpdateSolvePenalty(lastSolve.id, pen);
-            }}
-            onDeleteLastSolve={() => {
-              if (lastSolve) handleDeleteSolve(lastSolve.id);
-            }}
-            onCommentLastSolve={(comment) => {
-              if (lastSolve) handleUpdateSolveComment(lastSolve.id, comment);
-            }}
-          />
-
-          {settings.showCubePreview && (
             <div
-              className={`hidden sm:flex flex-col items-center pb-2 transition-opacity duration-200 ${
+              className={`transition-opacity duration-200 ${
                 focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
               }`}
             >
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
-                <CubeNetPreview
-                  puzzle={activeSession.puzzle}
-                  scramble={scramble}
-                />
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* Mobile-only 2D Cube Tab */}
-        {mobileTab === "cube" && (
-          <section className="lg:hidden flex flex-col items-center justify-center gap-4 py-8">
-            <div className="text-xs uppercase tracking-wider opacity-60 font-semibold">
-              Trạng thái Scramble ({activeSession.puzzle.toUpperCase()})
-            </div>
-            <p className="font-mono text-sm text-center px-4 opacity-90">
-              {scramble}
-            </p>
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-              <CubeNetPreview
+              <ScrambleBar
                 puzzle={activeSession.puzzle}
                 scramble={scramble}
+                previousScramble={previousScramble}
+                trainingSubset={trainingSubset}
+                onChangeTrainingSubset={handleChangeTrainingSubset}
+                onNextScramble={() => handleNextScramble()}
+                onRestorePreviousScramble={handleRestorePreviousScramble}
+                onSetCustomScramble={(custom) => setScramble(custom)}
               />
             </div>
-          </section>
-        )}
 
-        {/* Right Sidebar: Solve History */}
-        <aside
-          className={`lg:col-span-3 transition-opacity duration-200 ${
-            focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
-          } ${mobileTab === "history" ? "block" : "hidden lg:block"}`}
-        >
-          <HistoryPanel
-            enrichedSolves={enrichedSolves}
-            bestSingleSolveId={summary.bestSingleSolveId}
-            decimals={settings.decimals}
-            onSelectSolve={(solve) =>
-              setDetailTarget({
-                type: "solve",
-                solve,
-                indexNumber: solve.indexNumber,
-              })
-            }
-            onTogglePenalty={handleUpdateSolvePenalty}
-            onDeleteSolve={handleDeleteSolve}
-            onClearSession={handleClearSession}
-          />
-        </aside>
-      </main>
+            <TimerDisplay
+              settings={settings}
+              lastSolve={lastSolve}
+              currentAo5={summary.currentAo5}
+              currentAo12={summary.currentAo12}
+              isNewPb={isNewPb}
+              isModalOpen={isAnyModalOpen || mainView !== "timer"}
+              fatigueAlert={fatigueAlert}
+              onPhaseChange={setTimerPhase}
+              onSolveComplete={handleSolveComplete}
+              onUpdateLastPenalty={(pen) => {
+                if (lastSolve) handleUpdateSolvePenalty(lastSolve.id, pen);
+              }}
+              onDeleteLastSolve={() => {
+                if (lastSolve) handleDeleteSolve(lastSolve.id);
+              }}
+              onCommentLastSolve={(comment) => {
+                if (lastSolve) handleUpdateSolveComment(lastSolve.id, comment);
+              }}
+              onToggleSplitMode={(splitMode) =>
+                handleUpdateSettings({ splitMode })
+              }
+            />
+
+            {settings.showCubePreview && (
+              <>
+                {/* Desktop & Tablet inline 2D Cube Net */}
+                <div
+                  className={`hidden sm:flex flex-col items-center pb-2 transition-opacity duration-200 ${
+                    focusDimActive
+                      ? "opacity-0 pointer-events-none"
+                      : "opacity-100"
+                  }`}
+                >
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                    <CubeNetPreview
+                      key={`${activeSession.puzzle}-${scramble}`}
+                      puzzle={activeSession.puzzle}
+                      scramble={scramble}
+                    />
+                  </div>
+                </div>
+
+                {/* Mobile-only Main Screen 2D Cube Button (instead of Bottom Nav Bar tab) */}
+                {!focusDimActive && (
+                  <div className="sm:hidden flex justify-center pb-2">
+                    <button
+                      type="button"
+                      onClick={() => setMobileCubeModalOpen(true)}
+                      className="px-4 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] border border-cyan-500/35 text-cyan-200 text-xs font-semibold inline-flex items-center gap-2 transition"
+                    >
+                      <Box className="w-4 h-4 text-cyan-400" />
+                      <span>
+                        Xem hình 2D Cube ({activeSession.puzzle.toUpperCase()})
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
+          {/* Right Sidebar: Solve History */}
+          <aside
+            className={`lg:col-span-3 transition-opacity duration-200 ${
+              focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
+            } ${mobileTab === "history" ? "block" : "hidden lg:block"}`}
+          >
+            <HistoryPanel
+              enrichedSolves={enrichedSolves}
+              bestSingleSolveId={summary.bestSingleSolveId}
+              decimals={settings.decimals}
+              onSelectSolve={(solve) =>
+                setDetailTarget({
+                  type: "solve",
+                  solve,
+                  indexNumber: solve.indexNumber,
+                })
+              }
+              onTogglePenalty={handleUpdateSolvePenalty}
+              onDeleteSolve={handleDeleteSolve}
+              onClearSession={handleClearSession}
+            />
+          </aside>
+        </main>
       )}
 
       {/* Mobile Bottom Tab Bar */}
@@ -904,7 +1199,9 @@ export default function RukTimerApp() {
         >
           <button
             type="button"
-            aria-current={mainView === "timer" && mobileTab === "timer" ? "page" : undefined}
+            aria-current={
+              mainView === "timer" && mobileTab === "timer" ? "page" : undefined
+            }
             onClick={() => {
               setMainView("timer");
               setMobileTab("timer");
@@ -912,7 +1209,7 @@ export default function RukTimerApp() {
             className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
               mainView === "timer" && mobileTab === "timer"
                 ? "text-cyan-400 font-semibold"
-                : "opacity-65"
+                : "text-slate-400"
             }`}
           >
             <Clock className="w-4 h-4" />
@@ -925,7 +1222,7 @@ export default function RukTimerApp() {
             className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
               mainView === "cfop"
                 ? "text-cyan-400 font-semibold"
-                : "opacity-65"
+                : "text-slate-400"
             }`}
           >
             <GraduationCap className="w-4 h-4" />
@@ -933,7 +1230,24 @@ export default function RukTimerApp() {
           </button>
           <button
             type="button"
-            aria-current={mainView === "timer" && mobileTab === "history" ? "page" : undefined}
+            aria-current={mainView === "coach" ? "page" : undefined}
+            onClick={() => setMainView("coach")}
+            className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
+              mainView === "coach"
+                ? "text-cyan-400 font-semibold"
+                : "text-slate-400"
+            }`}
+          >
+            <BrainCircuit className="w-4 h-4" />
+            <span>AI Coach</span>
+          </button>
+          <button
+            type="button"
+            aria-current={
+              mainView === "timer" && mobileTab === "history"
+                ? "page"
+                : undefined
+            }
             onClick={() => {
               setMainView("timer");
               setMobileTab("history");
@@ -941,7 +1255,7 @@ export default function RukTimerApp() {
             className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
               mainView === "timer" && mobileTab === "history"
                 ? "text-cyan-400 font-semibold"
-                : "opacity-65"
+                : "text-slate-400"
             }`}
           >
             <ListOrdered className="w-4 h-4" />
@@ -949,7 +1263,9 @@ export default function RukTimerApp() {
           </button>
           <button
             type="button"
-            aria-current={mainView === "timer" && mobileTab === "stats" ? "page" : undefined}
+            aria-current={
+              mainView === "timer" && mobileTab === "stats" ? "page" : undefined
+            }
             onClick={() => {
               setMainView("timer");
               setMobileTab("stats");
@@ -957,27 +1273,11 @@ export default function RukTimerApp() {
             className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
               mainView === "timer" && mobileTab === "stats"
                 ? "text-cyan-400 font-semibold"
-                : "opacity-65"
+                : "text-slate-400"
             }`}
           >
             <BarChart2 className="w-4 h-4" />
             <span>Thống kê</span>
-          </button>
-          <button
-            type="button"
-            aria-current={mainView === "timer" && mobileTab === "cube" ? "page" : undefined}
-            onClick={() => {
-              setMainView("timer");
-              setMobileTab("cube");
-            }}
-            className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
-              mainView === "timer" && mobileTab === "cube"
-                ? "text-cyan-400 font-semibold"
-                : "opacity-65"
-            }`}
-          >
-            <Box className="w-4 h-4" />
-            <span>2D Cube</span>
           </button>
         </nav>
       )}
@@ -1007,6 +1307,67 @@ export default function RukTimerApp() {
         onUpdateSolveComment={handleUpdateSolveComment}
         onDeleteSolve={handleDeleteSolve}
       />
+
+      {/* Mobile Main-Screen 2D Cube Preview Modal */}
+      {mobileCubeModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={() => setMobileCubeModalOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Trạng thái 2D Cube Scramble"
+            className="w-full max-w-sm rounded-2xl border border-white/15 bg-slate-900 text-white p-5 space-y-4 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setMobileCubeModalOpen(false)}
+              aria-label="Đóng"
+              className="absolute right-3.5 top-3.5 p-1.5 rounded-lg bg-white/5 hover:bg-white/15"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="pr-8">
+              <h2 className="font-bold text-base flex items-center gap-2">
+                <Box className="w-4 h-4 text-cyan-400" />
+                <span>Hình trải 2D ({activeSession.puzzle.toUpperCase()})</span>
+              </h2>
+              <p className="font-mono text-xs text-slate-300 mt-1.5 leading-relaxed select-all">
+                {scramble}
+              </p>
+            </div>
+
+            <div className="flex justify-center py-2 rounded-xl bg-black/35 border border-white/10">
+              <CubeNetPreview
+                key={`mobile-${activeSession.puzzle}-${scramble}`}
+                puzzle={activeSession.puzzle}
+                scramble={scramble}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => handleNextScramble()}
+                className="flex-1 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-xs font-semibold inline-flex items-center justify-center gap-1.5"
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+                <span>Scramble mới</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileCubeModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-medium"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

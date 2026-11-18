@@ -1,14 +1,26 @@
 "use client";
 
-import React, { useMemo } from "react";
-import { BarChart3, Trophy, TrendingDown } from "lucide-react";
-import { formatTimeMs } from "@/lib/stats";
+import React, { memo, useMemo, useState } from "react";
+import {
+  BarChart3,
+  BrainCircuit,
+  Layers,
+  TrendingDown,
+  Trophy,
+} from "lucide-react";
+import {
+  computeConsistencyAndSubX,
+  computeSplitBreakdown,
+  computeTimeHistogram,
+  formatTimeMs,
+} from "@/lib/stats";
 import { SolveWithRollingStats, StatSummary } from "@/types/cubing";
 
 interface StatsPanelProps {
   summary: StatSummary;
   enrichedSolves: SolveWithRollingStats[];
   decimals: 2 | 3;
+  targetGoalMs?: number;
   onInspectAverage: (
     label: string,
     avgValue: number | "DNF",
@@ -16,15 +28,23 @@ interface StatsPanelProps {
     windowSize: number
   ) => void;
   onInspectSolveById: (id: string) => void;
+  onOpenAiCoach?: () => void;
 }
 
-export default function StatsPanel({
+function StatsPanelInner({
   summary,
   enrichedSolves,
   decimals,
+  targetGoalMs = 15000,
   onInspectAverage,
   onInspectSolveById,
+  onOpenAiCoach,
 }: StatsPanelProps) {
+  const [chartTab, setChartTab] = useState<"trend" | "histogram" | "splits">(
+    "trend"
+  );
+  const [trendScope, setTrendScope] = useState<"50" | "all">("50");
+
   const rows: {
     label: string;
     current: number | "DNF" | null;
@@ -59,18 +79,20 @@ export default function StatsPanel({
       current: summary.currentAo50,
       best: summary.bestAo50,
       windowSize: 50,
+      bestEndIdx: summary.bestAo50Index,
     },
     {
       label: "Ao100",
       current: summary.currentAo100,
       best: summary.bestAo100,
       windowSize: 100,
+      bestEndIdx: summary.bestAo100Index,
     },
   ];
 
-  // Prepare SVG trend chart data (last 50 valid solves for clean readability)
   const chartData = useMemo(() => {
-    const slice = enrichedSolves.slice(-50);
+    const slice =
+      trendScope === "50" ? enrichedSolves.slice(-50) : enrichedSolves;
     const validNums: number[] = [];
 
     for (const s of slice) {
@@ -121,57 +143,94 @@ export default function StatsPanel({
       ao5Path: buildPath((s) => s.rollingAo5),
       ao12Path: buildPath((s) => s.rollingAo12),
     };
-  }, [enrichedSolves, decimals]);
+  }, [enrichedSolves, decimals, trendScope]);
+
+  const histogramBuckets = useMemo(
+    () => computeTimeHistogram(enrichedSolves, 6, decimals),
+    [enrichedSolves, decimals]
+  );
+
+  const consistency = useMemo(
+    () => computeConsistencyAndSubX(enrichedSolves, targetGoalMs),
+    [enrichedSolves, targetGoalMs]
+  );
+
+  const splitBreakdown = useMemo(
+    () => computeSplitBreakdown(enrichedSolves),
+    [enrichedSolves]
+  );
 
   return (
     <div className="flex flex-col gap-3 h-full">
       {/* Summary Header Cards */}
       <div className="grid grid-cols-3 gap-2">
         <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2.5 text-center">
-          <div className="text-[11px] uppercase tracking-wider opacity-55">
-            Số lượt
-          </div>
-          <div className="font-mono font-bold text-sm sm:text-base mt-0.5">
+          <div className="text-[11px] text-slate-400">Số lượt</div>
+          <div className="font-mono font-bold text-sm sm:text-base mt-0.5 tabular-nums">
             {summary.validCount}/{summary.totalCount}
           </div>
         </div>
         <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2.5 text-center">
-          <div className="text-[11px] uppercase tracking-wider opacity-55">
-            Mean
-          </div>
-          <div className="font-mono font-bold text-sm sm:text-base mt-0.5 text-cyan-300">
+          <div className="text-[11px] text-slate-400">Mean</div>
+          <div className="font-mono font-bold text-sm sm:text-base mt-0.5 text-cyan-300 tabular-nums">
             {formatTimeMs(summary.mean, decimals)}
           </div>
         </div>
         <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2.5 text-center">
-          <div className="text-[11px] uppercase tracking-wider opacity-55">
-            Độ lệch (σ)
-          </div>
-          <div className="font-mono font-bold text-sm sm:text-base mt-0.5 opacity-90">
+          <div className="text-[11px] text-slate-400">Độ lệch (σ)</div>
+          <div className="font-mono font-bold text-sm sm:text-base mt-0.5 tabular-nums">
             {formatTimeMs(summary.stdDev, decimals)}
           </div>
         </div>
       </div>
 
+      {/* Consistency & Sub-Goal Quick Row */}
+      {consistency.consistencyScore !== null && (
+        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] py-1.5 px-2">
+            <span className="text-[10px] text-slate-400 block">Độ ổn định</span>
+            <strong className="font-mono text-emerald-300">
+              {consistency.consistencyScore}/100
+            </strong>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] py-1.5 px-2">
+            <span className="text-[10px] text-slate-400 block">Không phạt</span>
+            <strong className="font-mono text-cyan-300">
+              {consistency.cleanRatePct}%
+            </strong>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] py-1.5 px-2">
+            <span className="text-[10px] text-slate-400 block">
+              Sub-{Math.round(targetGoalMs / 1000)}s
+            </span>
+            <strong className="font-mono text-amber-300">
+              {consistency.subGoalRatePct}%
+            </strong>
+          </div>
+        </div>
+      )}
+
       {/* WCA Stats Table */}
       <div className="rounded-2xl border border-white/10 bg-white/[0.04] overflow-hidden">
         <div className="px-3.5 py-2.5 border-b border-white/10 flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider opacity-80">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
             <Trophy className="w-3.5 h-3.5 text-amber-400" />
             <span>Thống kê WCA</span>
           </div>
-          <span className="text-[11px] opacity-45">Bấm vào số để xem chi tiết</span>
+          <span className="text-[11px] text-slate-400">
+            Bấm vào số để xem chi tiết
+          </span>
         </div>
 
         <table className="w-full text-xs sm:text-sm">
           <thead>
-            <tr className="border-b border-white/5 text-[11px] uppercase tracking-wider opacity-55">
+            <tr className="border-b border-white/5 text-[11px] text-slate-400">
               <th className="py-2 pl-3.5 text-left font-medium">Chỉ số</th>
               <th className="py-2 text-right font-medium">Hiện tại</th>
               <th className="py-2 pr-3.5 text-right font-medium">PB (Best)</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5 font-mono">
+          <tbody className="divide-y divide-white/5 font-mono tabular-nums">
             {rows.map((r) => {
               const canClickCurrent =
                 r.windowSize &&
@@ -185,7 +244,7 @@ export default function StatsPanel({
 
               return (
                 <tr key={r.label} className="hover:bg-white/[0.03] transition">
-                  <td className="py-2 pl-3.5 font-sans font-semibold text-xs opacity-80">
+                  <td className="py-2 pl-3.5 font-sans font-semibold text-xs text-slate-200">
                     {r.label}
                   </td>
                   <td className="py-2 text-right">
@@ -243,102 +302,246 @@ export default function StatsPanel({
         </table>
       </div>
 
-      {/* Progression Trend Chart */}
-      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3.5">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider opacity-80">
-            <TrendingDown className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Biểu đồ tiến độ</span>
+      {/* Multi-Tab Analytics Box: Trend / Histogram / CFOP Splits */}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3.5 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <div className="flex items-center gap-1 p-0.5 rounded-lg bg-black/35 border border-white/10 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setChartTab("trend")}
+              className={`px-2 py-1 rounded-md font-medium inline-flex items-center gap-1 transition ${
+                chartTab === "trend"
+                  ? "bg-cyan-500 text-slate-950 font-semibold"
+                  : "text-slate-300 hover:text-white"
+              }`}
+            >
+              <TrendingDown className="w-3 h-3" />
+              <span>Xu hướng</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setChartTab("histogram")}
+              className={`px-2 py-1 rounded-md font-medium inline-flex items-center gap-1 transition ${
+                chartTab === "histogram"
+                  ? "bg-cyan-500 text-slate-950 font-semibold"
+                  : "text-slate-300 hover:text-white"
+              }`}
+            >
+              <BarChart3 className="w-3 h-3" />
+              <span>Phân phối</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setChartTab("splits")}
+              className={`px-2 py-1 rounded-md font-medium inline-flex items-center gap-1 transition ${
+                chartTab === "splits"
+                  ? "bg-cyan-500 text-slate-950 font-semibold"
+                  : "text-slate-300 hover:text-white"
+              }`}
+            >
+              <Layers className="w-3 h-3" />
+              <span>4 Pha</span>
+            </button>
           </div>
-          <div className="flex items-center gap-2.5 text-[10px]">
-            <span className="inline-flex items-center gap-1 opacity-75">
-              <span className="w-2 h-2 rounded-full bg-slate-400" /> Single
-            </span>
-            <span className="inline-flex items-center gap-1 text-cyan-300">
-              <span className="w-2 h-2 rounded-full bg-cyan-400" /> Ao5
-            </span>
-            <span className="inline-flex items-center gap-1 text-indigo-300">
-              <span className="w-2 h-2 rounded-full bg-indigo-400" /> Ao12
-            </span>
-          </div>
+
+          {chartTab === "trend" && enrichedSolves.length > 50 && (
+            <button
+              type="button"
+              onClick={() =>
+                setTrendScope((s) => (s === "50" ? "all" : "50"))
+              }
+              className="text-[10px] px-2 py-0.5 rounded bg-white/10 hover:bg-white/15 text-cyan-200 font-mono"
+            >
+              {trendScope === "50"
+                ? "50 lượt cuối"
+                : `Tất cả (${enrichedSolves.length})`}
+            </button>
+          )}
         </div>
 
-        {chartData ? (
-          <div className="relative">
-            <svg
-              viewBox={`0 0 ${chartData.width} ${chartData.height}`}
-              className="w-full h-28 overflow-visible"
-              preserveAspectRatio="none"
-            >
-              {/* Subtle horizontal guide lines */}
-              <line
-                x1="0"
-                y1="15"
-                x2={chartData.width}
-                y2="15"
-                stroke="rgba(255,255,255,0.06)"
-                strokeDasharray="3 3"
-              />
-              <line
-                x1="0"
-                y1={chartData.height / 2}
-                x2={chartData.width}
-                y2={chartData.height / 2}
-                stroke="rgba(255,255,255,0.06)"
-                strokeDasharray="3 3"
-              />
-              <line
-                x1="0"
-                y1={chartData.height - 15}
-                x2={chartData.width}
-                y2={chartData.height - 15}
-                stroke="rgba(255,255,255,0.06)"
-                strokeDasharray="3 3"
-              />
-
-              {chartData.singlePath && (
-                <path
-                  d={chartData.singlePath}
-                  fill="none"
-                  stroke="rgba(148,163,184,0.45)"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              )}
-              {chartData.ao5Path && (
-                <path
-                  d={chartData.ao5Path}
-                  fill="none"
-                  stroke="#22d3ee"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              )}
-              {chartData.ao12Path && (
-                <path
-                  d={chartData.ao12Path}
-                  fill="none"
-                  stroke="#818cf8"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              )}
-            </svg>
-            <div className="flex justify-between text-[10px] font-mono opacity-45 mt-1">
-              <span>Best: {chartData.minLabel}</span>
-              <span>Max: {chartData.maxLabel}</span>
+        {chartTab === "trend" && (
+          <>
+            <div className="flex items-center justify-end gap-2.5 text-[10px]">
+              <span className="inline-flex items-center gap-1 text-slate-300">
+                <span className="w-2 h-2 rounded-full bg-slate-400" /> Single
+              </span>
+              <span className="inline-flex items-center gap-1 text-cyan-300">
+                <span className="w-2 h-2 rounded-full bg-cyan-400" /> Ao5
+              </span>
+              <span className="inline-flex items-center gap-1 text-indigo-300">
+                <span className="w-2 h-2 rounded-full bg-indigo-400" /> Ao12
+              </span>
             </div>
+
+            {chartData ? (
+              <div className="relative">
+                <svg
+                  viewBox={`0 0 ${chartData.width} ${chartData.height}`}
+                  className="w-full h-28 overflow-visible"
+                  preserveAspectRatio="none"
+                >
+                  <line
+                    x1="0"
+                    y1="15"
+                    x2={chartData.width}
+                    y2="15"
+                    stroke="rgba(255,255,255,0.06)"
+                    strokeDasharray="3 3"
+                  />
+                  <line
+                    x1="0"
+                    y1={chartData.height / 2}
+                    x2={chartData.width}
+                    y2={chartData.height / 2}
+                    stroke="rgba(255,255,255,0.06)"
+                    strokeDasharray="3 3"
+                  />
+                  <line
+                    x1="0"
+                    y1={chartData.height - 15}
+                    x2={chartData.width}
+                    y2={chartData.height - 15}
+                    stroke="rgba(255,255,255,0.06)"
+                    strokeDasharray="3 3"
+                  />
+
+                  {chartData.singlePath && (
+                    <path
+                      d={chartData.singlePath}
+                      fill="none"
+                      stroke="rgba(148,163,184,0.45)"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+                  {chartData.ao5Path && (
+                    <path
+                      d={chartData.ao5Path}
+                      fill="none"
+                      stroke="#22d3ee"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+                  {chartData.ao12Path && (
+                    <path
+                      d={chartData.ao12Path}
+                      fill="none"
+                      stroke="#818cf8"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+                </svg>
+                <div className="flex justify-between text-[10px] font-mono text-slate-400 mt-1">
+                  <span>Best: {chartData.minLabel}</span>
+                  <span>Max: {chartData.maxLabel}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="h-24 flex flex-col items-center justify-center text-center text-slate-400 text-xs gap-1">
+                <BarChart3 className="w-5 h-5" />
+                <span>Giải ít nhất 2 lượt để hiển thị biểu đồ</span>
+              </div>
+            )}
+          </>
+        )}
+
+        {chartTab === "histogram" && (
+          <div className="space-y-1.5 pt-1">
+            {histogramBuckets.length === 0 ? (
+              <div className="h-24 flex items-center justify-center text-xs text-slate-400 text-center">
+                Cần ít nhất 3 lượt giải hợp lệ để vẽ phổ phân phối thời gian
+              </div>
+            ) : (
+              histogramBuckets.map((b) => (
+                <div key={b.label} className="space-y-0.5 text-[11px]">
+                  <div className="flex justify-between font-mono">
+                    <span className="text-slate-300">{b.label}</span>
+                    <span className="text-cyan-300 font-semibold">
+                      {b.count} lượt ({b.percentage}%)
+                    </span>
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-black/40 overflow-hidden">
+                    <div
+                      className="h-full bg-cyan-400 rounded-full"
+                      style={{ width: `${Math.max(4, b.percentage)}%` }}
+                    />
+                  </div>
+                </div>
+              ))
+            )}
           </div>
-        ) : (
-          <div className="h-24 flex flex-col items-center justify-center text-center opacity-45 text-xs gap-1">
-            <BarChart3 className="w-5 h-5" />
-            <span>Giải ít nhất 2 lượt để hiển thị biểu đồ</span>
+        )}
+
+        {chartTab === "splits" && (
+          <div className="space-y-2 pt-1">
+            {!splitBreakdown ? (
+              <div className="h-24 flex flex-col items-center justify-center text-xs text-slate-400 text-center px-2">
+                <span>Chưa có lượt giải Split Timer trong session này.</span>
+                <span className="text-[11px] text-cyan-300 mt-1">
+                  Hãy bật nút &ldquo;Split Timer (Cross/F2L/OLL/PLL)&rdquo; phía trên đồng hồ!
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="text-[11px] text-slate-300 flex justify-between">
+                  <span>Trung bình {splitBreakdown.sampleCount} lượt Split:</span>
+                  <span className="text-slate-400">Thực tế vs Chuẩn CFOP</span>
+                </div>
+                {splitBreakdown.stages.map((st) => (
+                  <div key={st.key} className="space-y-0.5 text-[11px]">
+                    <div className="flex justify-between font-mono">
+                      <span className="font-sans font-medium text-slate-200">
+                        {st.label}
+                      </span>
+                      <span>
+                        <strong className="text-cyan-300">
+                          {formatTimeMs(st.avgMs, decimals)}
+                        </strong>{" "}
+                        <span className="text-slate-400">
+                          ({st.actualPct}% / chuẩn {st.idealPct}%)
+                        </span>
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-black/40 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          st.deltaPct >= 4 ? "bg-amber-400" : "bg-emerald-400"
+                        }`}
+                        style={{ width: `${Math.min(100, st.actualPct)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         )}
       </div>
+
+      {/* AI Practice Coach & Weakness Diagnostic Launch Button */}
+      {onOpenAiCoach && (
+        <button
+          type="button"
+          onClick={onOpenAiCoach}
+          className="w-full py-2.5 px-3.5 rounded-2xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/40 text-cyan-200 text-xs font-semibold flex items-center justify-between transition"
+        >
+          <span className="inline-flex items-center gap-2">
+            <BrainCircuit className="w-4 h-4 text-cyan-400" />
+            <span>AI Practice Coach & Chẩn đoán Điểm yếu</span>
+          </span>
+          <span className="px-2 py-0.5 rounded-md bg-cyan-400 text-slate-950 font-bold text-[10px]">
+            Phân tích
+          </span>
+        </button>
+      )}
     </div>
   );
 }
+
+const StatsPanel = memo(StatsPanelInner);
+export default StatsPanel;
