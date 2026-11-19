@@ -86,3 +86,20 @@ Dự án hỗ trợ **2 hình thức cài đặt lên điện thoại** dùng ch
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 4. Nhấn **Deploy**! (Hoặc dùng tích hợp **Supabase Integration** trực tiếp trên Vercel Marketplace để tự động điền biến môi trường).
+
+### CORS cho kho tệp Cloudflare R2
+
+Web/PWA gửi tệp trực tiếp tới bucket riêng tư qua URL ký. Trong **R2 → Bucket → Settings → CORS Policy**, cho phép origin chính xác của trang đang chạy, ví dụ:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://ruk-timer.vercel.app"],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["Content-Type"],
+    "MaxAgeSeconds": 300
+  }
+]
+```
+
+Thêm từng origin preview hoặc domain riêng cần upload vào chính sách hiện có. Giữ các rule đang phục vụ ứng dụng khác và giữ bucket ở chế độ riêng tư.

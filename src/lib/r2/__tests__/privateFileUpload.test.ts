@@ -105,3 +105,51 @@ describe("Private files API and upload client", () => {
     }
   });
 });
+
+it("does not sign an empty-payload checksum for a direct browser PUT", async () => {
+  vi.stubEnv("R2_MOCK", "0");
+  vi.stubEnv("R2_ACCOUNT_ID", "test-account");
+  vi.stubEnv("R2_ACCESS_KEY_ID", "test-access-key");
+  vi.stubEnv("R2_SECRET_ACCESS_KEY", "test-secret-key");
+  vi.stubEnv("R2_BUCKET_NAME", "test-bucket");
+
+  const adapter = getObjectStorageAdapter()!;
+  expect(adapter.mode).toBe("r2");
+  const { uploadUrl } = await adapter.createPresignedPutUrl({
+    objectKey: "users/test-user/clip.webm",
+    contentType: "video/webm",
+    sizeBytes: 1024,
+    origin: "http://localhost:3000",
+  });
+
+  const params = new URL(uploadUrl).searchParams;
+  expect(params.get("X-Amz-Content-Sha256")).toBe("UNSIGNED-PAYLOAD");
+  expect(params.get("X-Amz-SignedHeaders")).toContain("content-length");
+  expect(params.has("X-Amz-Signature")).toBe(true);
+  expect([...params.keys()].filter((key) => key.toLowerCase().includes("checksum"))).toEqual([]);
+});
+
+it("reports an HTTP error when the server returns a non-JSON init response", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>unavailable</html>", { status: 502 })));
+
+  const message = await uploadPrivateFile(new Blob(["video"], { type: "video/webm" }), "solve.webm", "video");
+
+  expect(message).toContain("HTTP 502");
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("identifies a browser-to-R2 request failure without calling complete", async () => {
+  vi.stubGlobal("fetch", vi.fn()
+    .mockResolvedValueOnce(Response.json({
+      fileId: "test-file",
+      uploadUrl: "https://test-account.r2.cloudflarestorage.com/test-bucket/clip.webm",
+      contentType: "video/webm",
+      storageMode: "r2",
+    }))
+    .mockRejectedValueOnce(new TypeError("Failed to fetch")));
+
+  const message = await uploadPrivateFile(new Blob(["video"], { type: "video/webm" }), "solve.webm", "video");
+
+  expect(message).toContain("CORS");
+  expect(fetch).toHaveBeenCalledTimes(2);
+});

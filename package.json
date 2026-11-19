@@ -10,6 +10,9 @@
     "test": "vitest run",
     "sync:core": "node scripts/sync-core.mjs"
   },
+  "allowScripts": {
+    "sharp@0.34.5": true
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1172.0",
     "@aws-sdk/s3-request-presigner": "^3.1172.0",

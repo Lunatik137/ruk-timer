@@ -859,7 +859,7 @@ export default function AiCoachAndCommunityView({
       setR2StatusMessage(`Đã lưu riêng tư "${filename}" thành công.`);
       await loadR2Files();
     } catch {
-      setR2StatusMessage("Lỗi mạng khi tải tệp lên kho cá nhân.");
+      setR2StatusMessage("Không thể hoàn tất lưu tệp. Hãy thử lại.");
     } finally {
       setR2Uploading(false);
     }

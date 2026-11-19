@@ -54,6 +54,19 @@ export async function POST(request: Request) {
   const fileId = crypto.randomUUID();
   const objectKey = buildUserObjectKey(auth.user.id, fileId, fileName);
 
+  const signed = await adapter.createPresignedPutUrl({
+    objectKey,
+    contentType,
+    sizeBytes,
+    origin: new URL(request.url).origin,
+  }).catch(() => null);
+  if (!signed) {
+    return NextResponse.json(
+      { error: "Không tạo được liên kết tải lên. Hãy kiểm tra cấu hình kho R2 trên máy chủ." },
+      { status: 502 }
+    );
+  }
+
   const { error: insertErr } = await auth.supabase.from("user_files").insert({
     id: fileId,
     user_id: auth.user.id,
@@ -74,18 +87,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const origin = new URL(request.url).origin;
-  const { uploadUrl, expiresInSec } = await adapter.createPresignedPutUrl({
-    objectKey,
-    contentType: contentType,
-    sizeBytes,
-    origin,
-  });
-
   return NextResponse.json({
     fileId,
-    uploadUrl,
-    expiresInSec,
+    ...signed,
     contentType,
     storageMode: adapter.mode,
   });

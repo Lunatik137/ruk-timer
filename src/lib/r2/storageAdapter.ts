@@ -213,6 +213,8 @@ function getR2Client(): S3Client {
   if (!cachedS3) {
     cachedS3 = new S3Client({
       region: "auto",
+      // The browser supplies the body after signing. Do not sign a checksum of an empty body.
+      requestChecksumCalculation: "WHEN_REQUIRED",
       endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
       credentials: {
         accessKeyId: process.env.R2_ACCESS_KEY_ID!,
