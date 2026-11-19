@@ -33,7 +33,7 @@ export async function GET(request: Request) {
   const { data, error } = await auth.supabase
     .from("user_files")
     .select(
-      "id, file_name, file_kind, content_type, size_bytes, status, created_at"
+      "id, filename:file_name, kind:file_kind, content_type, size_bytes, status, created_at"
     )
     .eq("user_id", auth.user.id)
     .eq("status", "ready")

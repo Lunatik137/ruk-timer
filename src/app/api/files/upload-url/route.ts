@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => ({}));
   const fileName = String(body?.fileName || "").trim();
-  const contentType = String(body?.contentType || "").trim();
+  const contentType = String(body?.contentType || "").split(";")[0].trim().toLowerCase();
   const sizeBytes = Number(body?.sizeBytes || 0);
   const fileKind = (
     ["video", "backup", "other"].includes(body?.fileKind)
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     object_key: objectKey,
     file_name: fileName,
     file_kind: fileKind,
-    content_type: contentType.split(";")[0].trim(),
+    content_type: contentType,
     size_bytes: sizeBytes,
     status: "pending",
   });
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
   const origin = new URL(request.url).origin;
   const { uploadUrl, expiresInSec } = await adapter.createPresignedPutUrl({
     objectKey,
-    contentType: contentType.split(";")[0].trim(),
+    contentType: contentType,
     sizeBytes,
     origin,
   });
@@ -86,6 +86,7 @@ export async function POST(request: Request) {
     fileId,
     uploadUrl,
     expiresInSec,
+    contentType,
     storageMode: adapter.mode,
   });
 }

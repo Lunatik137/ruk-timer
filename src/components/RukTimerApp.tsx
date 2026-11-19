@@ -188,6 +188,10 @@ export default function RukTimerApp() {
   );
   const [mainView, setMainView] = useState<MainAppView>("timer");
   const [hubSubTab, setHubSubTab] = useState<HubSubTab>("coach");
+  const [hasOpenedHub, setHasOpenedHub] = useState(false);
+  useEffect(() => {
+    if (mainView === "coach") setHasOpenedHub(true);
+  }, [mainView]);
   const [mobileTab, setMobileTab] = useState<
     "timer" | "history" | "stats"
   >("timer");
@@ -1380,57 +1384,7 @@ export default function RukTimerApp() {
           onDeleteSolve={handleDeleteSolve}
           onOpenInMainTimer={handleOpenInMainTimer}
         />
-      ) : mainView === "coach" ? (
-        <AiCoachAndCommunityView
-          initialTab={hubSubTab}
-          sessions={sessions}
-          solves={solves}
-          settings={settings}
-          cfopProgress={cfopProgress}
-          userId={userId}
-          userEmail={userEmail}
-          guidedWorkout={guidedWorkout}
-          onStartGuidedWorkout={handleStartGuidedWorkout}
-          onResumeGuidedWorkout={handleResumeGuidedWorkout}
-          onResetGuidedWorkout={handleResetGuidedWorkout}
-          onExecuteRecommendation={handleExecuteCoachRecommendation}
-          onOpenAlgDrill={(alg) => handleOpenInMainTimer(alg)}
-          onSaveVideoAnalyzedSolve={(timeMs, splitsMs, comment) => {
-            const newSolve: Solve = {
-              id: generateUuid(),
-              user_id: userId ?? undefined,
-              session_id: activeSession.id,
-              puzzle: activeSession.puzzle,
-              time_ms: timeMs,
-              penalty: "OK",
-              scramble,
-              comment,
-              splits_ms: splitsMs,
-              solved_at: new Date().toISOString(),
-            };
-            setSolves((prev) => {
-              const next = [...prev, newSolve];
-              if (!userId) saveGuestSolves(next);
-              return next;
-            });
-            if (userId) {
-              runCloudMutation(() => cloudInsertSolve(userId, newSolve));
-            }
-            showToast("Đã lưu lượt giải phân tích từ Video vào Session!");
-          }}
-          onExportBackupBlob={() => {
-            const json = exportDataAsJson(
-              sessions,
-              solves,
-              cfopProgress,
-              practiceSetIds
-            );
-            return new Blob([json], { type: "application/json" });
-          }}
-          onRequestConfirm={requestConfirm}
-          onOpenAuth={() => setAuthModalOpen(true)}
-        />
-      ) : (
+      ) : mainView === "timer" ? (
         <main className="flex-1 w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-3 pb-20 lg:pb-5 grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
           {/* Left Sidebar: Statistics & Chart */}
           <aside
@@ -1618,6 +1572,60 @@ export default function RukTimerApp() {
             />
           </aside>
         </main>
+      ) : null}
+
+      {(mainView === "coach" || hasOpenedHub) && (
+        <AiCoachAndCommunityView
+          active={mainView === "coach"}
+          initialTab={hubSubTab}
+          activeSession={activeSession}
+          sessions={sessions}
+          solves={solves}
+          settings={settings}
+          cfopProgress={cfopProgress}
+          userId={userId}
+          userEmail={userEmail}
+          guidedWorkout={guidedWorkout}
+          onStartGuidedWorkout={handleStartGuidedWorkout}
+          onResumeGuidedWorkout={handleResumeGuidedWorkout}
+          onResetGuidedWorkout={handleResetGuidedWorkout}
+          onExecuteRecommendation={handleExecuteCoachRecommendation}
+          onOpenAlgDrill={(alg) => handleOpenInMainTimer(alg)}
+          onSaveVideoAnalyzedSolve={(timeMs, splitsMs, comment, context) => {
+            const newSolve: Solve = {
+              id: generateUuid(),
+              user_id: userId ?? undefined,
+              session_id: context.sessionId,
+              puzzle: context.puzzle,
+              time_ms: timeMs,
+              penalty: "OK",
+              scramble: context.scramble,
+              comment,
+              splits_ms: splitsMs,
+              solved_at: new Date().toISOString(),
+            };
+            setSolves((prev) => {
+              const next = [...prev, newSolve];
+              if (!userId) saveGuestSolves(next);
+              return next;
+            });
+            if (userId) {
+              runCloudMutation(() => cloudInsertSolve(userId, newSolve));
+            }
+            showToast("Đã lưu lượt giải phân tích từ Video vào Session!");
+          }}
+          onExportBackupBlob={() => {
+            const json = exportDataAsJson(
+              sessions,
+              solves,
+              cfopProgress,
+              practiceSetIds
+            );
+            return new Blob([json], { type: "application/json" });
+          }}
+          onRequestConfirm={requestConfirm}
+          onOpenAuth={() => setAuthModalOpen(true)}
+        />
       )}
 
       {/* Mobile Bottom Tab Bar */}

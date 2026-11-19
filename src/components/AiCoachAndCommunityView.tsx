@@ -47,6 +47,19 @@ import {
   UserFileRecord,
 } from "@/types/cubing";
 
+import CubeNetPreview from "@/components/CubeNetPreview";
+import { generateScramble } from "@/lib/scrambles";
+import { uploadPrivateFile } from "@/lib/r2/uploadClient";
+import {
+  getVideoSplits,
+  resolveVideoDuration,
+  seekVideo,
+  suggestVideoMarks,
+  videoPhases,
+  type VideoMarks,
+  type VideoSolveContext,
+} from "@/lib/videoAnalysis";
+
 export type HubSubTab = "coach" | "weekly" | "video" | "files";
 
 type MarkOrigin = "user" | "suggested" | null;
@@ -60,8 +73,10 @@ interface ConfirmRequest {
 }
 
 interface AiCoachAndCommunityViewProps {
+  active: boolean;
   initialTab?: HubSubTab;
   sessions: CubeSession[];
+  activeSession: CubeSession;
   solves: Solve[];
   settings: TimerSettings;
   cfopProgress: Record<string, CfopProgressItem>;
@@ -76,7 +91,8 @@ interface AiCoachAndCommunityViewProps {
   onSaveVideoAnalyzedSolve: (
     timeMs: number,
     splitsMs: number[],
-    comment: string
+    comment: string,
+    context: VideoSolveContext
   ) => void;
   onExportBackupBlob: () => Blob;
   onRequestConfirm: (req: ConfirmRequest) => void;
@@ -90,8 +106,10 @@ function formatBytes(bytes: number): string {
 }
 
 export default function AiCoachAndCommunityView({
+  active,
   initialTab = "coach",
   sessions,
+  activeSession,
   solves,
   settings,
   cfopProgress,
@@ -109,6 +127,7 @@ export default function AiCoachAndCommunityView({
   onOpenAuth,
 }: AiCoachAndCommunityViewProps) {
   const [subTab, setSubTab] = useState<HubSubTab>(initialTab);
+  const videoActive = active && subTab === "video";
 
   useEffect(() => {
     setSubTab(initialTab);
@@ -205,19 +224,30 @@ export default function AiCoachAndCommunityView({
   const livePreviewRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
+  const cameraRequest = useRef(0);
+  const scanRef = useRef<AbortController | null>(null);
+  const recordingContext = useRef<VideoSolveContext | null>(null);
+  const [clipContext, setClipContext] = useState<VideoSolveContext | null>(null);
+  const [nextScramble, setNextScramble] = useState<VideoSolveContext | null>(null);
+  const { id: sessionId, puzzle } = activeSession;
+  useEffect(() => {
+    if (videoActive) {
+      setNextScramble((previous) => previous?.sessionId === sessionId && previous.puzzle === puzzle
+        ? previous
+        : { sessionId, puzzle, scramble: generateScramble(puzzle) });
+    }
+  }, [videoActive, sessionId, puzzle]);
+  const currentContext = nextScramble?.sessionId === sessionId && nextScramble.puzzle === puzzle
+    ? nextScramble
+    : { sessionId, puzzle, scramble: "" };
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
 
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoName, setVideoName] = useState<string>("");
   const [playbackRate, setPlaybackRate] = useState<number>(1);
-  const [videoMarksSec, setVideoMarksSec] = useState<{
-    start: number | null;
-    cross: number | null;
-    f2l: number | null;
-    oll: number | null;
-    pll: number | null;
-  }>({
+  const [videoMarksSec, setVideoMarksSec] = useState<VideoMarks>({
     start: null,
     cross: null,
     f2l: null,
@@ -246,7 +276,12 @@ export default function AiCoachAndCommunityView({
   const [recorderOpen, setRecorderOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [recordMs, setRecordMs] = useState(0);
+  const [holdState, setHoldState] = useState<"idle" | "holding" | "ready">("idle");
+  const recordStart = useRef<number | null>(null);
+  const holdStart = useRef<number | null>(null);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handledSpace = useRef(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [recordedPreviewUrl, setRecordedPreviewUrl] = useState<string | null>(
     null
@@ -254,22 +289,30 @@ export default function AiCoachAndCommunityView({
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const clearHold = useCallback(() => {
+    holdStart.current = null;
+    if (holdTimer.current !== null) clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+    setHoldState("idle");
+  }, []);
+
+  const stopRecordClock = useCallback(() => {
+    if (recordStart.current !== null) {
+      setRecordMs(performance.now() - recordStart.current);
+      recordStart.current = null;
+    }
+    if (recordTimerRef.current !== null) clearInterval(recordTimerRef.current);
+    recordTimerRef.current = null;
+  }, []);
+
   const stopCameraTracks = useCallback(() => {
-    if (recordTimerRef.current) {
-      clearInterval(recordTimerRef.current);
-      recordTimerRef.current = null;
-    }
-    if (
-      mediaRecorderRef.current &&
-      mediaRecorderRef.current.state !== "inactive"
-    ) {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {
-        // ignore
-      }
-    }
+    cameraRequest.current += 1;
+    handledSpace.current = false;
+    clearHold();
+    stopRecordClock();
+    const recorder = mediaRecorderRef.current;
     mediaRecorderRef.current = null;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
     if (mediaStreamRef.current) {
       for (const track of mediaStreamRef.current.getTracks()) {
         track.stop();
@@ -281,15 +324,36 @@ export default function AiCoachAndCommunityView({
     }
     setIsRecording(false);
     setCameraReady(false);
-  }, []);
+  }, [clearHold, stopRecordClock]);
+
+  useEffect(() => {
+    if (cameraReady && !recordedPreviewUrl && livePreviewRef.current) {
+      livePreviewRef.current.srcObject = mediaStreamRef.current;
+    }
+  }, [cameraReady, recordedPreviewUrl, cameraError]);
+
+  useEffect(() => {
+    return () => {
+      if (recordedPreviewUrl) URL.revokeObjectURL(recordedPreviewUrl);
+    };
+  }, [recordedPreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+    };
+  }, [videoUrl]);
 
   // Stop camera cleanly when switching sub-tab or unmounting
   useEffect(() => {
-    if (subTab !== "video") {
+    if (!videoActive) {
       stopCameraTracks();
       setRecorderOpen(false);
+      setRecordedBlob(null);
+      setRecordedPreviewUrl(null);
+      setAnalyzingVideo(false);
     }
-  }, [subTab, stopCameraTracks]);
+  }, [videoActive, stopCameraTracks]);
 
   useEffect(() => {
     return () => {
@@ -298,13 +362,14 @@ export default function AiCoachAndCommunityView({
   }, [stopCameraTracks]);
 
   const handleOpenCameraRecorder = async () => {
+    stopCameraTracks();
+    videoRef.current?.pause();
+    const request = cameraRequest.current;
     setCameraError(null);
     setRecorderOpen(true);
     setRecordedBlob(null);
-    if (recordedPreviewUrl) {
-      URL.revokeObjectURL(recordedPreviewUrl);
-      setRecordedPreviewUrl(null);
-    }
+    setRecordedPreviewUrl(null);
+    setRecordMs(0);
 
     if (
       typeof navigator === "undefined" ||
@@ -324,15 +389,14 @@ export default function AiCoachAndCommunityView({
         video: { facingMode: "environment" },
         audio: false,
       });
+      if (request !== cameraRequest.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       mediaStreamRef.current = stream;
       setCameraReady(true);
-      requestAnimationFrame(() => {
-        if (livePreviewRef.current) {
-          livePreviewRef.current.srcObject = stream;
-          livePreviewRef.current.play().catch(() => {});
-        }
-      });
     } catch (err) {
+      if (request !== cameraRequest.current) return;
       const name = err instanceof Error ? err.name : "";
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
         setCameraError(
@@ -350,12 +414,12 @@ export default function AiCoachAndCommunityView({
     }
   };
 
-  const handleStartRecording = () => {
+  const handleStartRecording = useCallback(() => {
     const stream = mediaStreamRef.current;
-    if (!stream) return;
+    if (!stream || mediaRecorderRef.current || !currentContext.scramble) return;
     setCameraError(null);
-    recordedChunksRef.current = [];
-    setRecordSeconds(0);
+    clearHold();
+    const chunks: Blob[] = [];
 
     const mimeCandidates = [
       "video/webm;codecs=vp9",
@@ -372,47 +436,118 @@ export default function AiCoachAndCommunityView({
         : new MediaRecorder(stream);
       recorder.ondataavailable = (ev) => {
         if (ev.data && ev.data.size > 0) {
-          recordedChunksRef.current.push(ev.data);
+          chunks.push(ev.data);
         }
+      };
+      recorder.onstart = () => {
+        if (mediaRecorderRef.current !== recorder || recorder.state !== "recording") return;
+        const started = performance.now();
+        recordStart.current = started;
+        recordTimerRef.current = setInterval(() => {
+          setRecordMs(performance.now() - started);
+        }, 40);
       };
       recorder.onstop = () => {
-        const type = recorder.mimeType || "video/webm";
-        const blob = new Blob(recordedChunksRef.current, { type });
-        if (blob.size > 0) {
-          const url = URL.createObjectURL(blob);
-          setRecordedBlob(blob);
-          setRecordedPreviewUrl(url);
-        }
-        if (recordTimerRef.current) {
-          clearInterval(recordTimerRef.current);
-          recordTimerRef.current = null;
-        }
+        if (mediaRecorderRef.current !== recorder) return;
+        mediaRecorderRef.current = null;
+        stopRecordClock();
         setIsRecording(false);
+        const type = recorder.mimeType || chunks[0]?.type || "video/webm";
+        const blob = new Blob(chunks, { type });
+        if (blob.size === 0) {
+          setCameraError("Clip chưa có dữ liệu. Hãy thử quay lại.");
+          return;
+        }
+        setRecordedBlob(blob);
+        setRecordedPreviewUrl(URL.createObjectURL(blob));
+      };
+      recorder.onerror = () => {
+        if (mediaRecorderRef.current !== recorder) return;
+        stopCameraTracks();
+        setCameraError("Camera bị gián đoạn. Hãy mở lại camera và thử quay.");
       };
       mediaRecorderRef.current = recorder;
+      recordingContext.current = currentContext;
       recorder.start(250);
+      setRecordMs(0);
       setIsRecording(true);
-      recordTimerRef.current = setInterval(() => {
-        setRecordSeconds((s) => s + 1);
-      }, 1000);
     } catch {
+      mediaRecorderRef.current = null;
       setCameraError(
         "Không thể khởi chạy bộ ghi hình trên trình duyệt này. Vui lòng thử tải video lên."
       );
     }
-  };
+  }, [clearHold, currentContext, stopCameraTracks, stopRecordClock]);
 
-  const handleStopRecording = () => {
-    if (
-      mediaRecorderRef.current &&
-      mediaRecorderRef.current.state !== "inactive"
-    ) {
+  const handleStopRecording = useCallback(() => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      stopRecordClock();
       mediaRecorderRef.current.stop();
     }
-  };
+  }, [stopRecordClock]);
 
-  const handleSelectVideoFile = (file: File) => {
-    if (videoUrl) URL.revokeObjectURL(videoUrl);
+  useEffect(() => {
+    if (!videoActive || !recorderOpen) return;
+    const usesSpace = (target: EventTarget | null) =>
+      target instanceof HTMLElement &&
+      (target.isContentEditable ||
+        Boolean(target.closest("input, textarea, select, video, [role='textbox'], [role='dialog']")));
+
+    const keydown = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || !cameraReady || recordedPreviewUrl || cameraError) return;
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (usesSpace(event.target)) return;
+
+      event.preventDefault();
+      handledSpace.current = true;
+      if (event.repeat) return;
+      if (mediaRecorderRef.current) {
+        handleStopRecording();
+        return;
+      }
+      holdStart.current = performance.now();
+      if (settings.holdDelayMs === 0) {
+        setHoldState("ready");
+      } else {
+        setHoldState("holding");
+        holdTimer.current = setTimeout(() => setHoldState("ready"), settings.holdDelayMs);
+      }
+    };
+    const keyup = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || !handledSpace.current) return;
+      handledSpace.current = false;
+      const started = holdStart.current;
+      clearHold();
+      if (usesSpace(event.target)) return;
+      event.preventDefault();
+      if (started !== null && performance.now() - started >= settings.holdDelayMs) {
+        handleStartRecording();
+      }
+    };
+    const blur = () => {
+      handledSpace.current = false;
+      clearHold();
+    };
+    window.addEventListener("keydown", keydown);
+    window.addEventListener("keyup", keyup);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("keydown", keydown);
+      window.removeEventListener("keyup", keyup);
+      window.removeEventListener("blur", blur);
+    };
+  }, [
+    videoActive, recorderOpen, cameraReady, recordedPreviewUrl, cameraError,
+    settings.holdDelayMs, clearHold, handleStartRecording, handleStopRecording,
+  ]);
+
+  const handleSelectVideoFile = (file: File, context: VideoSolveContext | null = null) => {
+    scanRef.current?.abort();
+    setAnalyzingVideo(false);
+    setVideoDuration(null);
+    setVideoError(null);
+    setPlaybackRate(1);
+    setClipContext(context ?? { ...currentContext, scramble: "" });
     const nextUrl = URL.createObjectURL(file);
     setVideoUrl(nextUrl);
     setVideoFile(file);
@@ -425,7 +560,7 @@ export default function AiCoachAndCommunityView({
       pll: null,
     });
     setMarkOrigins({
-      start: "user",
+      start: "suggested",
       cross: null,
       f2l: null,
       oll: null,
@@ -444,115 +579,106 @@ export default function AiCoachAndCommunityView({
     );
     stopCameraTracks();
     setRecorderOpen(false);
-    if (recordedPreviewUrl) {
-      URL.revokeObjectURL(recordedPreviewUrl);
-      setRecordedPreviewUrl(null);
-    }
+    setRecordedPreviewUrl(null);
     setRecordedBlob(null);
-    handleSelectVideoFile(file);
+    handleSelectVideoFile(file, recordingContext.current);
   };
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!videoActive || !videoUrl || !video) return;
+    const controller = new AbortController();
+    void resolveVideoDuration(video, controller.signal).then((duration) => {
+      if (controller.signal.aborted) return;
+      setVideoDuration(duration);
+      if (duration === null) {
+        setVideoError("Chưa xác định được thời lượng clip. Hãy bấm quét để thử lại.");
+      }
+    });
+    return () => {
+      controller.abort();
+      scanRef.current?.abort();
+    };
+  }, [videoActive, videoUrl]);
 
   // On-Device Computer Vision: Samples frames from video to detect hand/cube motion & lookahead pauses
   const runClientCvMotionScan = async () => {
-    const vid = videoRef.current;
-    if (!vid || !vid.duration || Number.isNaN(vid.duration)) return;
-
+    if (!videoUrl || analyzingVideo) return;
+    const controller = new AbortController();
+    scanRef.current = controller;
+    const { signal } = controller;
     setAnalyzingVideo(true);
-    const duration = Math.min(45, vid.duration);
-    const sampleStep = 0.25;
+    setVideoError(null);
+
+    const vid = document.createElement("video");
+    vid.preload = "auto";
+    vid.src = videoUrl;
     const canvas = document.createElement("canvas");
     canvas.width = 64;
     canvas.height = 64;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      setAnalyzingVideo(false);
-      return;
-    }
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
-    const origTime = vid.currentTime;
-    vid.pause();
+    try {
+      const duration = await resolveVideoDuration(vid, signal);
+      if (signal.aborted) return;
+      if (duration === null) throw new Error("Chưa xác định được thời lượng clip. Hãy thử quét lại.");
+      setVideoDuration(duration);
+      if (!ctx) throw new Error("Trình duyệt không hỗ trợ đọc khung hình.");
 
-    let prevPixels: Uint8ClampedArray | null = null;
-    const samples: { timeSec: number; energy: number; isPause: boolean }[] = [];
-
-    for (let t = 0; t <= duration; t += sampleStep) {
-      vid.currentTime = t;
-      await new Promise<void>((resolve) => {
-        const onSeeked = () => {
-          vid.removeEventListener("seeked", onSeeked);
-          resolve();
-        };
-        vid.addEventListener("seeked", onSeeked);
-        setTimeout(resolve, 120);
-      });
-
-      ctx.drawImage(vid, 0, 0, 64, 64);
-      const imgData = ctx.getImageData(0, 0, 64, 64).data;
-
-      let diffSum = 0;
-      if (prevPixels) {
-        for (let i = 0; i < imgData.length; i += 16) {
-          diffSum +=
-            Math.abs(imgData[i] - prevPixels[i]) +
-            Math.abs(imgData[i + 1] - prevPixels[i + 1]) +
-            Math.abs(imgData[i + 2] - prevPixels[i + 2]);
+      const step = Math.max(0.25, duration / 180);
+      let prevPixels: Uint8ClampedArray | null = null;
+      const samples: typeof motionWaveform = [];
+      for (let index = 0; index < 180; index++) {
+        const timeSec = index * step;
+        if (timeSec >= duration || signal.aborted) break;
+        if (!await seekVideo(vid, timeSec, signal)) {
+          prevPixels = null;
+          continue;
         }
+        if (signal.aborted) return;
+        ctx.drawImage(vid, 0, 0, 64, 64);
+        const pixels = ctx.getImageData(0, 0, 64, 64).data;
+        let diffSum = 0;
+        if (prevPixels) {
+          for (let i = 0; i < pixels.length; i += 16) {
+            diffSum += Math.abs(pixels[i] - prevPixels[i]) +
+              Math.abs(pixels[i + 1] - prevPixels[i + 1]) +
+              Math.abs(pixels[i + 2] - prevPixels[i + 2]);
+          }
+        }
+        const energy = Math.min(100, Math.round(diffSum / 140));
+        samples.push({ timeSec, energy, isPause: prevPixels !== null && energy < 12 });
+        prevPixels = pixels;
       }
-      prevPixels = new Uint8ClampedArray(imgData);
-      const normEnergy = Math.min(100, Math.round(diffSum / 140));
-      samples.push({
-        timeSec: Number(t.toFixed(2)),
-        energy: normEnergy,
-        isPause: t > 0.5 && normEnergy < 12,
-      });
+      if (signal.aborted) return;
+      if (!samples.length) throw new Error("Không đọc được khung hình. Hãy thử quét lại.");
+      setMotionWaveform(samples);
+      if (duration >= 3) {
+        setVideoMarksSec((prev) => suggestVideoMarks(prev, duration));
+        setMarkOrigins((prev) => ({
+          ...prev,
+          ...Object.fromEntries(videoPhases.filter((phase) => !prev[phase]).map((phase) => [phase, "suggested"])),
+        }));
+      }
+    } catch (error) {
+      if (!signal.aborted) {
+        setVideoError(error instanceof Error ? error.message : "Không quét được clip. Hãy thử lại.");
+      }
+    } finally {
+      vid.removeAttribute("src");
+      vid.load();
+      if (scanRef.current === controller) {
+        scanRef.current = null;
+        if (!signal.aborted) setAnalyzingVideo(false);
+      }
     }
-
-    vid.currentTime = origTime;
-    setMotionWaveform(samples);
-
-    // Suggest 4 CFOP stage split timestamps ONLY for unmarked slots, clearly labeled as system-suggested
-    if (duration >= 3) {
-      const s0 = videoMarksSec.start ?? 0;
-      const span = Math.max(2, duration - s0);
-      setVideoMarksSec((prev) => ({
-        start: prev.start ?? s0,
-        cross: prev.cross ?? Number((s0 + span * 0.14).toFixed(2)),
-        f2l: prev.f2l ?? Number((s0 + span * 0.64).toFixed(2)),
-        oll: prev.oll ?? Number((s0 + span * 0.8).toFixed(2)),
-        pll: prev.pll ?? Number((s0 + span).toFixed(2)),
-      }));
-      setMarkOrigins((prev) => ({
-        start: prev.start ?? "suggested",
-        cross: prev.cross ?? "suggested",
-        f2l: prev.f2l ?? "suggested",
-        oll: prev.oll ?? "suggested",
-        pll: prev.pll ?? "suggested",
-      }));
-    }
-
-    setAnalyzingVideo(false);
   };
 
-  const videoStageDurationsMs = useMemo(() => {
-    const { start, cross, f2l, oll, pll } = videoMarksSec;
-    if (
-      start === null ||
-      cross === null ||
-      f2l === null ||
-      oll === null ||
-      pll === null
-    ) {
-      return null;
-    }
-    const dCross = Math.max(50, Math.round((cross - start) * 1000));
-    const dF2l = Math.max(50, Math.round((f2l - cross) * 1000));
-    const dOll = Math.max(50, Math.round((oll - f2l) * 1000));
-    const dPll = Math.max(50, Math.round((pll - oll) * 1000));
-    return {
-      splitsMs: [dCross, dF2l, dOll, dPll],
-      totalMs: dCross + dF2l + dOll + dPll,
-    };
-  }, [videoMarksSec]);
+  const { result: videoStageDurationsMs, error: markError } =
+    getVideoSplits(videoMarksSec, videoDuration);
+  const targetSession = clipContext && sessions.find((session) => session.id === clipContext.sessionId);
+  const scrambleLocked = isRecording || Boolean(recorderOpen && recordedPreviewUrl);
+  const displayedContext = scrambleLocked ? recordingContext.current ?? currentContext : currentContext;
 
   const hasUnconfirmedSuggestedMarks = Object.values(markOrigins).some(
     (o) => o === "suggested"
@@ -585,10 +711,10 @@ export default function AiCoachAndCommunityView({
   }, [userId]);
 
   useEffect(() => {
-    if (subTab === "files" && userId) {
+    if (active && subTab === "files" && userId) {
       loadR2Files();
     }
-  }, [subTab, userId, loadR2Files]);
+  }, [active, subTab, userId, loadR2Files]);
 
   const uploadBlobToR2 = async (
     blob: Blob,
@@ -602,45 +728,9 @@ export default function AiCoachAndCommunityView({
     setR2Uploading(true);
     setR2StatusMessage(null);
     try {
-      const contentType =
-        blob.type ||
-        (kind === "backup" ? "application/json" : "application/octet-stream");
-      const initRes = await fetch("/api/files/upload-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filename,
-          contentType,
-          sizeBytes: blob.size,
-          kind,
-        }),
-      });
-      const initData = await initRes.json();
-      if (!initRes.ok) {
-        setR2StatusMessage(initData.error || "Không khởi tạo được phiên tải lên");
-        return;
-      }
-
-      const putRes = await fetch(initData.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": contentType },
-        body: blob,
-      });
-      if (!putRes.ok) {
-        setR2StatusMessage(
-          "Tải tệp lên kho lưu trữ bị gián đoạn. Metadata chưa được xác nhận — bạn có thể thử lại."
-        );
-        return;
-      }
-
-      const compRes = await fetch("/api/files/complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileId: initData.fileId }),
-      });
-      const compData = await compRes.json();
-      if (!compRes.ok) {
-        setR2StatusMessage(compData.error || "Xác nhận lưu tệp thất bại");
+      const error = await uploadPrivateFile(blob, filename, kind);
+      if (error) {
+        setR2StatusMessage(error);
         return;
       }
 
@@ -688,6 +778,8 @@ export default function AiCoachAndCommunityView({
       },
     });
   };
+
+  if (!active) return null;
 
   return (
     <div className="w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-4 pb-24 lg:pb-8 space-y-4">
@@ -1232,8 +1324,9 @@ export default function AiCoachAndCommunityView({
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
+                  disabled={recorderOpen}
                   onClick={handleOpenCameraRecorder}
-                  className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition"
+                  className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition disabled:opacity-50"
                 >
                   <Camera className="w-3.5 h-3.5" />
                   <span>Quay video</span>
@@ -1245,14 +1338,49 @@ export default function AiCoachAndCommunityView({
                   <input
                     type="file"
                     accept="video/*"
+                    disabled={isRecording}
                     className="hidden"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
-                      if (f) handleSelectVideoFile(f);
+                      if (f) {
+                        stopCameraTracks();
+                        setRecorderOpen(false);
+                        setRecordedPreviewUrl(null);
+                        setRecordedBlob(null);
+                        handleSelectVideoFile(f);
+                      }
                       e.target.value = "";
                     }}
                   />
                 </label>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-white/10 bg-black/30 p-3">
+              <div className="min-w-0 flex-[1_1_14rem] space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-x-2">
+                  <span className="text-xs font-semibold text-slate-300">
+                    Scramble · {sessions.find((session) => session.id === displayedContext.sessionId)?.name ?? activeSession.name}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={scrambleLocked}
+                    onClick={() => setNextScramble({ ...currentContext, scramble: generateScramble(puzzle) })}
+                    className="min-h-11 rounded-lg px-2 text-xs font-semibold text-cyan-200 hover:bg-white/10 disabled:opacity-50"
+                  >
+                    Scramble mới
+                  </button>
+                </div>
+                <p className="break-words text-sm font-mono text-white">{displayedContext.scramble}</p>
+              </div>
+              {displayedContext.scramble && (
+                <CubeNetPreview puzzle={displayedContext.puzzle} scramble={displayedContext.scramble} compact />
+              )}
+              <div className="space-y-1 text-right">
+                <div className="text-xs text-slate-300">Thời gian quay</div>
+                <div data-testid="recording-time" className="font-mono text-xl tabular-nums text-white">
+                  {formatTimeMs(recordMs, settings.decimals)}
+                </div>
               </div>
             </div>
 
@@ -1269,6 +1397,8 @@ export default function AiCoachAndCommunityView({
                     onClick={() => {
                       stopCameraTracks();
                       setRecorderOpen(false);
+                      setRecordedBlob(null);
+                      setRecordedPreviewUrl(null);
                     }}
                     className="text-xs px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200"
                   >
@@ -1292,10 +1422,9 @@ export default function AiCoachAndCommunityView({
                       <button
                         type="button"
                         onClick={() => {
-                          if (recordedPreviewUrl)
-                            URL.revokeObjectURL(recordedPreviewUrl);
                           setRecordedPreviewUrl(null);
                           setRecordedBlob(null);
+                          setRecordMs(0);
                           if (!mediaStreamRef.current) {
                             handleOpenCameraRecorder();
                           }
@@ -1323,11 +1452,11 @@ export default function AiCoachAndCommunityView({
                         autoPlay
                         muted
                         playsInline
-                        className="w-full max-h-[300px] object-contain"
+                        className="w-full max-h-[min(28vh,300px)] sm:max-h-[300px] object-contain"
                       />
                       {isRecording && (
                         <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-rose-600 text-white font-mono text-xs font-bold">
-                          REC • {recordSeconds}s
+                          Đang quay
                         </span>
                       )}
                     </div>
@@ -1335,9 +1464,9 @@ export default function AiCoachAndCommunityView({
                       {!isRecording ? (
                         <button
                           type="button"
-                          disabled={!cameraReady}
+                          disabled={!cameraReady || !currentContext.scramble}
                           onClick={handleStartRecording}
-                          className="px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 disabled:opacity-50 text-white text-xs font-bold inline-flex items-center gap-1.5"
+                          className="min-h-11 px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 disabled:opacity-50 text-white text-xs font-bold inline-flex items-center gap-1.5"
                         >
                           <Play className="w-3.5 h-3.5" />
                           <span>Bắt đầu quay</span>
@@ -1346,19 +1475,25 @@ export default function AiCoachAndCommunityView({
                         <button
                           type="button"
                           onClick={handleStopRecording}
-                          className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
+                          className="min-h-11 px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
                         >
                           <Square className="w-3.5 h-3.5" />
                           <span>Dừng quay</span>
                         </button>
                       )}
                     </div>
+                    <p role="status" className={`text-center text-xs text-slate-300 ${cameraReady ? "[@media(pointer:coarse)]:sr-only" : ""}`}>
+                      {!cameraReady ? "Đang chờ camera…" : isRecording ? "Bấm Space để dừng quay."
+                        : holdState === "ready" ? "Nhả Space để bắt đầu quay."
+                        : holdState === "holding" ? "Tiếp tục giữ Space…"
+                        : "Giữ rồi nhả Space để bắt đầu quay."}
+                    </p>
                   </div>
                 )}
               </div>
             )}
 
-            {!videoUrl ? (
+            {!videoUrl ? !recorderOpen && (
               <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 py-14 px-4 text-center space-y-2">
                 <Video className="w-8 h-8 text-cyan-400 mx-auto opacity-75" />
                 <p className="text-sm font-semibold text-slate-200">
@@ -1369,15 +1504,35 @@ export default function AiCoachAndCommunityView({
                 </p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div hidden={recorderOpen} className="space-y-3">
                 <div className="rounded-xl overflow-hidden bg-black border border-white/10">
                   <video
+                    key={videoUrl}
                     ref={videoRef}
                     src={videoUrl}
                     controls
+                    playsInline
                     className="w-full max-h-[340px] object-contain"
                   />
                 </div>
+
+                {clipContext && (
+                  <div className="space-y-2 text-xs text-slate-300">
+                    <p>Phiên đích: {targetSession?.name ?? "Phiên không còn khả dụng"} · {clipContext.puzzle.toUpperCase()}</p>
+                    <p className="break-words">Scramble của clip: {clipContext.scramble || "Chưa gán"}</p>
+                    {!clipContext.scramble && (
+                      <button
+                        type="button"
+                        disabled={!currentContext.scramble || clipContext.puzzle !== puzzle || recorderOpen}
+                        onClick={() => setClipContext({ ...clipContext, scramble: currentContext.scramble })}
+                        className="min-h-11 rounded-lg bg-white/10 px-3 text-cyan-200 hover:bg-white/15 disabled:opacity-50"
+                      >
+                        Gán scramble đang hiển thị cho clip
+                      </button>
+                    )}
+                  </div>
+                )}
+                {videoError && <p role="alert" className="text-xs text-rose-200">{videoError}</p>}
 
                 {/* Playback Rate & CV Scan Controls */}
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -1420,7 +1575,7 @@ export default function AiCoachAndCommunityView({
                 </div>
 
                 {/* 5 Phase Stamp Buttons while watching video */}
-                <div className="grid grid-cols-5 gap-1.5 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-xs sm:grid-cols-5">
                   {(
                     [
                       { key: "start", label: "0. Bắt đầu" },
@@ -1437,10 +1592,12 @@ export default function AiCoachAndCommunityView({
                         key={st.key}
                         type="button"
                         onClick={() => {
-                          const cur = videoRef.current?.currentTime ?? 0;
+                          const video = videoRef.current;
+                          if (!video || video.seeking || video.readyState < 2) return;
+                          const cur = video.currentTime;
                           setVideoMarksSec((prev) => ({
                             ...prev,
-                            [st.key]: Number(cur.toFixed(2)),
+                            [st.key]: cur,
                           }));
                           setMarkOrigins((prev) => ({
                             ...prev,
@@ -1453,7 +1610,7 @@ export default function AiCoachAndCommunityView({
                           {st.label}
                         </div>
                         <div className="font-mono text-[11px] text-white mt-0.5">
-                          {val !== null ? `${val}s` : "Bấm chốt"}
+                          {val !== null ? `${val.toFixed(2)}s` : "Bấm chốt"}
                         </div>
                         {origin && (
                           <div
@@ -1480,6 +1637,11 @@ export default function AiCoachAndCommunityView({
               <Activity className="w-5 h-5 text-emerald-400" />
               <span>Kết quả Bóc tách Video & Phát hiện Điểm khựng</span>
             </h2>
+
+            {markError && <p role="alert" className="text-xs text-rose-200">{markError}</p>}
+            {clipContext && !targetSession && (
+              <p role="alert" className="text-xs text-rose-200">Phiên đích không còn tồn tại.</p>
+            )}
 
             {motionWaveform.length > 0 && (
               <div className="rounded-xl bg-black/40 border border-white/10 p-3 space-y-2">
@@ -1561,16 +1723,18 @@ export default function AiCoachAndCommunityView({
 
                 <button
                   type="button"
+                  disabled={!targetSession || analyzingVideo}
                   onClick={() =>
-                    onSaveVideoAnalyzedSolve(
+                    clipContext && targetSession && onSaveVideoAnalyzedSolve(
                       videoStageDurationsMs.totalMs,
                       videoStageDurationsMs.splitsMs,
-                      `Phân tích Video: ${videoName || "Solve"}`
+                      `Phân tích Video: ${videoName || "Solve"}`,
+                      clipContext
                     )
                   }
-                  className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition"
+                  className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition disabled:opacity-50"
                 >
-                  Lưu lượt giải & 4 mốc Split vào Session hiện tại
+                  Lưu lượt giải & 4 mốc Split
                 </button>
               </div>
             ) : (
