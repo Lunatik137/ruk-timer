@@ -719,14 +719,6 @@ export default function CfopTrainerView({
         setTutorAiReply(
           `${fallback}\n\n(Đăng nhập tài khoản để dùng thêm giải thích nâng cao từ Gemini AI — chế độ hướng dẫn cục bộ vẫn hoạt động bình thường.)`
         );
-      } else if (res.status === 429) {
-        const fallback =
-          tutorGuidance?.questionAnswer ||
-          tutorGuidance?.fingertrickCoach ||
-          "";
-        setTutorAiReply(
-          `${fallback}\n\n(${data?.error || "Đã đạt hạn mức AI trong ngày."} Bạn vẫn có thể luyện Drill Studio bình thường.)`
-        );
       } else if (data?.aiEnhancedText) {
         setTutorAiReply(data.aiEnhancedText);
       } else if (tutorGuidance?.questionAnswer) {

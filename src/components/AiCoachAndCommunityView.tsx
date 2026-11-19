@@ -181,10 +181,6 @@ export default function AiCoachAndCommunityView({
         setAiCoachReply(
           `${deterministicFallback}\n\n(Đăng nhập để sử dụng thêm hỏi-đáp nâng cao từ Gemini AI. Báo cáo phân tích toán học ở trên luôn hoạt động miễn phí cho Guest.)`
         );
-      } else if (res.status === 429) {
-        setAiCoachReply(
-          `${deterministicFallback}\n\n(${data?.error || "Đã đạt hạn mức gọi AI trong ngày."} Timer và báo cáo toán học vẫn hoạt động bình thường.)`
-        );
       } else if (data?.aiEnhancedText) {
         setAiCoachReply(data.aiEnhancedText);
       } else {

@@ -5,9 +5,8 @@ import {
   getObjectStorageAdapter,
   validateUploadRequest,
 } from "../storageAdapter";
-import { checkBurstLimit, resetBurstLimiter } from "../../ai/quota";
 
-describe("Cloudflare R2 private storage isolation & validation + AI burst quota", () => {
+describe("Cloudflare R2 private storage isolation & validation", () => {
   it("enforces strict two-account ownership on object keys", () => {
     const keyA = buildUserObjectKey("user-alpha", "file-1", "solve.webm");
     const keyB = buildUserObjectKey("user-beta", "file-2", "backup.json");
@@ -69,19 +68,5 @@ describe("Cloudflare R2 private storage isolation & validation + AI burst quota"
 
     // Cleanup helper works even if missing
     await adapter.deleteObject(key);
-  });
-
-  it("enforces per-user burst quota independently across accounts", () => {
-    resetBurstLimiter();
-    const t0 = 1_700_000_000_000;
-    for (let i = 0; i < 5; i++) {
-      expect(checkBurstLimit("user-1", t0 + i * 1000).allowed).toBe(true);
-    }
-    const blocked = checkBurstLimit("user-1", t0 + 6000);
-    expect(blocked.allowed).toBe(false);
-    expect(blocked.retryAfterSec).toBeGreaterThan(0);
-
-    // Second user is unaffected
-    expect(checkBurstLimit("user-2", t0 + 6000).allowed).toBe(true);
   });
 });

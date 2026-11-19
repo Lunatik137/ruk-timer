@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { checkBurstLimit } from "@/lib/ai/quota";
 import { getAuthenticatedServerContext } from "@/lib/supabase/authServer";
 
 const GEMINI_MODEL_FALLBACK_CHAIN = [
@@ -8,17 +7,15 @@ const GEMINI_MODEL_FALLBACK_CHAIN = [
   "gemini-flash-lite-latest",
 ] as const;
 
-const DAILY_QUOTA_LIMIT = Number(process.env.AI_DAILY_QUOTA_LIMIT || 30);
 const MAX_BODY_BYTES = 32_768;
 const MAX_QUESTION_CHARS = 500;
 const MODEL_TIMEOUT_MS = 6_000;
 
 /**
- * Authenticated, quota-enforced Hybrid AI Coach & CFOP Tutor API (`/api/ai/coach`).
+ * Authenticated Hybrid AI Coach & CFOP Tutor API (`/api/ai/coach`).
  * - Requires a valid Supabase session (cookie or Bearer token); returns 401 for Guest.
- * - Enforces burst rate limit + Postgres daily quota (`consume_ai_quota` RPC).
  * - Protects `GEMINI_API_KEY` strictly on server via `x-goog-api-key` header.
- * - Never blocks Timer or CFOP Trainer when quota is exhausted or upstream fails.
+ * - Never blocks Timer or CFOP Trainer if Gemini is unavailable.
  */
 export async function POST(request: Request) {
   try {
@@ -47,53 +44,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const burst = checkBurstLimit(auth.user.id);
-    if (!burst.allowed) {
-      return NextResponse.json(
-        {
-          code: "rate_limited",
-          source: "deterministic-fallback",
-          aiEnhancedText: null,
-          error: `Bạn gửi yêu cầu quá nhanh. Vui lòng thử lại sau ${burst.retryAfterSec} giây.`,
-        },
-        {
-          status: 429,
-          headers: { "Retry-After": String(burst.retryAfterSec) },
-        }
-      );
-    }
-
-    // Enforce per-user daily quota via Supabase RPC (non-blocking if RPC isn't migrated yet)
-    let remainingQuota: number | null = null;
-    try {
-      const { data: quotaRows, error: quotaErr } = await auth.supabase.rpc(
-        "consume_ai_quota",
-        { p_daily_limit: DAILY_QUOTA_LIMIT }
-      );
-      if (!quotaErr && Array.isArray(quotaRows) && quotaRows[0]) {
-        const row = quotaRows[0] as {
-          allowed: boolean;
-          used_count: number;
-          remaining: number;
-        };
-        remainingQuota = row.remaining;
-        if (!row.allowed) {
-          return NextResponse.json(
-            {
-              code: "quota",
-              source: "deterministic-fallback",
-              aiEnhancedText: null,
-              remainingQuota: 0,
-              error: `Bạn đã dùng hết hạn mức ${DAILY_QUOTA_LIMIT} lượt tư vấn AI hôm nay. Báo cáo chẩn đoán từ dữ liệu vẫn hoạt động bình thường.`,
-            },
-            { status: 429 }
-          );
-        }
-      }
-    } catch {
-      // Allow graceful fallback if DB migration hasn't been applied yet
-    }
-
     const rawText = await request.text();
     if (rawText.length > MAX_BODY_BYTES) {
       return NextResponse.json(
@@ -119,7 +69,6 @@ export async function POST(request: Request) {
         code: "no_key",
         source: "deterministic-engine",
         aiEnhancedText: null,
-        remainingQuota,
         message:
           "Đang sử dụng Động cơ Chẩn đoán Toán học Xác định (Deterministic Speedcubing Engine).",
       });
@@ -183,7 +132,6 @@ export async function POST(request: Request) {
             code: "ok",
             source: model,
             aiEnhancedText: text,
-            remainingQuota,
           });
         }
       } catch {
@@ -195,7 +143,6 @@ export async function POST(request: Request) {
       code: "upstream_unavailable",
       source: "deterministic-fallback",
       aiEnhancedText: null,
-      remainingQuota,
       message:
         "Dịch vụ Gemini tạm thời bận, đã tự động chuyển về báo cáo Coach từ dữ liệu lượt giải.",
     });
