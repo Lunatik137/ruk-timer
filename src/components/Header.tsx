@@ -14,6 +14,7 @@ import {
   Loader2,
   LogIn,
   LogOut,
+  MoreHorizontal,
   RefreshCw,
   Settings,
   Trash2,
@@ -88,13 +89,24 @@ export default function Header({
     setIsCreating(false);
   };
 
+  const sessionActions = [
+    { label: "Tạo phiên mới", Icon: FolderPlus, onClick: () => setIsCreating(true) },
+    { label: "Đổi tên phiên", Icon: Edit3, onClick: () => {
+      setRenameValue(activeSession.name);
+      setIsRenaming(true);
+    } },
+    ...(sessions.length > 1 ? [{
+      label: "Xóa phiên hiện tại", Icon: Trash2, onClick: () => onDeleteSession(activeSession.id),
+    }] : []),
+  ];
+
   return (
-    <header className="w-full border-b border-white/10 bg-black/25 backdrop-blur-md px-3 sm:px-6 py-2.5">
-      <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2.5">
+    <header className="w-full border-b border-white/10 bg-slate-950/80 px-3 sm:px-6 py-2.5">
+      <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-x-2 gap-y-2.5">
         {/* Brand + Selectors */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-          <div className="flex items-center gap-2 mr-1 select-none">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 via-cyan-400 to-emerald-400 p-[2px]">
+        <div className="contents min-w-0 lg:flex lg:flex-wrap lg:items-center lg:gap-2.5">
+          <div className="order-1 flex items-center gap-2 select-none lg:order-none lg:mr-1">
+            <div className="w-7 h-7 rounded-lg border border-cyan-300/60 bg-slate-950 p-px">
               <div className="w-full h-full bg-slate-950 rounded-[6px] grid grid-cols-2 gap-[1.5px] p-[3px]">
                 <span className="bg-rose-500 rounded-[1px]" />
                 <span className="bg-emerald-400 rounded-[1px]" />
@@ -108,15 +120,15 @@ export default function Header({
           </div>
 
           {/* Primary Mode Switcher: Timer vs CFOP Academy vs AI Coach & Daily Challenge */}
-          <div className="flex items-center p-0.5 rounded-xl bg-white/[0.06] border border-white/10">
+          <nav aria-label="Chế độ luyện tập" className="hidden items-center rounded-xl border border-white/10 bg-white/[0.06] p-0.5 lg:flex">
             <button
               type="button"
               aria-pressed={mainView === "timer"}
-              onClick={(e) => {
+              onClick={(event) => {
                 onChangeMainView("timer");
-                e.currentTarget.blur();
+                if (event.detail > 0) event.currentTarget.blur();
               }}
-              className={`h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+              className={`h-8 px-2.5 2xl:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 mainView === "timer"
                   ? "bg-cyan-500 text-slate-950"
                   : "text-slate-300 hover:text-white"
@@ -128,11 +140,8 @@ export default function Header({
             <button
               type="button"
               aria-pressed={mainView === "cfop"}
-              onClick={(e) => {
-                onChangeMainView("cfop");
-                e.currentTarget.blur();
-              }}
-              className={`h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+              onClick={() => onChangeMainView("cfop")}
+              className={`h-8 px-2.5 2xl:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 mainView === "cfop"
                   ? "bg-cyan-500 text-slate-950"
                   : "text-slate-300 hover:text-white"
@@ -144,11 +153,8 @@ export default function Header({
             <button
               type="button"
               aria-pressed={mainView === "coach"}
-              onClick={(e) => {
-                onChangeMainView("coach");
-                e.currentTarget.blur();
-              }}
-              className={`h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+              onClick={() => onChangeMainView("coach")}
+              className={`h-8 px-2.5 2xl:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 mainView === "coach"
                   ? "bg-cyan-500 text-slate-950"
                   : "text-slate-300 hover:text-white"
@@ -157,152 +163,170 @@ export default function Header({
               <BrainCircuit className="w-3.5 h-3.5" />
               <span>AI Coach & Video</span>
             </button>
-          </div>
+          </nav>
 
-          {/* Puzzle Selector */}
-          <select
-            aria-label="Chọn loại Rubik"
-            value={activeSession.puzzle}
-            onChange={(e) => {
-              onChangePuzzle(e.target.value as PuzzleType);
-              e.currentTarget.blur();
-            }}
-            className="h-9 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] border border-white/10 px-2.5 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition cursor-pointer"
-          >
-            {PUZZLES.map((p) => (
-              <option
-                key={p.id}
-                value={p.id}
-                className="bg-slate-900 text-white"
-              >
-                {p.label}
-              </option>
-            ))}
-          </select>
+          <div className={`order-3 grid w-full gap-2 lg:contents ${
+            isCreating || isRenaming ? "grid-cols-1" : "grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]"
+          }`}>
+            <select
+              aria-label="Chọn loại Rubik"
+              value={activeSession.puzzle}
+              onChange={(e) => {
+                onChangePuzzle(e.target.value as PuzzleType);
+              }}
+              className={`h-11 min-w-0 rounded-lg border border-white/15 bg-white/[0.06] px-2 text-sm hover:bg-white/10 lg:h-9 lg:w-36 2xl:w-auto ${isCreating || isRenaming ? "hidden lg:block" : ""}`}
+            >
+              {PUZZLES.map((p) => (
+                <option
+                  key={p.id}
+                  value={p.id}
+                  className="bg-slate-900 text-white"
+                >
+                  {p.label}
+                </option>
+              ))}
+            </select>
 
-          {/* Session Selector & Actions */}
-          {!isRenaming && !isCreating ? (
-            <div className="flex items-center gap-1">
-              <select
-                aria-label="Chọn phiên giải"
-                value={activeSession.id}
-                onChange={(e) => {
-                  onSelectSession(e.target.value);
-                  e.currentTarget.blur();
-                }}
-                className="h-9 max-w-[155px] sm:max-w-[195px] rounded-lg bg-white/[0.06] hover:bg-white/[0.1] border border-white/10 px-2.5 text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition cursor-pointer"
-              >
-                {sessions.map((s) => (
-                  <option
-                    key={s.id}
-                    value={s.id}
-                    className="bg-slate-900 text-white"
+            {/* Session Selector & Actions */}
+            {!isRenaming && !isCreating ? (
+              <div className="flex min-w-0 items-center gap-2">
+                <select
+                  aria-label="Chọn phiên giải"
+                  value={activeSession.id}
+                  onChange={(e) => onSelectSession(e.target.value)}
+                  className="h-11 min-w-0 flex-1 truncate rounded-lg border border-white/15 bg-white/[0.06] px-2 text-sm hover:bg-white/10 lg:h-9 lg:max-w-[8.5rem] 2xl:max-w-48"
+                >
+                  {sessions.map((s) => (
+                    <option
+                      key={s.id}
+                      value={s.id}
+                      className="bg-slate-900 text-white"
+                    >
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+
+                <details
+                  className="relative shrink-0 lg:hidden"
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && event.currentTarget.open) {
+                      event.preventDefault();
+                      event.currentTarget.open = false;
+                      event.currentTarget.querySelector("summary")?.focus();
+                    }
+                  }}
+                >
+                  <summary
+                    aria-label="Quản lý phiên giải"
+                    className="grid size-11 cursor-pointer list-none place-items-center rounded-lg border border-white/15 bg-white/[0.06] hover:bg-white/10 [&::-webkit-details-marker]:hidden"
                   >
-                    {s.name} ({s.puzzle.toUpperCase()})
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                title="Tạo Session mới"
-                aria-label="Tạo Session mới"
-                onClick={() => setIsCreating(true)}
-                className="h-9 w-9 inline-flex items-center justify-center rounded-lg bg-white/[0.05] hover:bg-white/[0.12] border border-white/10 transition"
+                    <MoreHorizontal aria-hidden="true" className="size-5" />
+                  </summary>
+                  <div className="absolute right-0 top-full z-30 mt-1 w-48 rounded-xl border border-white/15 bg-slate-900 p-1 shadow-lg">
+                    {sessionActions.map(({ label, Icon, onClick }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={(event) => {
+                          const details = event.currentTarget.closest("details");
+                          if (details) {
+                            details.open = false;
+                            details.querySelector("summary")?.focus();
+                          }
+                          onClick();
+                        }}
+                        className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-white/10"
+                      >
+                        <Icon aria-hidden="true" className="size-4 text-cyan-200" />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </details>
+                <div className="hidden items-center gap-1 lg:flex">
+                  {sessionActions.map(({ label, Icon, onClick }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      aria-label={label}
+                      title={label}
+                      onClick={onClick}
+                      className="grid size-9 place-items-center rounded-lg border border-white/10 bg-white/[0.05] text-slate-200 hover:bg-white/10"
+                    >
+                      <Icon aria-hidden="true" className="size-4" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : isRenaming ? (
+              <form
+                onSubmit={handleRenameSubmit}
+                className="flex min-w-0 items-center gap-2"
               >
-                <FolderPlus className="w-4 h-4 text-cyan-400" />
-              </button>
-
-              <button
-                type="button"
-                title="Đổi tên Session"
-                aria-label="Đổi tên Session"
-                onClick={() => {
-                  setRenameValue(activeSession.name);
-                  setIsRenaming(true);
-                }}
-                className="h-9 w-9 hidden sm:inline-flex items-center justify-center rounded-lg bg-white/[0.05] hover:bg-white/[0.12] border border-white/10 transition"
-              >
-                <Edit3 className="w-3.5 h-3.5 text-slate-300" />
-              </button>
-
-              {sessions.length > 1 && (
+                <input
+                  type="text"
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  aria-label="Tên phiên"
+                  placeholder="Tên phiên"
+                  className="h-11 min-w-0 flex-1 lg:h-9 lg:w-44 rounded-lg bg-slate-900 border border-cyan-500/50 px-2.5 text-base text-white lg:text-sm"
+                />
+                <button
+                  type="submit"
+                  className="h-11 shrink-0 px-2.5 lg:h-9 rounded-lg bg-cyan-500 text-slate-950 font-semibold text-xs inline-flex items-center gap-1"
+                >
+                  <Check className="w-3.5 h-3.5" /> Lưu
+                </button>
                 <button
                   type="button"
-                  title="Xóa Session hiện tại"
-                  aria-label="Xóa Session hiện tại"
-                  onClick={() => onDeleteSession(activeSession.id)}
-                  className="h-9 w-9 hidden sm:inline-flex items-center justify-center rounded-lg bg-white/[0.05] hover:bg-rose-500/20 hover:text-rose-400 border border-white/10 transition"
+                  onClick={() => setIsRenaming(false)}
+                  className="min-h-11 shrink-0 rounded-lg bg-white/10 px-3 text-xs lg:min-h-9"
                 >
-                  <Trash2 className="w-3.5 h-3.5 text-slate-300" />
+                  Hủy
                 </button>
-              )}
-            </div>
-          ) : isRenaming ? (
-            <form
-              onSubmit={handleRenameSubmit}
-              className="flex items-center gap-1"
-            >
-              <input
-                type="text"
-                autoFocus
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                placeholder="Tên session..."
-                className="h-9 w-36 sm:w-44 rounded-lg bg-slate-900 border border-cyan-500/50 px-2.5 text-xs sm:text-sm text-white focus:outline-none"
-              />
-              <button
-                type="submit"
-                className="h-9 px-2.5 rounded-lg bg-cyan-500 text-slate-950 font-semibold text-xs inline-flex items-center gap-1"
+              </form>
+            ) : (
+              <form
+                onSubmit={handleCreateSubmit}
+                className="flex min-w-0 items-center gap-2"
               >
-                <Check className="w-3.5 h-3.5" /> Lưu
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsRenaming(false)}
-                className="h-9 px-2 rounded-lg bg-white/10 text-xs"
-              >
-                Hủy
-              </button>
-            </form>
-          ) : (
-            <form
-              onSubmit={handleCreateSubmit}
-              className="flex items-center gap-1"
-            >
-              <input
-                type="text"
-                autoFocus
-                value={newSessionName}
-                onChange={(e) => setNewSessionName(e.target.value)}
-                placeholder={`Session ${sessions.length + 1}`}
-                className="h-9 w-36 sm:w-44 rounded-lg bg-slate-900 border border-emerald-500/50 px-2.5 text-xs sm:text-sm text-white focus:outline-none"
-              />
-              <button
-                type="submit"
-                className="h-9 px-2.5 rounded-lg bg-emerald-500 text-slate-950 font-semibold text-xs inline-flex items-center gap-1"
-              >
-                <Check className="w-3.5 h-3.5" /> Tạo
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsCreating(false)}
-                className="h-9 px-2 rounded-lg bg-white/10 text-xs"
-              >
-                Hủy
-              </button>
-            </form>
-          )}
+                <input
+                  type="text"
+                  autoFocus
+                  value={newSessionName}
+                  onChange={(e) => setNewSessionName(e.target.value)}
+                  aria-label="Tên phiên mới"
+                  placeholder={`Session ${sessions.length + 1}`}
+                  className="h-11 min-w-0 flex-1 lg:h-9 lg:w-44 rounded-lg bg-slate-900 border border-emerald-500/50 px-2.5 text-base text-white lg:text-sm"
+                />
+                <button
+                  type="submit"
+                  className="h-11 shrink-0 px-2.5 lg:h-9 rounded-lg bg-emerald-500 text-slate-950 font-semibold text-xs inline-flex items-center gap-1"
+                >
+                  <Check className="w-3.5 h-3.5" /> Tạo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCreating(false)}
+                  className="min-h-11 shrink-0 rounded-lg bg-white/10 px-3 text-xs lg:min-h-9"
+                >
+                  Hủy
+                </button>
+              </form>
+            )}
+          </div>
         </div>
 
         {/* Right Controls: Streak Pill + Sync Badge + Auth + Settings */}
-        <div className="flex items-center gap-2">
+        <div className="order-2 flex min-w-0 items-center gap-2 lg:order-none lg:ml-auto">
           {/* Training Streak Badge */}
           <button
             type="button"
             onClick={onOpenStreakTab}
             title="Xem chuỗi ngày luyện tập & Biểu đồ nhiệt"
-            className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono font-semibold bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/30 text-amber-300 transition"
+            className="hidden xl:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono font-semibold bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/30 text-amber-300 transition"
           >
             <Flame className="w-3.5 h-3.5 text-orange-400" />
             <span>{currentStreakDays}d</span>
@@ -310,7 +334,7 @@ export default function Header({
 
           {/* Sync Status Pill */}
           <div
-            className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${
+            className={`hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${
               syncStatus === "synced"
                 ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/25"
                 : syncStatus === "syncing"
@@ -344,7 +368,7 @@ export default function Header({
             ) : (
               <>
                 <CloudOff className="w-3.5 h-3.5" />
-                <span>Guest (Lưu trên máy)</span>
+                <span>Guest · Trên máy</span>
               </>
             )}
           </div>
@@ -355,17 +379,17 @@ export default function Header({
               type="button"
               onClick={onSyncGuestData}
               title="Đồng bộ lịch sử giải lúc chưa đăng nhập lên Cloud"
-              className="h-9 px-2.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-xs font-medium inline-flex items-center gap-1.5 transition"
+              className="h-11 shrink-0 px-2.5 lg:h-9 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-xs font-medium inline-flex items-center gap-1.5 transition"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span>Đồng bộ +{guestPendingCount} lượt Guest</span>
+              <span className="sr-only lg:not-sr-only">Đồng bộ +{guestPendingCount} lượt Guest</span>
             </button>
           )}
 
           {/* Account / Login */}
           {userEmail ? (
             <div className="flex items-center gap-1.5">
-              <div className="h-9 px-2.5 rounded-lg bg-white/[0.06] border border-white/10 inline-flex items-center gap-1.5 text-xs">
+              <div className="h-11 shrink-0 px-2.5 lg:h-9 rounded-lg bg-white/[0.06] border border-white/10 inline-flex items-center gap-1.5 text-xs">
                 <User className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
                 <span className="max-w-[100px] sm:max-w-[145px] truncate text-slate-200">
                   {userEmail}
@@ -376,7 +400,7 @@ export default function Header({
                 onClick={onSignOut}
                 title="Đăng xuất"
                 aria-label="Đăng xuất"
-                className="h-9 w-9 inline-flex items-center justify-center rounded-lg bg-white/[0.06] hover:bg-rose-500/20 hover:text-rose-300 border border-white/10 transition"
+                className="h-11 w-11 lg:h-9 lg:w-9 inline-flex items-center justify-center rounded-lg bg-white/[0.06] hover:bg-rose-500/20 hover:text-rose-300 border border-white/10 transition"
               >
                 <LogOut className="w-4 h-4" />
               </button>
@@ -385,7 +409,7 @@ export default function Header({
             <button
               type="button"
               onClick={onOpenAuth}
-              className="h-9 px-3 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs sm:text-sm inline-flex items-center gap-1.5 transition"
+              className="h-11 lg:h-9 px-3 rounded-lg border border-white/15 bg-white/[0.06] hover:bg-white/10 text-slate-100 font-semibold text-xs sm:text-sm inline-flex items-center gap-1.5 transition"
             >
               <LogIn className="w-4 h-4" />
               <span>Đăng nhập</span>
@@ -398,7 +422,7 @@ export default function Header({
             onClick={onOpenSettings}
             title="Cài đặt & Sao lưu"
             aria-label="Cài đặt & Sao lưu"
-            className="h-9 w-9 inline-flex items-center justify-center rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 transition"
+            className="h-11 w-11 lg:h-9 lg:w-9 inline-flex items-center justify-center rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 transition"
           >
             <Settings className="w-4 h-4" />
           </button>

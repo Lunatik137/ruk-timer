@@ -585,54 +585,6 @@ export default function TimerDisplay({
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center w-full select-none relative px-4 py-3">
-      {/* Quick Mode Switch Bar (Split Timer & WCA Competition Simulator) */}
-      {!isSolvingOrInspecting && !settings.manualInput && (
-        <div className="flex flex-wrap items-center justify-center gap-2 mb-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              onToggleSplitMode(
-                settings.splitMode === "cfop4" ? "off" : "cfop4"
-              );
-              e.currentTarget.blur();
-            }}
-            className={`px-3 py-1 rounded-full text-xs font-medium border inline-flex items-center gap-1.5 transition ${
-              settings.splitMode === "cfop4"
-                ? "bg-cyan-500/20 text-cyan-200 border-cyan-400/50"
-                : "bg-white/[0.04] hover:bg-white/[0.08] border-white/10 text-slate-300"
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
-            <span>
-              {settings.splitMode === "cfop4"
-                ? "Split Timer: 4 Pha CFOP (Đang bật)"
-                : "Bật Split Timer (Cross/F2L/OLL/PLL)"}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={(e) => {
-              setCompModeActive((v) => !v);
-              setCompRoundSolves([]);
-              e.currentTarget.blur();
-            }}
-            className={`px-3 py-1 rounded-full text-xs font-medium border inline-flex items-center gap-1.5 transition ${
-              compModeActive
-                ? "bg-amber-500/20 text-amber-200 border-amber-400/50"
-                : "bg-white/[0.04] hover:bg-white/[0.08] border-white/10 text-slate-300"
-            }`}
-          >
-            <Award className="w-3.5 h-3.5 text-amber-400" />
-            <span>
-              {compModeActive
-                ? `Phòng thi WCA (${compRoundSolves.length}/5 lượt)`
-                : "Mô phỏng Thi đấu WCA (Ao5)"}
-            </span>
-          </button>
-        </div>
-      )}
-
       {/* WCA Competition Round Progress Card */}
       {compModeActive && !isSolvingOrInspecting && (
         <div className="w-full max-w-xl mb-2 rounded-2xl border border-amber-400/30 bg-amber-500/[0.06] px-4 py-2.5 text-xs space-y-2">
@@ -726,7 +678,7 @@ export default function TimerDisplay({
       {settings.manualInput ? (
         <form
           onSubmit={handleManualSubmit}
-          className="w-full max-w-md flex flex-col items-center gap-3 my-6"
+          className="w-full max-w-md flex flex-col items-center gap-3 my-4"
         >
           <div className="inline-flex items-center gap-2 text-xs text-cyan-400 font-semibold">
             <Keyboard className="w-4 h-4" />
@@ -734,6 +686,7 @@ export default function TimerDisplay({
           </div>
           <input
             type="text"
+            aria-label="Thời gian lượt giải"
             value={manualText}
             onChange={(e) => setManualText(e.target.value)}
             placeholder="Nhập VD: 945 (= 9.45s) hoặc 12.34 rồi Enter"
@@ -762,7 +715,7 @@ export default function TimerDisplay({
             e.preventDefault();
             handlePressUp();
           }}
-          className="w-full flex-1 min-h-[200px] sm:min-h-[250px] flex flex-col items-center justify-center cursor-pointer rounded-3xl transition"
+          className="w-full flex-1 min-h-[174px] sm:min-h-[250px] flex flex-col items-center justify-center cursor-pointer rounded-3xl transition"
         >
           {/* PB Celebration Pill */}
           {isNewPb && !isSolvingOrInspecting && lastSolve && (
@@ -782,7 +735,7 @@ export default function TimerDisplay({
 
           {/* Giant Timer Digits */}
           <div
-            className={`font-mono font-bold tracking-tight transition-transform duration-100 leading-none text-[4.25rem] sm:text-[6.5rem] md:text-[7.5rem] lg:text-[8.5rem] tabular-nums ${getTimerColorClass()}`}
+            className={`font-mono font-bold tracking-tight transition-transform duration-100 leading-none text-[clamp(2.6rem,11vw,5.75rem)] lg:text-[clamp(3rem,6vw,7.5rem)] tabular-nums ${getTimerColorClass()}`}
           >
             {renderMainClockText()}
           </div>
@@ -848,22 +801,22 @@ export default function TimerDisplay({
           )}
 
           {/* Hint Caption */}
-          <p className="mt-3 text-xs sm:text-sm opacity-55 text-center">
+          <p role="status" className="mt-3 max-w-xs text-center text-sm text-slate-300">
             {phase === "running"
               ? settings.splitMode === "cfop4"
                 ? `Nhấn Space / Chạm màn hình để chốt pha ${
                     CFOP_SPLIT_LABELS[liveSplitsMs.length] || "PLL"
                   } (${liveSplitsMs.length + 1}/4)`
-                : "Nhấn phím bất kỳ hoặc chạm màn hình để dừng"
+                : "Đang giải · Nhấn phím hoặc chạm để dừng"
               : phase === "inspecting"
               ? "Nhấn giữ Space (hoặc chạm giữ) để bắt đầu giải • ESC để hủy"
               : phase === "holding"
-              ? "Tiếp tục giữ..."
+              ? "Đang giữ…"
               : phase === "ready"
-              ? "Thả tay để bắt đầu!"
+              ? "Sẵn sàng · Nhả để bắt đầu"
               : effectiveInspectionEnabled
               ? "Nhấn Space (hoặc chạm) để bắt đầu 15s Inspection"
-              : "Nhấn giữ Space (hoặc chạm giữ màn hình) để sẵn sàng"}
+              : "Giữ Space hoặc chạm giữ để bắt đầu"}
           </p>
 
           {/* Post-Solve Quick Penalty & Note Controls */}
@@ -1000,6 +953,56 @@ export default function TimerDisplay({
           )}
         </div>
       )}
+      {/* Quick Mode Switch Bar (Split Timer & WCA Competition Simulator) */}
+      {!isSolvingOrInspecting && !settings.manualInput && (
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
+          <button
+            type="button"
+            aria-pressed={settings.splitMode === "cfop4"}
+            onClick={(e) => {
+              onToggleSplitMode(
+                settings.splitMode === "cfop4" ? "off" : "cfop4"
+              );
+              e.currentTarget.blur();
+            }}
+            className={`min-h-11 px-3 rounded-lg text-xs font-medium border inline-flex items-center gap-1.5 transition ${
+              settings.splitMode === "cfop4"
+                ? "bg-cyan-500/20 text-cyan-200 border-cyan-400/50"
+                : "bg-white/[0.04] hover:bg-white/[0.08] border-white/10 text-slate-300"
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <span>
+              {settings.splitMode === "cfop4"
+                ? "Split Timer · Đang bật"
+                : "Split Timer"}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            aria-pressed={compModeActive}
+            onClick={(e) => {
+              setCompModeActive((v) => !v);
+              setCompRoundSolves([]);
+              e.currentTarget.blur();
+            }}
+            className={`min-h-11 px-3 rounded-lg text-xs font-medium border inline-flex items-center gap-1.5 transition ${
+              compModeActive
+                ? "bg-amber-500/20 text-amber-200 border-amber-400/50"
+                : "bg-white/[0.04] hover:bg-white/[0.08] border-white/10 text-slate-300"
+            }`}
+          >
+            <Award className="w-3.5 h-3.5 text-amber-400" />
+            <span>
+              {compModeActive
+                ? `Phòng thi WCA (${compRoundSolves.length}/5 lượt)`
+                : "Thi đấu WCA (Ao5)"}
+            </span>
+          </button>
+        </div>
+      )}
+
     </div>
   );
 }

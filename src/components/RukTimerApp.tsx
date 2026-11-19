@@ -1315,6 +1315,7 @@ export default function RukTimerApp() {
     >
       {/* Top Navigation Header */}
       <div
+        inert={focusDimActive}
         className={`transition-opacity duration-200 ${
           focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
         }`}
@@ -1388,6 +1389,7 @@ export default function RukTimerApp() {
         <main className="flex-1 w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-3 pb-20 lg:pb-5 grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
           {/* Left Sidebar: Statistics & Chart */}
           <aside
+            inert={focusDimActive}
             className={`lg:col-span-3 transition-opacity duration-200 ${
               focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
             } ${mobileTab === "stats" ? "block" : "hidden lg:block"}`}
@@ -1428,11 +1430,12 @@ export default function RukTimerApp() {
 
           {/* Center Stage: Scramble + Timer + 2D Cube Preview */}
           <section
-            className={`lg:col-span-6 flex flex-col justify-between ${
+            className={`lg:col-span-6 min-w-0 flex flex-col justify-between ${
               mobileTab === "timer" ? "flex" : "hidden lg:flex"
             }`}
           >
             <div
+              inert={focusDimActive}
               className={`transition-opacity duration-200 ${
                 focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
               }`}
@@ -1536,7 +1539,7 @@ export default function RukTimerApp() {
                     <button
                       type="button"
                       onClick={() => setMobileCubeModalOpen(true)}
-                      className="px-4 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] border border-cyan-500/35 text-cyan-200 text-xs font-semibold inline-flex items-center gap-2 transition"
+                      className="min-h-11 px-4 py-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-cyan-500/35 text-cyan-200 text-xs font-semibold inline-flex items-center gap-2 transition"
                     >
                       <Box className="w-4 h-4 text-cyan-400" />
                       <span>
@@ -1551,6 +1554,7 @@ export default function RukTimerApp() {
 
           {/* Right Sidebar: Solve History */}
           <aside
+            inert={focusDimActive}
             className={`lg:col-span-3 transition-opacity duration-200 ${
               focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
             } ${mobileTab === "history" ? "block" : "hidden lg:block"}`}
@@ -1632,7 +1636,7 @@ export default function RukTimerApp() {
       {!focusDimActive && (
         <nav
           aria-label="Điều hướng chính"
-          className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-slate-950/90 backdrop-blur-md grid grid-cols-5 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] px-1.5 text-[10px]"
+          className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-slate-950/90 backdrop-blur-md grid grid-cols-5 gap-1 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] px-1.5 text-[10px]"
         >
           <button
             type="button"
@@ -1643,9 +1647,9 @@ export default function RukTimerApp() {
               setMainView("timer");
               setMobileTab("timer");
             }}
-            className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
+            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 ${
               mainView === "timer" && mobileTab === "timer"
-                ? "text-cyan-400 font-semibold"
+                ? "bg-cyan-400/10 text-cyan-200 font-semibold"
                 : "text-slate-400"
             }`}
           >
@@ -1656,9 +1660,9 @@ export default function RukTimerApp() {
             type="button"
             aria-current={mainView === "cfop" ? "page" : undefined}
             onClick={() => setMainView("cfop")}
-            className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
+            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 ${
               mainView === "cfop"
-                ? "text-cyan-400 font-semibold"
+                ? "bg-cyan-400/10 text-cyan-200 font-semibold"
                 : "text-slate-400"
             }`}
           >
@@ -1669,14 +1673,14 @@ export default function RukTimerApp() {
             type="button"
             aria-current={mainView === "coach" ? "page" : undefined}
             onClick={() => setMainView("coach")}
-            className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
+            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 ${
               mainView === "coach"
-                ? "text-cyan-400 font-semibold"
+                ? "bg-cyan-400/10 text-cyan-200 font-semibold"
                 : "text-slate-400"
             }`}
           >
             <BrainCircuit className="w-4 h-4" />
-            <span>AI Coach</span>
+            <span>AI & Video</span>
           </button>
           <button
             type="button"
@@ -1689,9 +1693,9 @@ export default function RukTimerApp() {
               setMainView("timer");
               setMobileTab("history");
             }}
-            className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
+            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 ${
               mainView === "timer" && mobileTab === "history"
-                ? "text-cyan-400 font-semibold"
+                ? "bg-cyan-400/10 text-cyan-200 font-semibold"
                 : "text-slate-400"
             }`}
           >
@@ -1707,9 +1711,9 @@ export default function RukTimerApp() {
               setMainView("timer");
               setMobileTab("stats");
             }}
-            className={`flex flex-col items-center gap-0.5 py-1 rounded-lg ${
+            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 ${
               mainView === "timer" && mobileTab === "stats"
-                ? "text-cyan-400 font-semibold"
+                ? "bg-cyan-400/10 text-cyan-200 font-semibold"
                 : "text-slate-400"
             }`}
           >

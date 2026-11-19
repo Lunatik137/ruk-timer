@@ -10,7 +10,7 @@ const config: Config = {
     extend: {
       fontFamily: {
         mono: [
-          "var(--font-jetbrains-mono)",
+          "var(--font-jetbrains-mono, ui-monospace)",
           "ui-monospace",
           "SFMono-Regular",
           "Menlo",
@@ -19,7 +19,7 @@ const config: Config = {
           "monospace",
         ],
         sans: [
-          "var(--font-inter)",
+          "var(--font-inter, ui-sans-serif)",
           "ui-sans-serif",
           "system-ui",
           "sans-serif",
