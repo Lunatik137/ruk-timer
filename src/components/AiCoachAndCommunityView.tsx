@@ -12,14 +12,17 @@ import {
   CheckCircle2,
   CloudUpload,
   Download,
+  Eye,
   Flame,
   FolderLock,
   Layers,
   Loader2,
   Play,
+  RefreshCw,
   RotateCcw,
   Sparkles,
   Square,
+  SwitchCamera,
   Target,
   Trash2,
   Upload,
@@ -48,10 +51,23 @@ import {
 } from "@/types/cubing";
 
 import VideoTimeline from "@/components/VideoTimeline";
+import VaultVideoPreviewModal from "@/components/VaultVideoPreviewModal";
 import { loadVideoDraft, saveVideoDraft } from "@/lib/videoDraft";
 import CubeNetPreview from "@/components/CubeNetPreview";
 import { generateScramble } from "@/lib/scrambles";
 import { uploadPrivateFile } from "@/lib/r2/uploadClient";
+import {
+  buildCameraConstraints,
+  detectCameraFacing,
+  getCameraFacingLabel,
+  getOppositeFacingMode,
+  isCameraSwitchLocked,
+  normalizeVideoInputDevices,
+  pickAlternateCameraDeviceId,
+  triggerBlobDownload,
+  type CameraFacingMode,
+  type CameraSourceOption,
+} from "@/lib/cameraDevices";
 import {
   getRecentSplitMedians,
   getVideoSplits,
@@ -310,6 +326,13 @@ export default function AiCoachAndCommunityView({
   // Camera Recorder state
   const [recorderOpen, setRecorderOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
+  const [cameraDevices, setCameraDevices] = useState<CameraSourceOption[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>("");
+  const [cameraFacing, setCameraFacing] = useState<CameraFacingMode>("environment");
+  const [activeCameraFacing, setActiveCameraFacing] =
+    useState<CameraFacingMode | null>(null);
+  const [switchingCamera, setSwitchingCamera] = useState(false);
+  const [selectedPhase, setSelectedPhase] = useState<VideoPhase>("start");
   const [isRecording, setIsRecording] = useState(false);
   const [recordMs, setRecordMs] = useState(0);
   const [useCountdown, setUseCountdown] = useState(false);
@@ -363,13 +386,31 @@ export default function AiCoachAndCommunityView({
     }
     setIsRecording(false);
     setCameraReady(false);
+    setSwitchingCamera(false);
   }, [clearHold, stopRecordClock]);
+
+  const refreshCameraDevices = useCallback(async (): Promise<CameraSourceOption[]> => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.enumerateDevices
+    ) {
+      return [];
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const normalized = normalizeVideoInputDevices(devices);
+      setCameraDevices(normalized);
+      return normalized;
+    } catch {
+      return [];
+    }
+  }, []);
 
   useEffect(() => {
     if (cameraReady && !recordedPreviewUrl && livePreviewRef.current) {
       livePreviewRef.current.srcObject = mediaStreamRef.current;
     }
-  }, [cameraReady, recordedPreviewUrl, cameraError]);
+  }, [cameraReady, recordedPreviewUrl, cameraError, selectedCameraId, activeCameraFacing]);
 
   useEffect(() => {
     return () => {
@@ -400,57 +441,209 @@ export default function AiCoachAndCommunityView({
     };
   }, [stopCameraTracks]);
 
-  const handleOpenCameraRecorder = async () => {
-    stopCameraTracks();
-    videoRef.current?.pause();
-    const request = cameraRequest.current;
-    setCameraError(null);
-    setRecorderOpen(true);
-    setRecordedBlob(null);
-    setRecordedPreviewUrl(null);
-    setRecordMs(0);
+  // Release camera tracks when leaving browser tab or hiding page
+  useEffect(() => {
+    if (!videoActive || !recorderOpen) return;
 
-    if (
-      typeof navigator === "undefined" ||
-      !navigator.mediaDevices ||
-      !navigator.mediaDevices.getUserMedia ||
-      typeof MediaRecorder === "undefined"
-    ) {
-      setCameraError(
-        "Trình duyệt này chưa hỗ trợ quay video trực tiếp (thiếu MediaDevices hoặc MediaRecorder). Bạn vẫn có thể dùng nút 'Tải video lên'."
-      );
-      return;
-    }
-
-    try {
-      // Request video only (no microphone permission needed for cubing split analysis)
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-        audio: false,
-      });
-      if (request !== cameraRequest.current) {
-        stream.getTracks().forEach((track) => track.stop());
+    const handleVisibilityChange = () => {
+      if (!document.hidden) return;
+      if (mediaRecorderRef.current?.state === "recording") {
+        stopRecordClock();
+        mediaRecorderRef.current.stop();
         return;
       }
-      mediaStreamRef.current = stream;
-      setCameraReady(true);
-    } catch (err) {
-      if (request !== cameraRequest.current) return;
-      const name = err instanceof Error ? err.name : "";
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+      if (mediaStreamRef.current) {
+        stopCameraTracks();
         setCameraError(
-          "Bạn đã từ chối quyền truy cập camera. Hãy cấp quyền camera trong cài đặt trình duyệt rồi thử lại, hoặc chọn 'Tải video lên'."
-        );
-      } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-        setCameraError(
-          "Không tìm thấy camera khả dụng trên thiết bị này. Bạn có thể tải video có sẵn lên để phân tích."
-        );
-      } else {
-        setCameraError(
-          "Không thể mở camera lúc này (có thể đang được ứng dụng khác sử dụng). Hãy thử lại hoặc tải video lên."
+          "Camera đã tạm đóng khi bạn rời tab. Bấm 'Thử lại' để mở lại camera."
         );
       }
-    }
+    };
+
+    const handlePageHide = () => {
+      stopCameraTracks();
+    };
+
+    const handleDeviceChange = () => {
+      void refreshCameraDevices();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+    navigator.mediaDevices?.addEventListener?.("devicechange", handleDeviceChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+      navigator.mediaDevices?.removeEventListener?.("devicechange", handleDeviceChange);
+    };
+  }, [videoActive, recorderOpen, refreshCameraDevices, stopCameraTracks, stopRecordClock]);
+
+  const openCameraStream = useCallback(
+    async (options?: {
+      deviceId?: string;
+      facingMode?: CameraFacingMode;
+      exactFacing?: boolean;
+      resetRecorded?: boolean;
+    }) => {
+      stopCameraTracks();
+      videoRef.current?.pause();
+      const request = cameraRequest.current;
+      setCameraError(null);
+      setRecorderOpen(true);
+      setSwitchingCamera(true);
+      if (options?.resetRecorded !== false) {
+        setRecordedBlob(null);
+        setRecordedPreviewUrl(null);
+        setRecordMs(0);
+      }
+
+      if (
+        typeof navigator === "undefined" ||
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia ||
+        typeof MediaRecorder === "undefined"
+      ) {
+        setSwitchingCamera(false);
+        setCameraError(
+          "Trình duyệt này chưa hỗ trợ quay video trực tiếp (thiếu MediaDevices hoặc MediaRecorder). Bạn vẫn có thể dùng nút 'Tải video lên'."
+        );
+        return;
+      }
+
+      const targetFacing = options?.facingMode ?? cameraFacing;
+      const targetDeviceId = options?.deviceId;
+
+      const requestStream = async (
+        constraints: MediaStreamConstraints
+      ): Promise<MediaStream> => navigator.mediaDevices.getUserMedia(constraints);
+
+      try {
+        let stream: MediaStream;
+        try {
+          stream = await requestStream(
+            buildCameraConstraints({
+              deviceId: targetDeviceId,
+              facingMode: targetFacing,
+              exactFacing: options?.exactFacing,
+            })
+          );
+        } catch (firstErr) {
+          const firstName = firstErr instanceof Error ? firstErr.name : "";
+          const canFallback =
+            !targetDeviceId &&
+            (firstName === "OverconstrainedError" || firstName === "NotFoundError");
+          if (!canFallback) throw firstErr;
+
+          const latestDevices =
+            cameraDevices.length > 0 ? cameraDevices : await refreshCameraDevices();
+          const altId = pickAlternateCameraDeviceId(
+            latestDevices,
+            selectedCameraId || null,
+            targetFacing
+          );
+          if (altId) {
+            stream = await requestStream(
+              buildCameraConstraints({ deviceId: altId })
+            );
+          } else {
+            stream = await requestStream(
+              buildCameraConstraints({
+                facingMode: targetFacing,
+                exactFacing: false,
+              })
+            );
+          }
+        }
+
+        if (request !== cameraRequest.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        mediaStreamRef.current = stream;
+        const videoTrack = stream.getVideoTracks()[0];
+        const trackSettings = videoTrack?.getSettings?.();
+        const detectedFacing = detectCameraFacing(
+          trackSettings?.facingMode,
+          videoTrack?.label
+        );
+        setActiveCameraFacing(detectedFacing);
+        if (detectedFacing) {
+          setCameraFacing(detectedFacing);
+        } else if (!targetDeviceId) {
+          setCameraFacing(targetFacing);
+        }
+        if (trackSettings?.deviceId) {
+          setSelectedCameraId(trackSettings.deviceId);
+        } else if (targetDeviceId) {
+          setSelectedCameraId(targetDeviceId);
+        }
+        if (livePreviewRef.current) {
+          livePreviewRef.current.srcObject = stream;
+        }
+        setCameraReady(true);
+        setSwitchingCamera(false);
+        void refreshCameraDevices();
+      } catch (err) {
+        if (request !== cameraRequest.current) return;
+        setSwitchingCamera(false);
+        void refreshCameraDevices();
+        const name = err instanceof Error ? err.name : "";
+        if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+          setCameraError(
+            "Bạn đã từ chối quyền truy cập camera. Hãy cấp quyền camera trong cài đặt trình duyệt rồi thử lại, hoặc chọn 'Tải video lên'."
+          );
+        } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+          setCameraError(
+            "Không tìm thấy camera phù hợp trên thiết bị này. Hãy thử chọn nguồn camera khác hoặc tải video lên."
+          );
+        } else if (name === "OverconstrainedError") {
+          setCameraError(
+            "Không thể chuyển sang camera yêu cầu trên thiết bị này. Hãy thử lại hoặc chọn nguồn camera khác."
+          );
+        } else {
+          setCameraError(
+            "Không thể mở camera lúc này (có thể đang được ứng dụng khác sử dụng). Hãy thử lại hoặc chọn nguồn camera khác."
+          );
+        }
+      }
+    },
+    [cameraDevices, cameraFacing, refreshCameraDevices, selectedCameraId, stopCameraTracks]
+  );
+
+  const handleOpenCameraRecorder = () => {
+    void openCameraStream({
+      deviceId: selectedCameraId || undefined,
+      facingMode: cameraFacing,
+      resetRecorded: true,
+    });
+  };
+
+  const cameraSwitchLocked = isCameraSwitchLocked({
+    isRecording,
+    countdownActive: countdownDeadline !== null,
+    switching: switchingCamera,
+  });
+
+  const handleSwitchCameraFacing = () => {
+    if (cameraSwitchLocked) return;
+    const nextFacing = getOppositeFacingMode(activeCameraFacing ?? cameraFacing);
+    setSelectedCameraId("");
+    void openCameraStream({
+      facingMode: nextFacing,
+      exactFacing: true,
+      resetRecorded: false,
+    });
+  };
+
+  const handleSelectCameraDevice = (deviceId: string) => {
+    if (cameraSwitchLocked) return;
+    setSelectedCameraId(deviceId);
+    void openCameraStream({
+      deviceId: deviceId || undefined,
+      facingMode: cameraFacing,
+      resetRecorded: false,
+    });
   };
 
   const handleStartRecording = useCallback(() => {
@@ -786,12 +979,29 @@ export default function AiCoachAndCommunityView({
     : null, [solves, clipPuzzle, draftStartedAt]);
 
   const seekToPhase = (index: number) => {
+    const phase = videoPhases[index];
+    setSelectedPhase(phase);
     const video = videoRef.current;
-    const stamp = videoMarksSec[videoPhases[index]];
+    const stamp = videoMarksSec[phase];
     if (!video || stamp === null) return;
     video.pause();
     video.currentTime = stamp;
-    video.scrollIntoView({ block: "nearest" });
+    video.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+
+  const handleDownloadRecordedClip = () => {
+    if (!recordedBlob) return;
+    const ext = recordedBlob.type.includes("mp4") ? "mp4" : "webm";
+    const filename = `ruktimer-solve-${new Date()
+      .toISOString()
+      .slice(0, 19)
+      .replace(/[:T]/g, "-")}.${ext}`;
+    triggerBlobDownload(recordedBlob, filename);
+  };
+
+  const handleDownloadCurrentVideo = () => {
+    if (!videoFile) return;
+    triggerBlobDownload(videoFile, videoName || videoFile.name || "ruktimer-clip.webm");
   };
 
   const targetSession = clipContext && sessions.find((session) => session.id === clipContext.sessionId);
@@ -808,6 +1018,16 @@ export default function AiCoachAndCommunityView({
   const [r2Loading, setR2Loading] = useState(false);
   const [r2Uploading, setR2Uploading] = useState(false);
   const [r2StatusMessage, setR2StatusMessage] = useState<string | null>(null);
+  const [videoUploadMessage, setVideoUploadMessage] = useState<string | null>(null);
+  const [previewVaultFile, setPreviewVaultFile] = useState<UserFileRecord | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (!active || subTab !== "files") {
+      setPreviewVaultFile(null);
+    }
+  }, [active, subTab]);
 
   const loadR2Files = useCallback(async () => {
     if (!userId) return;
@@ -837,25 +1057,28 @@ export default function AiCoachAndCommunityView({
   const uploadBlobToR2 = async (
     blob: Blob,
     filename: string,
-    kind: "video" | "backup" | "other"
+    kind: "video" | "backup" | "other",
+    feedbackTarget: "video" | "files" = "files"
   ) => {
     if (!userId) {
       onOpenAuth();
       return;
     }
+    const setFeedback =
+      feedbackTarget === "video" ? setVideoUploadMessage : setR2StatusMessage;
     setR2Uploading(true);
-    setR2StatusMessage(null);
+    setFeedback(null);
     try {
       const error = await uploadPrivateFile(blob, filename, kind);
       if (error) {
-        setR2StatusMessage(error);
+        setFeedback(error);
         return;
       }
 
-      setR2StatusMessage(`Đã lưu riêng tư "${filename}" thành công.`);
+      setFeedback(`Đã lưu riêng tư "${filename}" lên kho R2.`);
       await loadR2Files();
     } catch {
-      setR2StatusMessage("Không thể hoàn tất lưu tệp. Hãy thử lại.");
+      setFeedback("Không thể hoàn tất lưu tệp. Hãy thử lại.");
     } finally {
       setR2Uploading(false);
     }
@@ -891,6 +1114,9 @@ export default function AiCoachAndCommunityView({
           setR2StatusMessage(data.error || "Xóa tệp thất bại");
         } else {
           setR2Files((prev) => prev.filter((f) => f.id !== file.id));
+          setPreviewVaultFile((current) =>
+            current?.id === file.id ? null : current
+          );
           setR2StatusMessage(`Đã xóa "${file.filename}".`);
         }
       },
@@ -1427,31 +1653,26 @@ export default function AiCoachAndCommunityView({
       {/* ==================================================================== */}
       {subTab === "video" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <div className="lg:col-span-7 rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-4">
+          <div className="lg:col-span-7 min-w-0 rounded-2xl border border-white/10 bg-white/[0.04] p-3 sm:p-5 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
-                  <Video className="w-5 h-5 text-cyan-400" />
-                  <span>Video Solve Analyzer (Quay trực tiếp & Tách pha CFOP)</span>
-                </h2>
-                <p className="text-xs text-slate-400">
-                  Video được lưu nháp trên thiết bị. Bạn có thể chủ động tải clip lên kho cá nhân.
-                </p>
-              </div>
+              <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
+                <Video className="w-5 h-5 text-cyan-400 shrink-0" aria-hidden="true" />
+                <span>Video Analyzer</span>
+              </h2>
 
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   disabled={recorderOpen || !draftReady}
                   onClick={handleOpenCameraRecorder}
-                  className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition disabled:opacity-50"
+                  className="min-h-10 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition disabled:opacity-50"
                 >
-                  <Camera className="w-3.5 h-3.5" />
+                  <Camera className="w-3.5 h-3.5" aria-hidden="true" />
                   <span>Quay video</span>
                 </button>
 
-                <label className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer transition">
-                  <Upload className="w-3.5 h-3.5" />
+                <label className="min-h-10 px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer transition">
+                  <Upload className="w-3.5 h-3.5" aria-hidden="true" />
                   <span>Tải video lên</span>
                   <input
                     type="file"
@@ -1465,6 +1686,7 @@ export default function AiCoachAndCommunityView({
                         setRecorderOpen(false);
                         setRecordedPreviewUrl(null);
                         setRecordedBlob(null);
+                        setVideoUploadMessage(null);
                         handleSelectVideoFile(f);
                       }
                       e.target.value = "";
@@ -1474,42 +1696,73 @@ export default function AiCoachAndCommunityView({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-white/10 bg-black/30 p-3">
-              <div className="min-w-0 flex-[1_1_14rem] space-y-1.5">
-                <div className="flex flex-wrap items-center justify-between gap-x-2">
-                  <span className="text-xs font-semibold text-slate-300">
-                    Scramble · {sessions.find((session) => session.id === displayedContext.sessionId)?.name ?? activeSession.name}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={scrambleLocked}
-                    onClick={() => setNextScramble({ ...currentContext, scramble: generateScramble(puzzle) })}
-                    className="min-h-11 rounded-lg px-2 text-xs font-semibold text-cyan-200 hover:bg-white/10 disabled:opacity-50"
-                  >
-                    Scramble mới
-                  </button>
+            {/* Recording Scramble & Recording Clock — Shown when recording or before loading a clip */}
+            {(recorderOpen || !videoUrl) && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-white/10 bg-black/30 p-3">
+                <div className="min-w-0 flex-[1_1_13rem] space-y-1">
+                  <div className="flex flex-wrap items-center justify-between gap-x-2">
+                    <span className="text-xs font-semibold text-slate-300">
+                      Scramble quay mới ·{" "}
+                      {sessions.find((session) => session.id === displayedContext.sessionId)?.name ??
+                        activeSession.name}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={scrambleLocked}
+                      onClick={() =>
+                        setNextScramble({
+                          ...currentContext,
+                          scramble: generateScramble(puzzle),
+                        })
+                      }
+                      className="min-h-10 rounded-lg px-2 text-xs font-semibold text-cyan-200 hover:bg-white/10 disabled:opacity-50"
+                    >
+                      Scramble mới
+                    </button>
+                  </div>
+                  <p className="break-words text-sm font-mono text-white">
+                    {displayedContext.scramble}
+                  </p>
                 </div>
-                <p className="break-words text-sm font-mono text-white">{displayedContext.scramble}</p>
+                {displayedContext.scramble && (
+                  <CubeNetPreview
+                    puzzle={displayedContext.puzzle}
+                    scramble={displayedContext.scramble}
+                    compact
+                  />
+                )}
+                {recorderOpen && (
+                  <div className="space-y-0.5 text-right">
+                    <div className="text-xs text-slate-300">Thời gian ghi hình</div>
+                    <div
+                      data-testid="recording-time"
+                      className="font-mono text-xl tabular-nums text-white"
+                    >
+                      {formatTimeMs(recordMs, settings.decimals)}
+                    </div>
+                  </div>
+                )}
               </div>
-              {displayedContext.scramble && (
-                <CubeNetPreview puzzle={displayedContext.puzzle} scramble={displayedContext.scramble} compact />
-              )}
-              <div className="space-y-1 text-right">
-                <div className="text-xs text-slate-300">Thời gian quay</div>
-                <div data-testid="recording-time" className="font-mono text-xl tabular-nums text-white">
-                  {formatTimeMs(recordMs, settings.decimals)}
-                </div>
-              </div>
-            </div>
+            )}
 
             {/* Direct Camera Recorder Panel */}
             {recorderOpen && (
-              <div className="rounded-xl bg-black/50 border border-emerald-500/35 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
-                    <Camera className="w-4 h-4" />
-                    <span>Quay clip lượt giải trực tiếp (không ghi âm)</span>
-                  </span>
+              <div className="rounded-xl bg-black/50 border border-emerald-500/35 p-3 sm:p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+                      <Camera className="w-4 h-4 shrink-0" aria-hidden="true" />
+                      <span>Quay trực tiếp (không ghi âm)</span>
+                    </span>
+                    {getCameraFacingLabel(activeCameraFacing) && (
+                      <span
+                        data-testid="active-camera-facing"
+                        className="px-2 py-0.5 rounded-md bg-white/10 border border-white/15 text-[11px] font-medium text-cyan-200"
+                      >
+                        {getCameraFacingLabel(activeCameraFacing)}
+                      </span>
+                    )}
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -1518,22 +1771,83 @@ export default function AiCoachAndCommunityView({
                       setRecordedBlob(null);
                       setRecordedPreviewUrl(null);
                     }}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200"
+                    className="min-h-10 text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200"
                   >
                     Đóng camera
                   </button>
                 </div>
 
+                {/* Camera Switch (Mobile Front/Back) + Camera Source Selector (Desktop/Laptop) */}
+                {!recordedPreviewUrl && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={cameraSwitchLocked}
+                      onClick={handleSwitchCameraFacing}
+                      aria-label="Đổi camera trước và sau"
+                      className="min-h-11 px-3 py-2 rounded-lg border border-white/15 bg-white/10 hover:bg-white/15 disabled:opacity-50 text-xs font-semibold text-slate-100 inline-flex items-center gap-1.5 transition"
+                    >
+                      <SwitchCamera className="w-4 h-4 text-cyan-300 shrink-0" aria-hidden="true" />
+                      <span>{switchingCamera ? "Đang đổi camera..." : "Đổi camera"}</span>
+                    </button>
+
+                    {cameraDevices.length > 0 && (
+                      <label className="flex items-center gap-1.5 flex-1 min-w-[180px]">
+                        <span className="sr-only">Chọn nguồn camera</span>
+                        <select
+                          aria-label="Chọn nguồn camera"
+                          value={selectedCameraId}
+                          disabled={cameraSwitchLocked}
+                          onChange={(event) =>
+                            handleSelectCameraDevice(event.currentTarget.value)
+                          }
+                          className="min-h-11 w-full rounded-lg border border-white/15 bg-slate-900 px-2.5 text-xs text-slate-100 focus:outline-none focus:border-cyan-400 disabled:opacity-50"
+                        >
+                          <option value="">Tự động (Camera mặc định)</option>
+                          {cameraDevices.map((device) => (
+                            <option key={device.deviceId} value={device.deviceId}>
+                              {device.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                )}
+
                 {cameraError ? (
-                  <div className="rounded-xl bg-rose-500/15 border border-rose-400/35 p-3 text-xs text-rose-200 flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span>{cameraError}</span>
+                  <div
+                    role="alert"
+                    className="rounded-xl bg-rose-500/15 border border-rose-400/35 p-3 text-xs text-rose-200 space-y-2.5"
+                  >
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                      <span>{cameraError}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={switchingCamera}
+                        onClick={() =>
+                          void openCameraStream({
+                            deviceId: selectedCameraId || undefined,
+                            facingMode: cameraFacing,
+                            resetRecorded: false,
+                          })
+                        }
+                        className="min-h-10 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/20 text-white font-semibold inline-flex items-center gap-1.5"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Thử lại</span>
+                      </button>
+                    </div>
                   </div>
                 ) : recordedPreviewUrl ? (
                   <div className="space-y-3">
                     <video
                       src={recordedPreviewUrl}
                       controls
+                      playsInline
                       className="w-full max-h-[300px] rounded-xl bg-black object-contain"
                     />
                     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -1547,17 +1861,25 @@ export default function AiCoachAndCommunityView({
                             handleOpenCameraRecorder();
                           }
                         }}
-                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-medium inline-flex items-center gap-1"
+                        className="min-h-10 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-medium inline-flex items-center gap-1.5"
                       >
-                        <RotateCcw className="w-3.5 h-3.5" />
+                        <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
                         <span>Quay lại</span>
                       </button>
                       <button
                         type="button"
-                        onClick={handleUseRecordedClip}
-                        className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
+                        onClick={handleDownloadRecordedClip}
+                        className="min-h-10 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-cyan-200 text-xs font-medium inline-flex items-center gap-1.5"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <Download className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Tải clip về máy</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleUseRecordedClip}
+                        className="min-h-10 px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
                         <span>Đưa clip vào Analyzer</span>
                       </button>
                     </div>
@@ -1570,7 +1892,7 @@ export default function AiCoachAndCommunityView({
                         autoPlay
                         muted
                         playsInline
-                        className="w-full max-h-[min(28vh,300px)] sm:max-h-[300px] object-contain"
+                        className="w-full max-h-[min(32vh,300px)] sm:max-h-[300px] object-contain"
                       />
                       {isRecording && (
                         <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-rose-600 text-white font-mono text-xs font-bold">
@@ -1595,11 +1917,11 @@ export default function AiCoachAndCommunityView({
                       ) : !isRecording ? (
                         <button
                           type="button"
-                          disabled={!cameraReady || !currentContext.scramble}
+                          disabled={!cameraReady || !currentContext.scramble || switchingCamera}
                           onClick={startFromButton}
                           className="min-h-11 px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 disabled:opacity-50 text-white text-xs font-bold inline-flex items-center gap-1.5"
                         >
-                          <Play className="w-3.5 h-3.5" />
+                          <Play className="w-3.5 h-3.5" aria-hidden="true" />
                           <span>Bắt đầu quay</span>
                         </button>
                       ) : (
@@ -1608,7 +1930,7 @@ export default function AiCoachAndCommunityView({
                           onClick={handleStopRecording}
                           className="min-h-11 px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
                         >
-                          <Square className="w-3.5 h-3.5" />
+                          <Square className="w-3.5 h-3.5" aria-hidden="true" />
                           <span>Dừng quay</span>
                         </button>
                       )}
@@ -1624,139 +1946,204 @@ export default function AiCoachAndCommunityView({
                         Đếm ngược 3 giây khi bấm nút quay
                       </label>
                     )}
-                    {countdownDeadline === null && <p role="status" className={`text-center text-xs text-slate-300 ${cameraReady ? "[@media(pointer:coarse)]:sr-only" : ""}`}>
-                      {!cameraReady ? "Đang chờ camera…" : isRecording ? "Bấm Space để dừng quay."
-                        : holdState === "ready" ? "Nhả Space để bắt đầu quay."
-                        : holdState === "holding" ? "Tiếp tục giữ Space…"
-                        : "Giữ rồi nhả Space để bắt đầu quay."}
-                    </p>}
+                    {countdownDeadline === null && (
+                      <p
+                        role="status"
+                        className={`text-center text-xs text-slate-300 ${
+                          cameraReady ? "[@media(pointer:coarse)]:sr-only" : ""
+                        }`}
+                      >
+                        {!cameraReady
+                          ? "Đang chờ camera…"
+                          : isRecording
+                          ? "Bấm Space để dừng quay."
+                          : holdState === "ready"
+                          ? "Nhả Space để bắt đầu quay."
+                          : holdState === "holding"
+                          ? "Tiếp tục giữ Space…"
+                          : "Giữ rồi nhả Space để bắt đầu quay."}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
             )}
 
-            {!videoUrl && draftMessage && <p role="status" className="text-xs">{draftMessage}</p>}
-            {!videoUrl ? !recorderOpen && (
-              <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 py-14 px-4 text-center space-y-2">
-                <Video className="w-8 h-8 text-cyan-400 mx-auto opacity-75" />
-                <p className="text-sm font-semibold text-slate-200">
-                  Chưa có video nào được nạp
-                </p>
-                <p className="text-xs text-slate-400 max-w-md mx-auto">
-                  Chọn <strong>Quay video</strong> để ghi hình trực tiếp từ camera hoặc <strong>Tải video lên</strong> từ máy để phát chậm 0.25x/0.5x, quét điểm khựng tay và chốt 4 mốc Cross / F2L / OLL / PLL.
-                </p>
-              </div>
+            {!videoUrl && draftMessage && (
+              <p role="status" className="text-xs text-slate-300">
+                {draftMessage}
+              </p>
+            )}
+            {!videoUrl ? (
+              !recorderOpen && (
+                <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 py-12 px-4 text-center space-y-2">
+                  <Video className="w-8 h-8 text-cyan-400 mx-auto opacity-75" aria-hidden="true" />
+                  <p className="text-sm font-semibold text-slate-200">
+                    Chưa có video nào được nạp
+                  </p>
+                  <p className="text-xs text-slate-400 max-w-md mx-auto">
+                    Chọn <strong>Quay video</strong> hoặc <strong>Tải video lên</strong> để tua chậm, quét điểm khựng tay và chốt mốc CFOP.
+                  </p>
+                </div>
+              )
             ) : (
               <div hidden={recorderOpen} className="space-y-3">
-                <div className="rounded-xl overflow-hidden bg-black border border-white/10">
-                  <video
-                    key={videoUrl}
-                    ref={videoRef}
-                    src={videoUrl}
-                    controls
-                    playsInline
-                    className="w-full max-h-[340px] object-contain"
-                  />
+                {/* Unified Video Player + Timeline CFOP Cluster */}
+                <div className="rounded-xl overflow-hidden bg-black/45 border border-white/15">
+                  <div className="bg-black">
+                    <video
+                      key={videoUrl}
+                      ref={videoRef}
+                      src={videoUrl}
+                      playsInline
+                      preload="metadata"
+                      onClick={() => {
+                        const video = videoRef.current;
+                        if (!video || !videoDuration) return;
+                        if (video.paused || video.ended) {
+                          void video.play().catch(() => {});
+                        } else {
+                          video.pause();
+                        }
+                      }}
+                      className="w-full max-h-[34svh] sm:max-h-[340px] object-contain cursor-pointer"
+                    />
+                  </div>
+                  <div className="border-t border-white/10">
+                    <VideoTimeline
+                      key={videoUrl}
+                      videoRef={videoRef}
+                      duration={videoDuration}
+                      marks={videoMarksSec}
+                      origins={markOrigins}
+                      decimals={settings.decimals}
+                      playbackRate={playbackRate}
+                      selectedPhase={selectedPhase}
+                      onSelectPhase={setSelectedPhase}
+                      onPlaybackRateChange={(rate) => {
+                        setPlaybackRate(rate);
+                        if (videoRef.current) {
+                          videoRef.current.playbackRate = rate;
+                        }
+                      }}
+                      onStamp={stampVideoPhase}
+                    />
+                  </div>
                 </div>
 
-                {clipContext && (
-                  <div className="space-y-2 text-xs text-slate-300">
-                    <p>Phiên đích: {targetSession?.name ?? "Phiên không còn khả dụng"} · {clipContext.puzzle.toUpperCase()}</p>
-                    <p className="break-words">Scramble của clip: {clipContext.scramble || "Chưa gán"}</p>
-                    {!clipContext.scramble && (
-                      <button
-                        type="button"
-                        disabled={!currentContext.scramble || clipContext.puzzle !== puzzle || recorderOpen}
-                        onClick={() => setClipContext({ ...clipContext, scramble: currentContext.scramble })}
-                        className="min-h-11 rounded-lg bg-white/10 px-3 text-cyan-200 hover:bg-white/15 disabled:opacity-50"
-                      >
-                        Gán scramble đang hiển thị cho clip
-                      </button>
-                    )}
-                  </div>
+                {videoError && (
+                  <p role="alert" className="text-xs text-rose-200">
+                    {videoError}
+                  </p>
                 )}
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
-                  <p role="status">{draftMessage ?? "Đang lưu bản nháp trên thiết bị…"}</p>
-                  <button
-                    type="button"
-                    onClick={discardDraft}
-                    className="min-h-11 rounded-lg px-2 text-rose-200 hover:bg-rose-500/15"
-                  >
-                    Xóa bản nháp
-                  </button>
-                </div>
-                {videoError && <p role="alert" className="text-xs text-rose-200">{videoError}</p>}
 
-                {/* Playback Rate & CV Scan Controls */}
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-slate-400">Tốc độ phát:</span>
-                    {[0.25, 0.5, 0.75, 1].map((rate) => (
-                      <button
-                        key={rate}
-                        type="button"
-                        onClick={() => {
-                          setPlaybackRate(rate);
-                          if (videoRef.current) {
-                            videoRef.current.playbackRate = rate;
-                          }
-                        }}
-                        className={`px-2 py-1 rounded-lg font-mono border ${
-                          playbackRate === rate
-                            ? "bg-cyan-500 text-slate-950 border-cyan-400 font-bold"
-                            : "bg-white/5 border-white/10 text-slate-300"
-                        }`}
-                      >
-                        {rate}x
-                      </button>
-                    ))}
+                {/* Consolidated Clip Details & CV Scan */}
+                <div className="rounded-xl border border-white/10 bg-black/30 p-3 space-y-2.5 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-white truncate max-w-[260px] sm:max-w-[380px]">
+                        {videoName || "Clip chưa đặt tên"}
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        {videoFile ? formatBytes(videoFile.size) : ""}
+                        {videoDuration !== null
+                          ? ` • Thời lượng video: ${formatTimeMs(
+                              videoDuration * 1000,
+                              settings.decimals
+                            )}`
+                          : ""}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={analyzingVideo}
+                      onClick={runClientCvMotionScan}
+                      className="min-h-10 px-3 py-1.5 rounded-xl bg-indigo-500/25 hover:bg-indigo-500/35 border border-indigo-400/50 text-indigo-200 font-semibold inline-flex items-center gap-1.5 transition disabled:opacity-50"
+                    >
+                      <BrainCircuit className="w-3.5 h-3.5 text-cyan-400 shrink-0" aria-hidden="true" />
+                      <span>
+                        {analyzingVideo
+                          ? "Đang quét CV..."
+                          : "Quét chuyển động & gợi ý mốc"}
+                      </span>
+                    </button>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled={analyzingVideo}
-                    onClick={runClientCvMotionScan}
-                    className="px-3 py-1.5 rounded-xl bg-indigo-500/25 hover:bg-indigo-500/35 border border-indigo-400/50 text-indigo-200 font-semibold inline-flex items-center gap-1.5 transition"
-                  >
-                    <BrainCircuit className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>
-                      {analyzingVideo
-                        ? "Đang quét khung hình CV..."
-                        : "Quét Chuyển Động & Gợi ý Mốc (CV)"}
-                    </span>
-                  </button>
-                </div>
+                  {clipContext && (
+                    <div className="space-y-1 border-t border-white/10 pt-2 text-slate-300">
+                      <p>
+                        <span className="text-slate-400">Phiên đích:</span>{" "}
+                        <span className={targetSession ? "text-slate-100" : "text-rose-300"}>
+                          {targetSession?.name ?? "Phiên không còn khả dụng"}
+                        </span>{" "}
+                        · {clipContext.puzzle.toUpperCase()}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="break-words flex-1 min-w-0">
+                          <span className="text-slate-400">Scramble:</span>{" "}
+                          <span className="font-mono text-slate-100">
+                            {clipContext.scramble || "Chưa gán"}
+                          </span>
+                        </p>
+                        {!clipContext.scramble && (
+                          <button
+                            type="button"
+                            disabled={
+                              !currentContext.scramble ||
+                              clipContext.puzzle !== puzzle ||
+                              recorderOpen
+                            }
+                            onClick={() =>
+                              setClipContext({
+                                ...clipContext,
+                                scramble: currentContext.scramble,
+                              })
+                            }
+                            className="min-h-9 rounded-lg bg-white/10 px-2.5 text-cyan-200 hover:bg-white/15 disabled:opacity-50"
+                          >
+                            Gán scramble hiện tại
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
-                <VideoTimeline
-                  key={videoUrl}
-                  videoRef={videoRef}
-                  duration={videoDuration}
-                  marks={videoMarksSec}
-                  origins={markOrigins}
-                  decimals={settings.decimals}
-                  onStamp={stampVideoPhase}
-                />
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-2 text-slate-400">
+                    <p role="status" className="text-[11px]">
+                      {draftMessage ?? "Đang lưu bản nháp trên thiết bị…"}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={discardDraft}
+                      className="min-h-9 rounded-lg px-2 text-rose-300 hover:bg-rose-500/15 font-medium"
+                    >
+                      Xóa bản nháp
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
 
-          {/* Right: CV Motion Waveform, Stage Breakdown & Optional R2 Upload */}
-          <div className="lg:col-span-5 rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-4">
+          {/* Right: CV Motion Waveform, Stage Breakdown & Clip Export/R2 Save */}
+          <div className="lg:col-span-5 min-w-0 rounded-2xl border border-white/10 bg-white/[0.04] p-4 sm:p-5 space-y-4">
             <h2 className="text-base font-bold flex items-center gap-2">
-              <Activity className="w-5 h-5 text-emerald-400" />
-              <span>Kết quả Bóc tách Video & Phát hiện Điểm khựng</span>
+              <Activity className="w-5 h-5 text-emerald-400 shrink-0" aria-hidden="true" />
+              <span>Kết quả bóc tách CFOP</span>
             </h2>
 
-            {markError && <p role="alert" className="text-xs text-rose-200">{markError}</p>}
-            {clipContext && !targetSession && (
-              <p role="alert" className="text-xs text-rose-200">Phiên đích không còn tồn tại.</p>
+            {markError && (
+              <p role="alert" className="rounded-lg bg-rose-500/15 border border-rose-400/35 px-3 py-2 text-xs text-rose-200">
+                {markError}
+              </p>
             )}
 
             {motionWaveform.length > 0 && (
               <div className="rounded-xl bg-black/40 border border-white/10 p-3 space-y-2">
-                <div className="flex items-center justify-between text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-1 text-xs">
                   <span className="font-semibold text-cyan-300">
-                    Biểu đồ Cường độ Chuyển động Tay (CV Motion)
+                    Cường độ chuyển động tay (CV)
                   </span>
                   <span className="text-[11px] text-rose-300">
                     Đỏ = Gợi ý đoạn khựng
@@ -1777,22 +2164,22 @@ export default function AiCoachAndCommunityView({
                   ))}
                 </div>
                 <p className="text-[11px] text-slate-300">
-                  Hệ thống gợi ý{" "}
+                  Phát hiện{" "}
                   <strong className="text-rose-300">
                     {motionWaveform.filter((p) => p.isPause).length} khoảng giảm tốc/dừng tay
                   </strong>
-                  . Hãy tua chậm để kiểm tra và chốt lại các mốc nếu cần.
+                  .
                 </p>
               </div>
             )}
 
             {videoStageDurationsMs ? (
-              <div className="rounded-xl bg-black/35 border border-emerald-500/30 p-4 space-y-3 text-xs">
-                <div className="flex items-center justify-between">
+              <div className="rounded-xl bg-black/35 border border-emerald-500/30 p-3.5 sm:p-4 space-y-3 text-xs">
+                <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold text-emerald-300">
-                    Tổng thời gian lượt giải trong Video:
+                    Thời gian lượt giải:
                   </span>
-                  <strong className="font-mono text-xl text-white">
+                  <strong className="font-mono text-xl tabular-nums text-white">
                     {formatTimeMs(
                       videoStageDurationsMs.totalMs,
                       settings.decimals
@@ -1802,7 +2189,7 @@ export default function AiCoachAndCommunityView({
 
                 {hasUnconfirmedSuggestedMarks && (
                   <div className="rounded-lg bg-amber-500/10 border border-amber-400/30 px-2.5 py-1.5 text-[11px] text-amber-200">
-                    Một số mốc đang là <strong>gợi ý ước lượng của hệ thống</strong> (chưa do bạn tự bấm chốt). Bạn có thể chọn và chốt lại mốc trên timeline để chỉnh chính xác.
+                    Một số mốc đang là <strong>Hệ thống gợi ý</strong>. Hãy kiểm tra và bấm chốt lại trên timeline nếu cần.
                   </div>
                 )}
 
@@ -1827,20 +2214,24 @@ export default function AiCoachAndCommunityView({
                           <div className="text-[11px] font-sans text-slate-400">
                             {label}
                           </div>
-                          <div className="text-sm font-bold text-cyan-300 mt-0.5">
+                          <div className="text-sm font-bold text-cyan-300 mt-0.5 tabular-nums">
                             {formatTimeMs(ms, settings.decimals)} ({pct}%)
                           </div>
                           {delta !== null && (
-                            <p className="mt-1 text-xs font-sans text-slate-300">
-                              {Math.abs(delta) < 10 ? "Ngang trung vị"
-                                : `${delta > 0 ? "Chậm hơn" : "Nhanh hơn"} ${formatTimeMs(Math.abs(delta), 2)} giây`}
+                            <p className="mt-1 text-[11px] font-sans text-slate-300">
+                              {Math.abs(delta) < 10
+                                ? "Ngang trung vị"
+                                : `${delta > 0 ? "Chậm hơn" : "Nhanh hơn"} ${formatTimeMs(
+                                    Math.abs(delta),
+                                    2
+                                  )}s`}
                             </p>
                           )}
                           <button
                             type="button"
                             onClick={() => seekToPhase(idx)}
                             disabled={recorderOpen}
-                            className="min-h-11 rounded-lg text-xs font-sans text-cyan-200 hover:underline disabled:opacity-50"
+                            className="mt-1 min-h-9 rounded-lg text-xs font-sans text-cyan-200 hover:underline disabled:opacity-50"
                           >
                             Xem pha {label.slice(3)}
                           </button>
@@ -1854,63 +2245,67 @@ export default function AiCoachAndCommunityView({
                   type="button"
                   disabled={!targetSession || analyzingVideo}
                   onClick={() =>
-                    clipContext && targetSession && onSaveVideoAnalyzedSolve(
+                    clipContext &&
+                    targetSession &&
+                    onSaveVideoAnalyzedSolve(
                       videoStageDurationsMs.totalMs,
                       videoStageDurationsMs.splitsMs,
                       `Phân tích Video: ${videoName || "Solve"}`,
                       clipContext
                     )
                   }
-                  className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition disabled:opacity-50"
+                  className="min-h-11 w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition disabled:opacity-50"
                 >
                   Lưu lượt giải & 4 mốc Split
                 </button>
               </div>
             ) : (
               <div className="rounded-xl bg-black/30 border border-white/10 p-4 text-xs text-slate-400 leading-relaxed">
-                Hướng dẫn: Sau khi quay hoặc tải video lên, bạn có thể bấm{" "}
-                <strong className="text-indigo-200">
-                  &ldquo;Quét Chuyển Động & Gợi ý Mốc (CV)&rdquo;
-                </strong>{" "}
-                để xem đoạn khựng gợi ý, hoặc chốt các mốc trên timeline khi xem tới cuối mỗi pha{" "}
-                <code>Cross → F2L → OLL → PLL</code>.
+                {videoUrl
+                  ? "Chốt đủ 5 mốc Start → Cross → F2L → OLL → PLL trên timeline (hoặc bấm Quét chuyển động) để tính thời gian lượt giải."
+                  : "Nạp hoặc quay một clip bên cạnh để bắt đầu tách 4 pha CFOP."}
               </div>
             )}
 
-            {/* Optional Save Video to Private R2 Storage */}
+            {/* Distinct Clip Export (Device) & Private R2 Cloud Upload */}
             {videoFile && (
-              <div className="rounded-xl bg-black/35 border border-white/10 p-3.5 space-y-2 text-xs">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-slate-200 truncate">
-                    Clip hiện tại: {videoName} ({formatBytes(videoFile.size)})
-                  </span>
+              <div className="rounded-xl bg-black/35 border border-white/10 p-3.5 space-y-2.5 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadCurrentVideo}
+                    className="min-h-11 px-3 py-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/15 text-slate-100 font-semibold inline-flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Download className="w-3.5 h-3.5 text-cyan-300 shrink-0" aria-hidden="true" />
+                    <span>Tải clip về máy</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={r2Uploading}
+                    onClick={() =>
+                      uploadBlobToR2(videoFile, videoFile.name, "video", "video")
+                    }
+                    className="min-h-11 px-3 py-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/35 text-cyan-200 font-semibold inline-flex items-center justify-center gap-1.5 transition disabled:opacity-50"
+                  >
+                    {r2Uploading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" aria-hidden="true" />
+                    ) : (
+                      <CloudUpload className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    )}
+                    <span>
+                      {userId
+                        ? r2Uploading
+                          ? "Đang lưu lên R2..."
+                          : "Lưu clip lên kho R2"
+                        : "Đăng nhập để lưu R2"}
+                    </span>
+                  </button>
                 </div>
-                <p className="text-[11px] text-slate-400">
-                  Clip đang nằm tại máy của bạn. Chỉ tải lên kho cá nhân riêng tư (Cloudflare R2) nếu bạn muốn lưu lâu dài.
-                </p>
-                <button
-                  type="button"
-                  disabled={r2Uploading}
-                  onClick={() =>
-                    uploadBlobToR2(videoFile, videoFile.name, "video")
-                  }
-                  className="w-full py-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/15 text-cyan-200 font-semibold inline-flex items-center justify-center gap-1.5 transition disabled:opacity-50"
-                >
-                  {r2Uploading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <CloudUpload className="w-3.5 h-3.5" />
-                  )}
-                  <span>
-                    {userId
-                      ? r2Uploading
-                        ? "Đang tải lên kho cá nhân..."
-                        : "Lưu clip vào kho cá nhân (R2)"
-                      : "Đăng nhập để lưu clip lên kho cá nhân"}
-                  </span>
-                </button>
-                {r2StatusMessage && (
-                  <p className="text-[11px] text-cyan-300">{r2StatusMessage}</p>
+                {videoUploadMessage && (
+                  <p role="status" className="text-[11px] text-cyan-300">
+                    {videoUploadMessage}
+                  </p>
                 )}
               </div>
             )}
@@ -1922,11 +2317,11 @@ export default function AiCoachAndCommunityView({
       {/* TAB 4: PRIVATE PERSONAL FILE STORAGE (CLOUDFLARE R2)                 */}
       {/* ==================================================================== */}
       {subTab === "files" && (
-        <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-4">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 sm:p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
-                <FolderLock className="w-5 h-5 text-cyan-400" />
+                <FolderLock className="w-5 h-5 text-cyan-400 shrink-0" aria-hidden="true" />
                 <span>Kho tệp cá nhân riêng tư (Cloudflare R2)</span>
               </h2>
               <p className="text-xs text-slate-400">
@@ -1949,14 +2344,14 @@ export default function AiCoachAndCommunityView({
                     const fname = `ruktimer-backup-${new Date()
                       .toISOString()
                       .slice(0, 10)}.json`;
-                    uploadBlobToR2(blob, fname, "backup");
+                    uploadBlobToR2(blob, fname, "backup", "files");
                   }}
-                  className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition"
+                  className="min-h-10 px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition"
                 >
                   {r2Uploading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
                   ) : (
-                    <CloudUpload className="w-3.5 h-3.5" />
+                    <CloudUpload className="w-3.5 h-3.5" aria-hidden="true" />
                   )}
                   <span>Sao lưu JSON hiện tại lên kho R2</span>
                 </button>
@@ -1965,14 +2360,17 @@ export default function AiCoachAndCommunityView({
           </div>
 
           {r2StatusMessage && (
-            <div className="rounded-xl bg-cyan-500/10 border border-cyan-400/30 px-3.5 py-2 text-xs text-cyan-200">
+            <div
+              role="status"
+              className="rounded-xl bg-cyan-500/10 border border-cyan-400/30 px-3.5 py-2 text-xs text-cyan-200"
+            >
               {r2StatusMessage}
             </div>
           )}
 
           {!userId ? (
             <div className="rounded-xl bg-black/35 border border-white/10 p-6 text-center space-y-3">
-              <FolderLock className="w-8 h-8 text-cyan-400 mx-auto opacity-80" />
+              <FolderLock className="w-8 h-8 text-cyan-400 mx-auto opacity-80" aria-hidden="true" />
               <p className="text-sm font-semibold text-white">
                 Đăng nhập để sử dụng Kho tệp cá nhân riêng tư
               </p>
@@ -1982,14 +2380,14 @@ export default function AiCoachAndCommunityView({
               <button
                 type="button"
                 onClick={onOpenAuth}
-                className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs"
+                className="min-h-10 px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs"
               >
                 Đăng nhập tài khoản
               </button>
             </div>
           ) : r2Loading ? (
             <div className="py-10 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+              <Loader2 className="w-4 h-4 animate-spin text-cyan-400" aria-hidden="true" />
               <span>Đang tải danh sách tệp cá nhân...</span>
             </div>
           ) : r2Files.length === 0 ? (
@@ -2001,9 +2399,9 @@ export default function AiCoachAndCommunityView({
               {r2Files.map((file) => (
                 <div
                   key={file.id}
-                  className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs"
+                  className="px-3.5 sm:px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs"
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="font-semibold text-white truncate max-w-[360px]">
                       {file.filename}
                     </div>
@@ -2014,21 +2412,31 @@ export default function AiCoachAndCommunityView({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {file.kind === "video" && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewVaultFile(file)}
+                        className="min-h-10 px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 font-semibold inline-flex items-center gap-1.5 transition"
+                      >
+                        <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Xem video</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => handleDownloadR2File(file)}
-                      className="px-3 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.15] border border-white/10 text-cyan-200 font-medium inline-flex items-center gap-1 transition"
+                      className="min-h-10 px-3 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.15] border border-white/10 text-cyan-200 font-medium inline-flex items-center gap-1.5 transition"
                     >
-                      <Download className="w-3.5 h-3.5" />
+                      <Download className="w-3.5 h-3.5" aria-hidden="true" />
                       <span>Tải xuống</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => handleDeleteR2File(file)}
-                      className="px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-400/30 text-rose-300 font-medium inline-flex items-center gap-1 transition"
+                      className="min-h-10 px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-400/30 text-rose-300 font-medium inline-flex items-center gap-1.5 transition"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                       <span>Xóa</span>
                     </button>
                   </div>
@@ -2038,6 +2446,12 @@ export default function AiCoachAndCommunityView({
           )}
         </div>
       )}
+
+      <VaultVideoPreviewModal
+        file={previewVaultFile}
+        onClose={() => setPreviewVaultFile(null)}
+        onDownload={handleDownloadR2File}
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { GET as listFiles } from "@/app/api/files/route";
 import { POST as initUpload } from "@/app/api/files/upload-url/route";
 import { POST as completeUpload } from "@/app/api/files/complete/route";
 import { GET as getDownloadUrl } from "@/app/api/files/[id]/download/route";
+import { GET as getViewUrl } from "@/app/api/files/[id]/view/route";
 import { GET as downloadBlob, PUT as putBlob } from "@/app/api/files/mock-blob/route";
 import { getAuthenticatedServerContext } from "@/lib/supabase/authServer";
 import { getObjectStorageAdapter } from "../storageAdapter";
@@ -152,4 +153,137 @@ it("identifies a browser-to-R2 request failure without calling complete", async 
 
   expect(message).toContain("CORS");
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+describe("Private video view endpoint & inline streaming", () => {
+  it.each([
+    ["solve.webm", "video/webm", new Uint8Array([26, 69, 223, 163, 1, 2, 3, 4])],
+    ["solve.mp4", "video/mp4", new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112])],
+  ] as const)(
+    "serves %s (%s) inline with video Content-Type and HTTP Range support",
+    async (name, mime, bytes) => {
+      vi.stubEnv("R2_MOCK", "1");
+      const ownerId = randomUUID();
+      const rows = mockMetadata(ownerId);
+      const origin = "http://localhost:3000";
+      const requestFor = (path: string, headers?: HeadersInit) =>
+        new Request(new URL(path, origin), { headers });
+
+      vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+        const url = new URL(input, origin);
+        const request = new Request(url, init);
+        if (url.pathname.endsWith("/upload-url")) return initUpload(request);
+        if (url.pathname.endsWith("/mock-blob")) return putBlob(request);
+        return completeUpload(request);
+      });
+
+      try {
+        const blob = new Blob([bytes], { type: mime });
+        expect(await uploadPrivateFile(blob, name, "video")).toBeNull();
+        const fileId = String(rows[0].id);
+
+        // Owner receives a short-lived inline view URL
+        const viewRes = await getViewUrl(requestFor(`/api/files/${fileId}/view`), {
+          params: Promise.resolve({ id: fileId }),
+        });
+        expect(viewRes.status).toBe(200);
+        const { viewUrl, expiresInSec, contentType } = await viewRes.json();
+        expect(expiresInSec).toBe(300);
+        expect(contentType).toBe(mime);
+
+        // Full inline GET returns video Content-Type & inline disposition
+        const full = await downloadBlob(requestFor(viewUrl));
+        expect(full.status).toBe(200);
+        expect(full.headers.get("Content-Type")).toBe(mime);
+        expect(full.headers.get("Content-Disposition")).toContain("inline");
+        expect(full.headers.get("Accept-Ranges")).toBe("bytes");
+
+        // Partial Range GET supports seeking
+        const partial = await downloadBlob(
+          requestFor(viewUrl, { Range: "bytes=2-5" })
+        );
+        expect(partial.status).toBe(206);
+        expect(partial.headers.get("Content-Range")).toBe(`bytes 2-5/${bytes.length}`);
+        expect(new Uint8Array(await partial.arrayBuffer())).toEqual(bytes.slice(2, 6));
+
+        // Expired URL is rejected
+        const expiredUrl = new URL(viewUrl);
+        expiredUrl.searchParams.set("exp", "1");
+        const expiredRes = await downloadBlob(requestFor(expiredUrl.toString()));
+        expect(expiredRes.status).toBe(403);
+
+        // Another user cannot view owner's video
+        vi.mocked(getAuthenticatedServerContext).mockResolvedValueOnce({
+          user: { id: randomUUID() },
+          supabase: (await getAuthenticatedServerContext(requestFor("/")))!.supabase,
+        } as unknown as NonNullable<Awaited<ReturnType<typeof getAuthenticatedServerContext>>>);
+        const otherRes = await getViewUrl(requestFor(`/api/files/${fileId}/view`), {
+          params: Promise.resolve({ id: fileId }),
+        });
+        expect(otherRes.status).toBe(404);
+
+        // Unauthenticated request is rejected
+        vi.mocked(getAuthenticatedServerContext).mockResolvedValueOnce(null);
+        const anonRes = await getViewUrl(requestFor(`/api/files/${fileId}/view`), {
+          params: Promise.resolve({ id: fileId }),
+        });
+        expect(anonRes.status).toBe(401);
+      } finally {
+        for (const row of rows) {
+          await getObjectStorageAdapter()?.deleteObject(row.object_key);
+        }
+      }
+    }
+  );
+
+  it("rejects non-video backup files on the view endpoint", async () => {
+    vi.stubEnv("R2_MOCK", "1");
+    const rows = mockMetadata(randomUUID());
+    const origin = "http://localhost:3000";
+    const requestFor = (path: string) => new Request(new URL(path, origin));
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const url = new URL(input, origin);
+      const request = new Request(url, init);
+      if (url.pathname.endsWith("/upload-url")) return initUpload(request);
+      if (url.pathname.endsWith("/mock-blob")) return putBlob(request);
+      return completeUpload(request);
+    });
+
+    try {
+      const blob = new Blob(['{"solves":[]}'], { type: "application/json" });
+      expect(await uploadPrivateFile(blob, "backup.json", "backup")).toBeNull();
+      const fileId = String(rows[0].id);
+      const viewRes = await getViewUrl(requestFor(`/api/files/${fileId}/view`), {
+        params: Promise.resolve({ id: fileId }),
+      });
+      expect(viewRes.status).toBe(400);
+    } finally {
+      for (const row of rows) {
+        await getObjectStorageAdapter()?.deleteObject(row.object_key);
+      }
+    }
+  });
+
+  it("signs R2 inline view URLs with ResponseContentDisposition=inline and ResponseContentType", async () => {
+    vi.stubEnv("R2_MOCK", "0");
+    vi.stubEnv("R2_ACCOUNT_ID", "test-account");
+    vi.stubEnv("R2_ACCESS_KEY_ID", "test-access-key");
+    vi.stubEnv("R2_SECRET_ACCESS_KEY", "test-secret-key");
+    vi.stubEnv("R2_BUCKET_NAME", "test-bucket");
+
+    const adapter = getObjectStorageAdapter()!;
+    expect(adapter.mode).toBe("r2");
+    const { downloadUrl } = await adapter.createPresignedGetUrl({
+      objectKey: "users/test-user/clip.mp4",
+      fileName: "clip.mp4",
+      origin: "http://localhost:3000",
+      disposition: "inline",
+      contentType: "video/mp4",
+    });
+
+    const params = new URL(downloadUrl).searchParams;
+    expect(params.get("response-content-disposition")).toBe('inline; filename="clip.mp4"');
+    expect(params.get("response-content-type")).toBe("video/mp4");
+    expect(params.has("X-Amz-Signature")).toBe(true);
+  });
 });

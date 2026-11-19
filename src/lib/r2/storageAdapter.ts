@@ -48,6 +48,8 @@ export interface ObjectStorageAdapter {
     objectKey: string;
     fileName: string;
     origin: string;
+    disposition?: "attachment" | "inline";
+    contentType?: string;
   }): Promise<{ downloadUrl: string; expiresInSec: number }>;
   deleteObject(objectKey: string): Promise<void>;
 }
@@ -183,13 +185,29 @@ function createMockAdapter(): ObjectStorageAdapter {
         return { exists: false, sizeBytes: 0 };
       }
     },
-    async createPresignedGetUrl({ objectKey, fileName, origin }) {
+    async createPresignedGetUrl({
+      objectKey,
+      fileName,
+      origin,
+      disposition = "attachment",
+      contentType,
+    }) {
       const expiresInSec = 300;
       const exp = Math.floor(Date.now() / 1000) + expiresInSec;
       const sig = signMockToken(objectKey, "get", exp);
-      const url = `${origin}/api/files/mock-blob?key=${encodeURIComponent(
-        objectKey
-      )}&name=${encodeURIComponent(fileName)}&exp=${exp}&sig=${sig}`;
+      const params = new URLSearchParams({
+        key: objectKey,
+        name: fileName,
+        exp: String(exp),
+        sig,
+      });
+      if (disposition === "inline") {
+        params.set("disposition", "inline");
+      }
+      if (contentType) {
+        params.set("type", contentType);
+      }
+      const url = `${origin}/api/files/mock-blob?${params.toString()}`;
       return { downloadUrl: url, expiresInSec };
     },
     async deleteObject(objectKey) {
@@ -257,15 +275,19 @@ function createR2Adapter(): ObjectStorageAdapter {
         return { exists: false, sizeBytes: 0 };
       }
     },
-    async createPresignedGetUrl({ objectKey, fileName }) {
+    async createPresignedGetUrl({
+      objectKey,
+      fileName,
+      disposition = "attachment",
+      contentType,
+    }) {
       const expiresInSec = 300;
+      const safeFileName = fileName.replace(/["\r\n]/g, "");
       const cmd = new GetObjectCommand({
         Bucket: bucket,
         Key: objectKey,
-        ResponseContentDisposition: `attachment; filename="${fileName.replace(
-          /"/g,
-          ""
-        )}"`,
+        ResponseContentDisposition: `${disposition}; filename="${safeFileName}"`,
+        ...(contentType ? { ResponseContentType: contentType } : {}),
       });
       const downloadUrl = await getSignedUrl(client, cmd, {
         expiresIn: expiresInSec,
