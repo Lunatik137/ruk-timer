@@ -159,6 +159,8 @@ export default function CfopTrainerView({
   const [drillMs, setDrillMs] = useState<number>(0);
   const [isDrillPb, setIsDrillPb] = useState(false);
 
+  const drillPadRef = useRef<HTMLDivElement | null>(null);
+  const pressedKeyRef = useRef<string | null>(null);
   const drillPhaseRef = useRef<DrillPhase>("idle");
   const startTimeRef = useRef<number>(0);
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -611,21 +613,37 @@ export default function CfopTrainerView({
     }
   }, [setDrillPhaseBoth]);
 
-  // Keyboard listener when Drill Modal is open
-  useEffect(() => {
-    if (!drillingAlg) return;
+  const cancelPendingPress = useCallback(() => {
+    pressedKeyRef.current = null;
+    if (drillPhaseRef.current === "running") return;
+    stopDrillLoops();
+    setDrillPhaseBoth("idle");
+  }, [setDrillPhaseBoth, stopDrillLoops]);
 
-    const isTyping = (target: EventTarget | null) => {
-      if (!(target instanceof HTMLElement)) return false;
-      const tag = target.tagName.toLowerCase();
-      return tag === "input" || tag === "textarea" || tag === "select";
+  const drillOpen = drillingAlg !== null;
+  useEffect(() => {
+    if (!drillOpen) return;
+    const previousFocus = document.activeElement;
+    drillPadRef.current?.focus({ preventScroll: true });
+    return () => {
+      pressedKeyRef.current = null;
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus({ preventScroll: true });
+      }
     };
+  }, [drillOpen]);
+
+  useEffect(() => {
+    if (!drillOpen) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (isTyping(e.target)) return;
+      if (e.defaultPrevented || e.isComposing) return;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target?.matches("input, textarea, select") || target?.isContentEditable) return;
 
       if (e.key === "Escape") {
         e.preventDefault();
+        pressedKeyRef.current = null;
         if (drillPhaseRef.current !== "idle") {
           stopDrillLoops();
           setDrillPhaseBoth("idle");
@@ -635,47 +653,33 @@ export default function CfopTrainerView({
         return;
       }
 
-      if (drillPhaseRef.current === "running") {
-        if (!e.altKey && !e.ctrlKey && !e.metaKey) {
-          e.preventDefault();
-          handleDrillPressDown();
-        }
-        return;
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      if (drillPhaseRef.current !== "running") {
+        if (e.code !== "Space" || target?.closest("button, a[href], [role='button'], summary")) return;
       }
 
-      if (e.code === "Space") {
-        e.preventDefault();
-        if (e.repeat) return;
-        handleDrillPressDown();
-      }
+      e.preventDefault();
+      if (e.repeat || pressedKeyRef.current !== null) return;
+      pressedKeyRef.current = e.code;
+      handleDrillPressDown();
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (isTyping(e.target)) return;
-      if (drillPhaseRef.current === "just_stopped") {
-        e.preventDefault();
-        handleDrillPressUp();
-        return;
-      }
-      if (e.code === "Space") {
-        e.preventDefault();
-        handleDrillPressUp();
-      }
+      if (pressedKeyRef.current !== e.code) return;
+      e.preventDefault();
+      pressedKeyRef.current = null;
+      handleDrillPressUp();
     };
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", cancelPendingPress);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", cancelPendingPress);
     };
-  }, [
-    drillingAlg,
-    handleDrillPressDown,
-    handleDrillPressUp,
-    setDrillPhaseBoth,
-    stopDrillLoops,
-  ]);
+  }, [cancelPendingPress, drillOpen, handleDrillPressDown, handleDrillPressUp, setDrillPhaseBoth, stopDrillLoops]);
 
   const copyFormula = async (id: string, text: string) => {
     try {
@@ -1703,8 +1707,11 @@ export default function CfopTrainerView({
 
             {/* Interactive Spacebar / Touch Drill Pad */}
             <div
-              role="button"
-              tabIndex={-1}
+              ref={drillPadRef}
+              role="group"
+              aria-label="Vùng bấm giờ CFOP"
+              tabIndex={0}
+              onTouchCancel={cancelPendingPress}
               onTouchStart={(e) => {
                 if ((e.target as HTMLElement).closest("[data-drill-action]"))
                   return;

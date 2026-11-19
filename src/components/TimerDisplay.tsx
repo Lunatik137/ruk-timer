@@ -122,6 +122,7 @@ export default function TimerDisplay({
   const startTimeRef = useRef<number>(0);
   const inspectStartRef = useRef<number>(0);
   const inspectPenaltyRef = useRef<PenaltyType>("OK");
+  const pressedKeyRef = useRef<string | null>(null);
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rafRef = useRef<number | null>(null);
   const inspectIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -145,15 +146,16 @@ export default function TimerDisplay({
     [onPhaseChange]
   );
 
-  // Keep mobile screen awake during inspection and solving
+  // Keep the same lock as the timer moves through inspection and a solve.
+  const keepScreenAwake =
+    phase === "inspecting" ||
+    phase === "running" ||
+    phase === "holding" ||
+    phase === "ready";
+
   useEffect(() => {
-    const active =
-      phase === "inspecting" ||
-      phase === "running" ||
-      phase === "holding" ||
-      phase === "ready";
     if (
-      !active ||
+      !keepScreenAwake ||
       typeof navigator === "undefined" ||
       !("wakeLock" in navigator)
     ) {
@@ -161,6 +163,7 @@ export default function TimerDisplay({
     }
 
     let sentinel: { release: () => Promise<void> } | null = null;
+    let cancelled = false;
     const nav = navigator as unknown as {
       wakeLock: {
         request: (type: "screen") => Promise<{ release: () => Promise<void> }>;
@@ -169,14 +172,16 @@ export default function TimerDisplay({
     nav.wakeLock
       .request("screen")
       .then((lock) => {
+        if (cancelled) return lock.release();
         sentinel = lock;
       })
       .catch(() => {});
 
     return () => {
+      cancelled = true;
       sentinel?.release().catch(() => {});
     };
-  }, [phase]);
+  }, [keepScreenAwake]);
 
   // Sync display when lastSolve updates externally
   useEffect(() => {
@@ -442,76 +447,62 @@ export default function TimerDisplay({
     updatePhase,
   ]);
 
-  // Global Keyboard Listeners
-  useEffect(() => {
-    if (settings.manualInput || isModalOpen) return;
+  const cancelPendingPress = useCallback(() => {
+    pressedKeyRef.current = null;
+    clearHoldTimeout();
+    const current = phaseRef.current;
+    if (current === "holding" || current === "ready" || current === "ready_inspect") {
+      updatePhase(inspectIntervalRef.current !== null ? "inspecting" : "idle");
+    } else if (current === "just_stopped") {
+      updatePhase("idle");
+    }
+  }, [updatePhase]);
 
-    const isTypingInInput = (target: EventTarget | null) => {
-      if (!(target instanceof HTMLElement)) return false;
-      const tag = target.tagName.toLowerCase();
-      return (
-        tag === "input" ||
-        tag === "textarea" ||
-        tag === "select" ||
-        target.isContentEditable
-      );
-    };
+  useEffect(() => {
+    if (settings.manualInput || isModalOpen) {
+      cancelPendingPress();
+      return;
+    }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (isTypingInInput(e.target)) return;
+      if (e.defaultPrevented || e.isComposing) return;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target?.matches("input, textarea, select") || target?.isContentEditable) return;
 
-      if (e.key === "Escape") {
-        if (phaseRef.current !== "idle") {
-          e.preventDefault();
-          cancelEverything();
-        }
-        return;
-      }
-
-      if (phaseRef.current === "running") {
-        if (!e.altKey && !e.ctrlKey && !e.metaKey) {
-          if (e.repeat) return;
-          e.preventDefault();
-          handlePressDown();
-        }
-        return;
-      }
-
-      if (e.code === "Space") {
+      if (e.key === "Escape" && phaseRef.current !== "idle") {
         e.preventDefault();
-        if (e.repeat) return;
-        handlePressDown();
+        pressedKeyRef.current = null;
+        cancelEverything();
+        return;
       }
+
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      if (phaseRef.current !== "running") {
+        if (e.code !== "Space" || target?.closest("button, a[href], [role='button'], summary")) return;
+      }
+
+      e.preventDefault();
+      if (e.repeat || pressedKeyRef.current !== null) return;
+      pressedKeyRef.current = e.code;
+      handlePressDown();
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (isTypingInInput(e.target)) return;
-
-      if (phaseRef.current === "just_stopped") {
-        e.preventDefault();
-        handlePressUp();
-        return;
-      }
-
-      if (e.code === "Space") {
-        e.preventDefault();
-        handlePressUp();
-      }
+      if (pressedKeyRef.current !== e.code) return;
+      e.preventDefault();
+      pressedKeyRef.current = null;
+      handlePressUp();
     };
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", cancelPendingPress);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", cancelPendingPress);
     };
-  }, [
-    cancelEverything,
-    handlePressDown,
-    handlePressUp,
-    isModalOpen,
-    settings.manualInput,
-  ]);
+  }, [cancelEverything, cancelPendingPress, handlePressDown, handlePressUp, isModalOpen, settings.manualInput]);
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -757,8 +748,10 @@ export default function TimerDisplay({
       ) : (
         /* Interactive Touch / Spacebar Zone */
         <div
-          role="button"
-          tabIndex={-1}
+          role="group"
+          aria-label="Vùng bấm giờ"
+          tabIndex={0}
+          onTouchCancel={cancelPendingPress}
           onTouchStart={(e) => {
             if ((e.target as HTMLElement).closest("[data-timer-action]")) return;
             e.preventDefault();
