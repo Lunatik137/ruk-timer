@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { checkBurstLimit } from "@/lib/ai/quota";
+import { getAuthenticatedServerContext } from "@/lib/supabase/authServer";
 
 const GEMINI_MODEL_FALLBACK_CHAIN = [
   "gemini-3.8-flash",
@@ -6,17 +8,106 @@ const GEMINI_MODEL_FALLBACK_CHAIN = [
   "gemini-flash-lite-latest",
 ] as const;
 
+const DAILY_QUOTA_LIMIT = Number(process.env.AI_DAILY_QUOTA_LIMIT || 30);
+const MAX_BODY_BYTES = 32_768;
+const MAX_QUESTION_CHARS = 500;
+const MODEL_TIMEOUT_MS = 6_000;
+
 /**
- * Hybrid AI Coach & CFOP Tutor API Endpoint (`/api/ai/coach`).
- * - Protects API keys strictly on the server via `x-goog-api-key` header (never exposed to browser bundle or URL logs).
- * - Uses verified fast Gemini Flash Lite / Flash models with automatic fallback chain.
- * - Grounded on 100% deterministic math metrics computed by `src/lib/analytics/coach.ts`.
- * - Gracefully falls back to the Deterministic Speedcubing Engine if API key is missing or unreachable.
+ * Authenticated, quota-enforced Hybrid AI Coach & CFOP Tutor API (`/api/ai/coach`).
+ * - Requires a valid Supabase session (cookie or Bearer token); returns 401 for Guest.
+ * - Enforces burst rate limit + Postgres daily quota (`consume_ai_quota` RPC).
+ * - Protects `GEMINI_API_KEY` strictly on server via `x-goog-api-key` header.
+ * - Never blocks Timer or CFOP Trainer when quota is exhausted or upstream fails.
  */
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { mode, deterministicReport, algContext, userQuestion } = body ?? {};
+    const contentLength = Number(request.headers.get("content-length") || 0);
+    if (contentLength > MAX_BODY_BYTES) {
+      return NextResponse.json(
+        {
+          code: "payload_too_large",
+          error: "Dữ liệu gửi lên vượt quá giới hạn cho phép.",
+        },
+        { status: 413 }
+      );
+    }
+
+    const auth = await getAuthenticatedServerContext(request);
+    if (!auth) {
+      return NextResponse.json(
+        {
+          code: "guest",
+          source: "deterministic-engine",
+          aiEnhancedText: null,
+          error:
+            "Đăng nhập để dùng tư vấn Gemini AI. Ở chế độ Guest bạn vẫn xem được đầy đủ báo cáo Coach tính từ dữ liệu lượt giải.",
+        },
+        { status: 401 }
+      );
+    }
+
+    const burst = checkBurstLimit(auth.user.id);
+    if (!burst.allowed) {
+      return NextResponse.json(
+        {
+          code: "rate_limited",
+          source: "deterministic-fallback",
+          aiEnhancedText: null,
+          error: `Bạn gửi yêu cầu quá nhanh. Vui lòng thử lại sau ${burst.retryAfterSec} giây.`,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(burst.retryAfterSec) },
+        }
+      );
+    }
+
+    // Enforce per-user daily quota via Supabase RPC (non-blocking if RPC isn't migrated yet)
+    let remainingQuota: number | null = null;
+    try {
+      const { data: quotaRows, error: quotaErr } = await auth.supabase.rpc(
+        "consume_ai_quota",
+        { p_daily_limit: DAILY_QUOTA_LIMIT }
+      );
+      if (!quotaErr && Array.isArray(quotaRows) && quotaRows[0]) {
+        const row = quotaRows[0] as {
+          allowed: boolean;
+          used_count: number;
+          remaining: number;
+        };
+        remainingQuota = row.remaining;
+        if (!row.allowed) {
+          return NextResponse.json(
+            {
+              code: "quota",
+              source: "deterministic-fallback",
+              aiEnhancedText: null,
+              remainingQuota: 0,
+              error: `Bạn đã dùng hết hạn mức ${DAILY_QUOTA_LIMIT} lượt tư vấn AI hôm nay. Báo cáo chẩn đoán từ dữ liệu vẫn hoạt động bình thường.`,
+            },
+            { status: 429 }
+          );
+        }
+      }
+    } catch {
+      // Allow graceful fallback if DB migration hasn't been applied yet
+    }
+
+    const rawText = await request.text();
+    if (rawText.length > MAX_BODY_BYTES) {
+      return NextResponse.json(
+        { code: "payload_too_large", error: "Nội dung yêu cầu quá lớn." },
+        { status: 413 }
+      );
+    }
+
+    const body = JSON.parse(rawText || "{}");
+    const { mode, deterministicReport, algContext } = body ?? {};
+    const userQuestion =
+      typeof body?.userQuestion === "string"
+        ? body.userQuestion.trim().slice(0, MAX_QUESTION_CHARS)
+        : "";
 
     const apiKey =
       process.env.GEMINI_API_KEY ||
@@ -25,8 +116,10 @@ export async function POST(request: Request) {
 
     if (!apiKey) {
       return NextResponse.json({
+        code: "no_key",
         source: "deterministic-engine",
         aiEnhancedText: null,
+        remainingQuota,
         message:
           "Đang sử dụng Động cơ Chẩn đoán Toán học Xác định (Deterministic Speedcubing Engine).",
       });
@@ -35,7 +128,7 @@ export async function POST(request: Request) {
     const systemPrompt =
       mode === "tutor"
         ? "Bạn là Huấn luyện viên Speedcubing WCA & Gia sư CFOP chuyên nghiệp của RukTimer. Hãy giải thích ngắn gọn bằng tiếng Việt tự nhiên, giữ nguyên các thuật ngữ quốc tế (CFOP, F2L, OLL, PLL, Trigger, Sexy Move, Sledgehammer, AUF, TPS, Lookahead, Fingertrick, Regrip). Tuyệt đối không bịa công thức ngoài công thức đã cung cấp."
-        : "Bạn là AI Practice Coach của RukTimer. Dưới đây là số liệu thống kê WCA đã được tính toán chính xác 100% bằng thuật toán toán học. Tuyệt đối KHÔNG tự tính lại các con số. Hãy dựa vào số liệu này để đưa ra lời khuyên chuyên môn ngắn gọn, súc tích (tối đa 4 gạch đầu dòng) bằng tiếng Việt giúp người chơi cải thiện thành tích.";
+        : "Bạn là AI Practice Coach của RukTimer. Dưới đây là số liệu thống kê WCA đã được tính toán chính xác 100% bằng thuật toán toán học. Tuyệt đối KHÔNG tự tính lại các con số và KHÔNG đưa kết luận mạnh nếu số mẫu ít. Hãy dựa vào số liệu này để đưa ra lời khuyên chuyên môn ngắn gọn, súc tích (tối đa 4 gạch đầu dòng) bằng tiếng Việt.";
 
     const userContent =
       mode === "tutor"
@@ -76,6 +169,7 @@ export async function POST(request: Request) {
             "x-goog-api-key": apiKey,
           },
           body: requestBody,
+          signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
         });
 
         if (!res.ok) continue;
@@ -86,8 +180,10 @@ export async function POST(request: Request) {
 
         if (text) {
           return NextResponse.json({
+            code: "ok",
             source: model,
             aiEnhancedText: text,
+            remainingQuota,
           });
         }
       } catch {
@@ -96,11 +192,16 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
+      code: "upstream_unavailable",
       source: "deterministic-fallback",
       aiEnhancedText: null,
+      remainingQuota,
+      message:
+        "Dịch vụ Gemini tạm thời bận, đã tự động chuyển về báo cáo Coach từ dữ liệu lượt giải.",
     });
   } catch {
     return NextResponse.json({
+      code: "error",
       source: "deterministic-fallback",
       aiEnhancedText: null,
     });

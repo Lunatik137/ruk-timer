@@ -2,13 +2,17 @@
 
 import React, { useEffect, useRef } from "react";
 import {
+  AlertTriangle,
+  CheckCircle2,
   Download,
   FileJson,
   FileSpreadsheet,
+  Loader2,
   Sliders,
   Upload,
   X,
 } from "lucide-react";
+import type { ImportPlan } from "@/lib/storage";
 import {
   SplitMode,
   ThemeId,
@@ -24,6 +28,11 @@ interface SettingsModalProps {
   onExportJson: () => void;
   onExportCsv: () => void;
   onImportJsonFile: (file: File) => void;
+  pendingImportPlan?: ImportPlan | null;
+  importFileName?: string | null;
+  isImporting?: boolean;
+  onConfirmImport?: () => void;
+  onCancelImport?: () => void;
 }
 
 const THEMES: { id: ThemeId; label: string; preview: string }[] = [
@@ -57,6 +66,11 @@ export default function SettingsModal({
   onExportJson,
   onExportCsv,
   onImportJsonFile,
+  pendingImportPlan = null,
+  importFileName = null,
+  isImporting = false,
+  onConfirmImport,
+  onCancelImport,
 }: SettingsModalProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -406,6 +420,96 @@ export default function SettingsModal({
                 }}
               />
             </div>
+
+            {pendingImportPlan && (
+              <div className="rounded-xl bg-slate-950/90 border border-cyan-500/35 p-3.5 space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold text-cyan-300 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>
+                        Xem trước bản nhập ({pendingImportPlan.sourceFormat})
+                      </span>
+                    </div>
+                    {importFileName && (
+                      <div className="text-[11px] text-slate-400 mt-0.5 truncate max-w-[320px]">
+                        Tệp: {importFileName}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="rounded-lg bg-white/[0.04] border border-white/10 p-2">
+                    <div className="text-[10px] text-slate-400">Phiên mới</div>
+                    <div className="font-mono font-bold text-white">
+                      +{pendingImportPlan.newSessions.length}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/25 p-2">
+                    <div className="text-[10px] text-emerald-300">Lượt mới</div>
+                    <div className="font-mono font-bold text-emerald-200">
+                      +{pendingImportPlan.newSolves.length}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.04] border border-white/10 p-2">
+                    <div className="text-[10px] text-slate-400">Trùng (bỏ qua)</div>
+                    <div className="font-mono font-bold text-slate-300">
+                      {pendingImportPlan.duplicateSolves}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.04] border border-white/10 p-2">
+                    <div className="text-[10px] text-slate-400">Dòng lỗi</div>
+                    <div className="font-mono font-bold text-amber-300">
+                      {pendingImportPlan.invalidRows}
+                    </div>
+                  </div>
+                </div>
+
+                {(pendingImportPlan.cfopProgressCount > 0 ||
+                  pendingImportPlan.practiceSetCount > 0) && (
+                  <div className="text-[11px] text-slate-300">
+                    Kèm tiến độ CFOP:{" "}
+                    <strong>{pendingImportPlan.cfopProgressCount}</strong> mục • Bộ
+                    luyện tùy chọn:{" "}
+                    <strong>{pendingImportPlan.practiceSetCount}</strong> case.
+                  </div>
+                )}
+
+                {pendingImportPlan.warnings.length > 0 && (
+                  <div className="rounded-lg bg-amber-500/10 border border-amber-500/25 p-2 text-[11px] text-amber-200 flex items-start gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{pendingImportPlan.warnings.join(" • ")}</span>
+                  </div>
+                )}
+
+                <p className="text-[11px] text-slate-400">
+                  Chế độ nhập gộp an toàn (không xóa dữ liệu hiện có). Các lượt trùng ID hoặc trùng dấu vân tay sẽ tự động bỏ qua.
+                </p>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={isImporting}
+                    onClick={onCancelImport}
+                    className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-medium transition disabled:opacity-50"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isImporting}
+                    onClick={onConfirmImport}
+                    className="px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-semibold inline-flex items-center gap-1.5 transition disabled:opacity-60"
+                  >
+                    {isImporting && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    )}
+                    <span>Xác nhận nhập dữ liệu</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Keyboard Shortcuts Cheatsheet */}

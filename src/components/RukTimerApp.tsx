@@ -16,6 +16,7 @@ import AiCoachAndCommunityView, {
 } from "@/components/AiCoachAndCommunityView";
 import AuthModal from "@/components/AuthModal";
 import CfopTrainerView from "@/components/CfopTrainerView";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import CubeNetPreview from "@/components/CubeNetPreview";
 import Header, { MainAppView } from "@/components/Header";
 import HistoryPanel from "@/components/HistoryPanel";
@@ -30,6 +31,12 @@ import TimerDisplay, { TimerPhase } from "@/components/TimerDisplay";
 import { PracticeRecommendation } from "@/lib/analytics/coach";
 import { CfopAlgorithm, getCfopSessionName } from "@/lib/cfop";
 import {
+  createF2lWorkout,
+  evaluateWorkoutOutcome,
+  recordWorkoutSolve,
+  type GuidedWorkoutState,
+} from "@/lib/core/workout";
+import {
   generateScramble,
   generateTrainingSubsetScramble,
   invertAlgorithm,
@@ -39,6 +46,7 @@ import {
   calculateSessionStats,
   computeSessionFatigueAlert,
   computeStreakAndHeatmap,
+  formatSolveDisplay,
   getEffectiveMs,
 } from "@/lib/stats";
 import {
@@ -47,6 +55,7 @@ import {
   cloudDeleteSolve,
   cloudInsertSession,
   cloudInsertSolve,
+  cloudSavePracticeSet,
   cloudSaveUserSettings,
   cloudUpdateSession,
   cloudUpdateSolve,
@@ -58,18 +67,26 @@ import {
   flushSyncOutbox,
   generateUuid,
   getGuestSolveCount,
+  getPendingOutboxCount,
   loadActiveSessionId,
   loadGuestData,
+  loadGuidedWorkoutRaw,
   loadLocalCfopProgress,
+  loadLocalPracticeSet,
   loadLocalSettings,
-  loadSyncOutbox,
-  parseUniversalImport,
+  loadUserLocalCache,
+  parseBackup,
+  planImport,
   saveActiveSessionId,
   saveGuestSessions,
   saveGuestSolves,
+  saveGuidedWorkoutRaw,
   saveLocalCfopProgress,
+  saveLocalPracticeSet,
   saveLocalSettings,
+  saveUserLocalCache,
   syncGuestToCloud,
+  type ImportPlan,
 } from "@/lib/storage";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
@@ -78,6 +95,7 @@ import {
   DEFAULT_SETTINGS,
   PenaltyType,
   PuzzleType,
+  ScrambleSource,
   Solve,
   ThemeId,
   TimerSettings,
@@ -104,13 +122,52 @@ export default function RukTimerApp() {
   const [cfopProgress, setCfopProgress] = useState<
     Record<string, CfopProgressItem>
   >({});
+  const [practiceSetIds, setPracticeSetIds] = useState<string[]>([]);
+  const [guidedWorkout, setGuidedWorkout] = useState<GuidedWorkoutState | null>(
+    null
+  );
 
   const [trainingSubset, setTrainingSubset] = useState<TrainingSubset>("wca");
   const [scramble, setScramble] = useState<string>("Đang tạo scramble...");
   const [scramblePuzzle, setScramblePuzzle] = useState<PuzzleType>("3x3");
+  const [scrambleSource, setScrambleSource] =
+    useState<ScrambleSource>("random-move");
+  const [isGeneratingScramble, setIsGeneratingScramble] = useState(false);
   const [previousScramble, setPreviousScramble] = useState<string | null>(null);
   const [timerPhase, setTimerPhase] = useState<TimerPhase>("idle");
   const [isNewPb, setIsNewPb] = useState<boolean>(false);
+  const [compModeActive, setCompModeActive] = useState(false);
+  const [compModeTrigger, setCompModeTrigger] = useState(0);
+
+  // Centralized Confirmation Dialog State
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    description: string;
+    scopeNote?: string;
+    confirmLabel?: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+
+  const requestConfirm = useCallback(
+    (req: {
+      title: string;
+      description: string;
+      scopeNote?: string;
+      confirmLabel?: string;
+      onConfirm: () => void | Promise<void>;
+    }) => {
+      setConfirmState(req);
+    },
+    []
+  );
+
+  // Import Preview State
+  const [pendingImportPlan, setPendingImportPlan] = useState<ImportPlan | null>(
+    null
+  );
+  const [importFileName, setImportFileName] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Auth & Cloud Sync State
   const [userId, setUserId] = useState<string | null>(null);
@@ -149,7 +206,13 @@ export default function RukTimerApp() {
 
     const localCfop = loadLocalCfopProgress();
     setCfopProgress(localCfop);
-    setOutboxCount(loadSyncOutbox().length);
+    setPracticeSetIds(loadLocalPracticeSet());
+    try {
+      const rawWorkout = loadGuidedWorkoutRaw();
+      if (rawWorkout) setGuidedWorkout(JSON.parse(rawWorkout));
+    } catch {
+      // ignore corrupt workout
+    }
 
     const guest = loadGuestData();
     const savedActiveId = loadActiveSessionId();
@@ -160,6 +223,7 @@ export default function RukTimerApp() {
     setActiveSessionId(validSession.id);
     setSolves(guest.solves);
     setScramble(generateScramble(validSession.puzzle));
+    setScramblePuzzle(validSession.puzzle);
     setMounted(true);
 
     const supabase = getSupabaseBrowserClient();
@@ -171,9 +235,17 @@ export default function RukTimerApp() {
       setGuestPendingCount(getGuestSolveCount());
       setSyncStatus("syncing");
 
-      // First flush any pending offline mutations
-      await flushSyncOutbox(uid);
-      setOutboxCount(loadSyncOutbox().length);
+      // Load per-user offline cache immediately so app stays usable even without internet
+      const cached = loadUserLocalCache(uid);
+      if (cached) {
+        setSessions(cached.sessions);
+        setSolves(cached.solves);
+        setCfopProgress(cached.cfopProgress);
+        setPracticeSetIds(cached.practiceSetIds);
+      }
+
+      const flushRes = await flushSyncOutbox(uid);
+      setOutboxCount(flushRes.remainingCount);
 
       const res = await fetchCloudData(uid);
       if (res.error) {
@@ -185,13 +257,25 @@ export default function RukTimerApp() {
       setSessions(res.sessions);
       setSolves(res.solves);
 
-      if (res.cfopProgress && Object.keys(res.cfopProgress).length > 0) {
-        setCfopProgress((prev) => {
-          const merged = { ...prev, ...res.cfopProgress };
-          saveLocalCfopProgress(merged);
-          return merged;
-        });
-      }
+      const nextCfop =
+        res.cfopProgress && Object.keys(res.cfopProgress).length > 0
+          ? { ...loadLocalCfopProgress(), ...res.cfopProgress }
+          : loadLocalCfopProgress();
+      setCfopProgress(nextCfop);
+      saveLocalCfopProgress(nextCfop);
+
+      const nextPracticeSet = Array.isArray(res.practiceSetIds)
+        ? res.practiceSetIds
+        : loadLocalPracticeSet();
+      setPracticeSetIds(nextPracticeSet);
+      saveLocalPracticeSet(nextPracticeSet);
+
+      saveUserLocalCache(uid, {
+        sessions: res.sessions,
+        solves: res.solves,
+        cfopProgress: nextCfop,
+        practiceSetIds: nextPracticeSet,
+      });
 
       if (res.remoteSettings) {
         setSettings((prev) => {
@@ -207,7 +291,9 @@ export default function RukTimerApp() {
       if (targetSession) {
         setActiveSessionId(targetSession.id);
         setScramble(generateScramble(targetSession.puzzle));
+        setScramblePuzzle(targetSession.puzzle);
       }
+      setOutboxCount(await getPendingOutboxCount(uid));
       setSyncStatus("synced");
     };
 
@@ -242,15 +328,26 @@ export default function RukTimerApp() {
     };
   }, [showToast]);
 
+  // Persist per-user local cache whenever authenticated state changes (offline close/reopen safety)
+  useEffect(() => {
+    if (!mounted || !userId || sessions.length === 0) return;
+    saveUserLocalCache(userId, {
+      sessions,
+      solves,
+      cfopProgress,
+      practiceSetIds,
+    });
+  }, [mounted, userId, sessions, solves, cfopProgress, practiceSetIds]);
+
   // Listen to browser online recovery to automatically flush offline outbox
   useEffect(() => {
     if (!userId || typeof window === "undefined") return;
     const handleOnline = async () => {
-      const flushed = await flushSyncOutbox(userId);
-      setOutboxCount(loadSyncOutbox().length);
-      if (flushed > 0) {
-        setSyncStatus("synced");
-        showToast(`Đã tự động đồng bộ ${flushed} thao tác Offline lên Cloud!`);
+      const res = await flushSyncOutbox(userId);
+      setOutboxCount(res.remainingCount);
+      if (res.flushedCount > 0) {
+        setSyncStatus(res.remainingCount === 0 ? "synced" : "error");
+        showToast(`Đã tự động đồng bộ ${res.flushedCount} thao tác Offline lên Cloud!`);
       }
     };
     window.addEventListener("online", handleOnline);
@@ -329,10 +426,11 @@ export default function RukTimerApp() {
       if (!userId) return;
       setSyncStatus("syncing");
       const err = await task();
-      setOutboxCount(loadSyncOutbox().length);
-      if (err) {
+      const pending = await getPendingOutboxCount(userId);
+      setOutboxCount(pending);
+      if (err || pending > 0) {
         setSyncStatus("error");
-        showToast("Đã lưu vào bộ nhớ đệm Offline (Sẽ tự đồng bộ khi có mạng)");
+        showToast("Đã lưu vào hàng đợi Offline (Sẽ tự đồng bộ khi có mạng)");
       } else {
         setSyncStatus("synced");
       }
@@ -341,7 +439,7 @@ export default function RukTimerApp() {
   );
 
   // ==========================================================================
-  // Scramble Controls
+  // Scramble Controls (with WCA 3x3 Random-State for Competition Mode)
   // ==========================================================================
   const generateNextScrambleForState = useCallback(
     (puzzle: PuzzleType, subset: TrainingSubset) => {
@@ -353,18 +451,54 @@ export default function RukTimerApp() {
     []
   );
 
+  const requestScramble = useCallback(
+    async (
+      targetPuzzle: PuzzleType,
+      targetSubset: TrainingSubset,
+      preferRandomState: boolean
+    ) => {
+      setScramblePuzzle(targetPuzzle);
+      if (
+        preferRandomState &&
+        targetPuzzle === "3x3" &&
+        targetSubset === "wca"
+      ) {
+        setIsGeneratingScramble(true);
+        try {
+          const res = await fetch("/api/scramble?puzzle=3x3");
+          const data = await res.json();
+          if (res.ok && typeof data?.scramble === "string" && data.scramble) {
+            setScramble(data.scramble);
+            setScrambleSource(
+              data.source === "random-state" ? "random-state" : "random-move"
+            );
+            setIsGeneratingScramble(false);
+            return;
+          }
+        } catch {
+          // Fallback to local generator when offline
+        }
+        setIsGeneratingScramble(false);
+      }
+      setScramble(generateNextScrambleForState(targetPuzzle, targetSubset));
+      setScrambleSource("random-move");
+    },
+    [generateNextScrambleForState]
+  );
+
   const handleNextScramble = useCallback(
     (forPuzzle?: PuzzleType, forSubset?: TrainingSubset) => {
       setPreviousScramble(scramble);
       const targetPuzzle = forPuzzle ?? activeSession.puzzle;
       const targetSubset = forSubset ?? trainingSubset;
-      setScramble(generateNextScrambleForState(targetPuzzle, targetSubset));
+      void requestScramble(targetPuzzle, targetSubset, compModeActive);
     },
     [
       scramble,
       activeSession.puzzle,
       trainingSubset,
-      generateNextScrambleForState,
+      compModeActive,
+      requestScramble,
     ]
   );
 
@@ -423,33 +557,62 @@ export default function RukTimerApp() {
       s.id === id ? { ...s, name } : s
     );
     setSessions(nextSessions);
+    const updated = nextSessions.find((s) => s.id === id);
 
-    if (userId) {
-      runCloudMutation(() => cloudUpdateSession(userId, id, { name }));
+    if (userId && updated) {
+      runCloudMutation(() => cloudUpdateSession(userId, updated));
     } else {
       saveGuestSessions(nextSessions);
     }
   };
 
+  const performDeleteSession = useCallback(
+    (id: string) => {
+      if (sessions.length <= 1) return;
+      const nextSessions = sessions.filter((s) => s.id !== id);
+      const nextSolves = solves.filter((sv) => sv.session_id !== id);
+      setSessions(nextSessions);
+      setSolves(nextSolves);
+
+      const fallback = nextSessions[0];
+      setActiveSessionId(fallback.id);
+      saveActiveSessionId(fallback.id);
+      setScramble(generateNextScrambleForState(fallback.puzzle, trainingSubset));
+      setScramblePuzzle(fallback.puzzle);
+
+      if (userId) {
+        runCloudMutation(() => cloudDeleteSession(userId, id));
+      } else {
+        saveGuestSessions(nextSessions);
+        saveGuestSolves(nextSolves);
+      }
+      showToast("Đã xóa phiên giải");
+    },
+    [
+      generateNextScrambleForState,
+      runCloudMutation,
+      sessions,
+      showToast,
+      solves,
+      trainingSubset,
+      userId,
+    ]
+  );
+
   const handleDeleteSession = (id: string) => {
     if (sessions.length <= 1) return;
-    const nextSessions = sessions.filter((s) => s.id !== id);
-    const nextSolves = solves.filter((sv) => sv.session_id !== id);
-    setSessions(nextSessions);
-    setSolves(nextSolves);
-
-    const fallback = nextSessions[0];
-    setActiveSessionId(fallback.id);
-    saveActiveSessionId(fallback.id);
-    setScramble(generateNextScrambleForState(fallback.puzzle, trainingSubset));
-
-    if (userId) {
-      runCloudMutation(() => cloudDeleteSession(userId, id));
-    } else {
-      saveGuestSessions(nextSessions);
-      saveGuestSolves(nextSolves);
-    }
-    showToast("Đã xóa session");
+    const target = sessions.find((s) => s.id === id);
+    if (!target) return;
+    const affectedCount = solves.filter((sv) => sv.session_id === id).length;
+    requestConfirm({
+      title: `Xóa phiên "${target.name}"?`,
+      description: `Thao tác này sẽ xóa phiên "${target.name}" (${target.puzzle.toUpperCase()}) cùng toàn bộ ${affectedCount} lượt giải bên trong.`,
+      scopeNote: userId
+        ? "Dữ liệu đang đồng bộ Cloud — phiên này sẽ bị xóa trên tất cả thiết bị đăng nhập cùng tài khoản."
+        : "Dữ liệu sẽ bị xóa khỏi trình duyệt này và không thể khôi phục nếu chưa sao lưu.",
+      confirmLabel: "Xác nhận xóa",
+      onConfirm: () => performDeleteSession(id),
+    });
   };
 
   const handleChangePuzzle = (puzzle: PuzzleType) => {
@@ -459,15 +622,64 @@ export default function RukTimerApp() {
     setSessions(nextSessions);
     setIsNewPb(false);
     setScramble(generateNextScrambleForState(puzzle, trainingSubset));
+    setScramblePuzzle(puzzle);
+    const updated = nextSessions.find((s) => s.id === activeSession.id);
 
-    if (userId) {
-      runCloudMutation(() =>
-        cloudUpdateSession(userId, activeSession.id, { puzzle })
-      );
+    if (userId && updated) {
+      runCloudMutation(() => cloudUpdateSession(userId, updated));
     } else {
       saveGuestSessions(nextSessions);
     }
   };
+
+  const handleUpdatePracticeSetIds = useCallback(
+    (ids: string[]) => {
+      const unique = Array.from(new Set(ids));
+      setPracticeSetIds(unique);
+      saveLocalPracticeSet(unique);
+      if (userId) {
+        runCloudMutation(() => cloudSavePracticeSet(userId, unique));
+      }
+    },
+    [runCloudMutation, userId]
+  );
+
+  const handleStartGuidedWorkout = useCallback(() => {
+    const workout = createF2lWorkout(solves);
+    setGuidedWorkout(workout);
+    saveGuidedWorkoutRaw(JSON.stringify(workout));
+    setTrainingSubset("f2l_only");
+    setMainView("timer");
+    setMobileTab("timer");
+    void requestScramble("3x3", "f2l_only", false);
+    showToast(
+      "Đã bắt đầu Bài tập F2L: Pha 1/2 — Hoàn thành 10 lượt F2L Only!"
+    );
+  }, [requestScramble, showToast, solves]);
+
+  const handleResumeGuidedWorkout = useCallback(() => {
+    if (!guidedWorkout) return;
+    if (guidedWorkout.phase === "drill_f2l") {
+      setTrainingSubset("f2l_only");
+      void requestScramble("3x3", "f2l_only", false);
+    } else if (guidedWorkout.phase === "remeasure_splits") {
+      setTrainingSubset("wca");
+      setSettings((prev) => {
+        const next = { ...prev, splitMode: "cfop4" as const };
+        saveLocalSettings(next);
+        return next;
+      });
+      void requestScramble("3x3", "wca", false);
+    }
+    setMainView("timer");
+    setMobileTab("timer");
+  }, [guidedWorkout, requestScramble]);
+
+  const handleResetGuidedWorkout = useCallback(() => {
+    setGuidedWorkout(null);
+    saveGuidedWorkoutRaw(null);
+    showToast("Đã đặt lại bài tập F2L");
+  }, [showToast]);
 
   // ==========================================================================
   // Dedicated CFOP Algorithm Session, SRS Progress & Solve Handlers
@@ -605,19 +817,56 @@ export default function RukTimerApp() {
         runCloudMutation(() => cloudInsertSolve(userId, newSolve));
       }
 
+      // Advance Guided F2L Workout if active
+      if (guidedWorkout && guidedWorkout.phase !== "done") {
+        const shouldCount =
+          (guidedWorkout.phase === "drill_f2l" &&
+            trainingSubset === "f2l_only") ||
+          guidedWorkout.phase === "remeasure_splits";
+        const updatedWorkout = shouldCount
+          ? recordWorkoutSolve(guidedWorkout, newSolve)
+          : guidedWorkout;
+        if (updatedWorkout !== guidedWorkout) {
+          setGuidedWorkout(updatedWorkout);
+          saveGuidedWorkoutRaw(JSON.stringify(updatedWorkout));
+          if (
+            guidedWorkout.phase === "drill_f2l" &&
+            updatedWorkout.phase === "remeasure_splits"
+          ) {
+            setTrainingSubset("wca");
+            setSettings((prev) => {
+              const next = { ...prev, splitMode: "cfop4" as const };
+              saveLocalSettings(next);
+              return next;
+            });
+            showToast(
+              "Hoàn thành 10 lượt F2L! Chuyển sang Pha 2/2: giải 5 lượt Split Timer để đo lại."
+            );
+            setPreviousScramble(scramble);
+            void requestScramble(activeSession.puzzle, "wca", compModeActive);
+            return;
+          }
+          if (updatedWorkout.phase === "done") {
+            const outcome = evaluateWorkoutOutcome(updatedWorkout);
+            showToast(`Hoàn thành bài tập F2L! ${outcome.message}`);
+          }
+        }
+      }
+
       setPreviousScramble(scramble);
-      setScramble(
-        generateNextScrambleForState(activeSession.puzzle, trainingSubset)
-      );
+      void requestScramble(activeSession.puzzle, trainingSubset, compModeActive);
     },
     [
       activeSession.id,
       activeSession.puzzle,
-      generateNextScrambleForState,
+      compModeActive,
+      guidedWorkout,
+      requestScramble,
       runCloudMutation,
       scramble,
       sessionSolves.length,
       settings.soundEnabled,
+      showToast,
       summary.bestSingle,
       trainingSubset,
       userId,
@@ -673,7 +922,7 @@ export default function RukTimerApp() {
     [runCloudMutation, showToast, userId]
   );
 
-  const handleDeleteSolve = useCallback(
+  const performDeleteSolve = useCallback(
     (solveId: string) => {
       setIsNewPb(false);
       setSolves((prev) => {
@@ -681,15 +930,38 @@ export default function RukTimerApp() {
         if (!userId) saveGuestSolves(next);
         return next;
       });
+      if (detailTarget?.type === "solve" && detailTarget.solve.id === solveId) {
+        setDetailTarget(null);
+      }
 
       if (userId) {
         runCloudMutation(() => cloudDeleteSolve(userId, solveId));
       }
+      showToast("Đã xóa lượt giải");
     },
-    [runCloudMutation, userId]
+    [detailTarget, runCloudMutation, showToast, userId]
   );
 
-  const handleClearSession = useCallback(() => {
+  const handleDeleteSolve = useCallback(
+    (solveId: string) => {
+      const target = solves.find((s) => s.id === solveId);
+      const disp = target ? formatSolveDisplay(target, settings.decimals) : "";
+      requestConfirm({
+        title: "Xóa lượt giải này?",
+        description: target
+          ? `Bạn sắp xóa lượt giải ${disp} (${target.puzzle.toUpperCase()}).`
+          : "Bạn sắp xóa 1 lượt giải khỏi lịch sử.",
+        scopeNote: userId
+          ? "Dữ liệu đang đồng bộ Cloud — lượt giải này sẽ bị xóa trên tất cả thiết bị."
+          : undefined,
+        confirmLabel: "Xác nhận xóa",
+        onConfirm: () => performDeleteSolve(solveId),
+      });
+    },
+    [performDeleteSolve, requestConfirm, settings.decimals, solves, userId]
+  );
+
+  const performClearSession = useCallback(() => {
     setIsNewPb(false);
     setSolves((prev) => {
       const next = prev.filter((s) => s.session_id !== activeSession.id);
@@ -700,13 +972,33 @@ export default function RukTimerApp() {
     if (userId) {
       runCloudMutation(() => cloudClearSessionSolves(userId, activeSession.id));
     }
-    showToast("Đã xóa toàn bộ lượt giải trong session");
+    showToast("Đã xóa toàn bộ lượt giải trong phiên");
   }, [activeSession.id, runCloudMutation, showToast, userId]);
+
+  const handleClearSession = useCallback(() => {
+    const count = sessionSolves.length;
+    if (count === 0) return;
+    requestConfirm({
+      title: `Xóa toàn bộ ${count} lượt trong "${activeSession.name}"?`,
+      description: `Toàn bộ ${count} lượt giải của phiên "${activeSession.name}" sẽ bị xóa sạch. Tên phiên vẫn được giữ lại.`,
+      scopeNote: userId
+        ? "Dữ liệu đang đồng bộ Cloud — thao tác này sẽ xóa trên mọi thiết bị của tài khoản."
+        : "Thao tác này không thể hoàn tác nếu bạn chưa xuất file sao lưu.",
+      confirmLabel: "Xác nhận xóa",
+      onConfirm: performClearSession,
+    });
+  }, [
+    activeSession.name,
+    performClearSession,
+    requestConfirm,
+    sessionSolves.length,
+    userId,
+  ]);
 
   // Global Alt+ Shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!e.altKey || timerPhase !== "idle") return;
+      if (!e.altKey || timerPhase !== "idle" || confirmState !== null) return;
 
       if (e.key.toLowerCase() === "n") {
         e.preventDefault();
@@ -725,15 +1017,14 @@ export default function RukTimerApp() {
         );
       } else if (e.key.toLowerCase() === "z" && lastSolve) {
         e.preventDefault();
-        if (window.confirm("Xóa lượt giải vừa rồi?")) {
-          handleDeleteSolve(lastSolve.id);
-        }
+        handleDeleteSolve(lastSolve.id);
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
+    confirmState,
     handleDeleteSolve,
     handleNextScramble,
     handleUpdateSolvePenalty,
@@ -793,10 +1084,15 @@ export default function RukTimerApp() {
   };
 
   const handleExportJson = () => {
-    const json = exportDataAsJson(sessions, solves);
+    const json = exportDataAsJson(
+      sessions,
+      solves,
+      cfopProgress,
+      practiceSetIds
+    );
     const stamp = new Date().toISOString().slice(0, 10);
     downloadBlob(json, `ruktimer-backup-${stamp}.json`, "application/json");
-    showToast("Đã xuất file sao lưu JSON");
+    showToast("Đã xuất file sao lưu JSON v3 (gồm Split, Reconstruction & CFOP)");
   };
 
   const handleExportCsv = () => {
@@ -813,7 +1109,7 @@ export default function RukTimerApp() {
 
   const handleImportJsonFile = async (file: File) => {
     const text = await file.text();
-    const parsed = parseUniversalImport(text);
+    const parsed = parseBackup(text);
     if (!parsed) {
       showToast(
         "File không hợp lệ! Hỗ trợ định dạng RukTimer (.json), csTimer (.txt/.json) và CSV (.csv)"
@@ -821,69 +1117,127 @@ export default function RukTimerApp() {
       return;
     }
 
-    if (userId) {
-      setSyncStatus("syncing");
-      const supabase = getSupabaseBrowserClient();
-      if (supabase) {
-        const sPayload = parsed.sessions.map((s) => ({
-          id: s.id,
-          user_id: userId,
-          name: s.name,
-          puzzle: s.puzzle,
-          created_at: s.created_at,
-        }));
-        await supabase
-          .from("cube_sessions")
-          .upsert(sPayload, { onConflict: "id" });
+    const plan = planImport(
+      {
+        sessions,
+        solves,
+        cfopProgress,
+        practiceSetIds,
+      },
+      parsed
+    );
+    setPendingImportPlan(plan);
+    setImportFileName(file.name);
+  };
 
-        const CHUNK = 500;
-        for (let i = 0; i < parsed.solves.length; i += CHUNK) {
-          const svPayload = parsed.solves.slice(i, i + CHUNK).map((sv) => ({
-            id: sv.id,
-            user_id: userId,
-            session_id: sv.session_id,
-            puzzle: sv.puzzle,
-            time_ms: sv.time_ms,
-            penalty: sv.penalty,
-            scramble: sv.scramble,
-            comment: sv.comment,
-            solved_at: sv.solved_at,
-          }));
-          await supabase
-            .from("solves")
-            .upsert(svPayload, { onConflict: "id" });
-        }
+  const handleCancelImport = () => {
+    setPendingImportPlan(null);
+    setImportFileName(null);
+  };
 
-        const refreshed = await fetchCloudData(userId);
-        if (!refreshed.error) {
-          setSessions(refreshed.sessions);
-          setSolves(refreshed.solves);
-          setActiveSessionId(refreshed.sessions[0].id);
-        }
-      }
-      setSyncStatus("synced");
-    } else {
-      const mergedSessions = [...sessions];
-      for (const s of parsed.sessions) {
-        if (!mergedSessions.some((ex) => ex.id === s.id)) {
-          mergedSessions.push(s);
-        }
-      }
-      const existingIds = new Set(solves.map((sv) => sv.id));
-      const mergedSolves = [
-        ...solves,
-        ...parsed.solves.filter((sv) => !existingIds.has(sv.id)),
-      ];
+  const handleConfirmImport = async () => {
+    if (!pendingImportPlan || isImporting) return;
+    setIsImporting(true);
+    const plan = pendingImportPlan;
+    try {
+      const mergedSessions = plan.mergedSessions as CubeSession[];
+      const mergedSolves = plan.mergedSolves as Solve[];
+      const mergedCfop = plan.mergedCfopProgress;
+      const mergedPracticeSet = plan.mergedPracticeSetIds;
+
       setSessions(mergedSessions);
       setSolves(mergedSolves);
-      setActiveSessionId(parsed.sessions[0].id);
-      saveGuestSessions(mergedSessions);
-      saveGuestSolves(mergedSolves);
-    }
+      setCfopProgress(mergedCfop);
+      saveLocalCfopProgress(mergedCfop);
+      setPracticeSetIds(mergedPracticeSet);
+      saveLocalPracticeSet(mergedPracticeSet);
 
-    showToast(
-      `Đã nhập ${parsed.solves.length} lượt giải từ ${parsed.sourceFormat} thành công!`
-    );
+      if (plan.newSessions.length > 0) {
+        setActiveSessionId(plan.newSessions[0].id);
+        saveActiveSessionId(plan.newSessions[0].id);
+      }
+
+      if (userId) {
+        setSyncStatus("syncing");
+        const supabase = getSupabaseBrowserClient();
+        if (supabase) {
+          if (plan.newSessions.length > 0) {
+            const sPayload = plan.newSessions.map((s) => ({
+              id: s.id,
+              user_id: userId,
+              name: s.name,
+              puzzle: s.puzzle,
+              created_at: s.created_at,
+            }));
+            await supabase
+              .from("cube_sessions")
+              .upsert(sPayload, { onConflict: "id" });
+          }
+
+          const CHUNK = 500;
+          for (let i = 0; i < plan.newSolves.length; i += CHUNK) {
+            const svPayload = plan.newSolves.slice(i, i + CHUNK).map((sv) => {
+              const row: Record<string, unknown> = {
+                id: sv.id,
+                user_id: userId,
+                session_id: sv.session_id,
+                puzzle: sv.puzzle,
+                time_ms: sv.time_ms,
+                penalty: sv.penalty,
+                scramble: sv.scramble,
+                comment: sv.comment,
+                solved_at: sv.solved_at,
+              };
+              if (sv.splits_ms) row.splits_ms = sv.splits_ms;
+              if (sv.reconstruction) row.reconstruction = sv.reconstruction;
+              return row;
+            });
+            await supabase
+              .from("solves")
+              .upsert(svPayload, { onConflict: "id" });
+          }
+
+          const cfopItems = Object.values(mergedCfop);
+          if (cfopItems.length > 0) {
+            try {
+              await supabase.from("cfop_progress").upsert(
+                cfopItems.map((item) => ({
+                  user_id: userId,
+                  alg_id: item.alg_id,
+                  status: item.status,
+                  preferred_formula: item.preferred_formula ?? null,
+                  ease_factor: item.ease_factor,
+                  interval_days: item.interval_days,
+                  repetitions: item.repetitions,
+                  next_review_at: item.next_review_at,
+                  last_drilled_at: item.last_drilled_at ?? null,
+                  updated_at: item.updated_at,
+                })),
+                { onConflict: "user_id,alg_id" }
+              );
+            } catch {
+              // non-fatal
+            }
+          }
+
+          if (mergedPracticeSet.length > 0) {
+            await cloudSavePracticeSet(userId, mergedPracticeSet);
+          }
+        }
+        setSyncStatus("synced");
+      } else {
+        saveGuestSessions(mergedSessions);
+        saveGuestSolves(mergedSolves);
+      }
+
+      setPendingImportPlan(null);
+      setImportFileName(null);
+      showToast(
+        `Đã nhập +${plan.newSolves.length} lượt mới từ ${plan.sourceFormat} (bỏ qua ${plan.duplicateSolves} trùng, ${plan.invalidRows} lỗi).`
+      );
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   // Handler when user clicks an Action Card inside AI Practice Coach
@@ -894,6 +1248,19 @@ export default function RukTimerApp() {
     }
     if (rec.actionType === "ADAPTIVE_CFOP") {
       setMainView("cfop");
+      return;
+    }
+    if (rec.actionType === "GUIDED_F2L_WORKOUT") {
+      handleStartGuidedWorkout();
+      return;
+    }
+    if (rec.actionType === "COMPETITION_SIM") {
+      setTrainingSubset("wca");
+      setCompModeTrigger((n) => n + 1);
+      setMainView("timer");
+      setMobileTab("timer");
+      void requestScramble(activeSession.puzzle, "wca", true);
+      showToast("Đã mở vòng thi đấu mô phỏng WCA Ao5 (Scramble Random-State)!");
       return;
     }
     if (rec.actionType === "CROSS_TRAINER") {
@@ -918,7 +1285,8 @@ export default function RukTimerApp() {
     authModalOpen ||
     settingsModalOpen ||
     mobileCubeModalOpen ||
-    detailTarget !== null;
+    detailTarget !== null ||
+    confirmState !== null;
 
   const focusDimActive =
     settings.hideUiWhileSolving &&
@@ -991,7 +1359,21 @@ export default function RukTimerApp() {
           solves={solves}
           settings={settings}
           cfopProgress={cfopProgress}
+          practiceSetIds={practiceSetIds}
+          onUpdatePracticeSetIds={handleUpdatePracticeSetIds}
           onUpdateCfopProgress={handleUpdateCfopProgress}
+          onRequestConfirmResetProgress={(alg, onConfirm) =>
+            requestConfirm({
+              title: `Đặt lại tiến độ "${alg.code}: ${alg.name}"?`,
+              description:
+                "Trạng thái đã thuộc và lịch ôn ngắt quãng SRS của công thức này sẽ được đặt về Chưa thuộc. Lịch sử bấm giờ vẫn được giữ nguyên.",
+              scopeNote: userId
+                ? "Thay đổi sẽ được đồng bộ trên các thiết bị của tài khoản."
+                : undefined,
+              confirmLabel: "Xác nhận đặt lại",
+              onConfirm,
+            })
+          }
           onEnsureAlgSession={handleEnsureAlgSession}
           onRecordAlgSolve={handleRecordAlgSolve}
           onUpdateSolvePenalty={handleUpdateSolvePenalty}
@@ -1007,14 +1389,12 @@ export default function RukTimerApp() {
           cfopProgress={cfopProgress}
           userId={userId}
           userEmail={userEmail}
+          guidedWorkout={guidedWorkout}
+          onStartGuidedWorkout={handleStartGuidedWorkout}
+          onResumeGuidedWorkout={handleResumeGuidedWorkout}
+          onResetGuidedWorkout={handleResetGuidedWorkout}
           onExecuteRecommendation={handleExecuteCoachRecommendation}
           onOpenAlgDrill={(alg) => handleOpenInMainTimer(alg)}
-          onLoadScrambleInMainTimer={(customScramble) => {
-            setScramble(customScramble);
-            setMainView("timer");
-            setMobileTab("timer");
-            showToast("Đã nạp Scramble thử thách vào Bàn Timer chính!");
-          }}
           onSaveVideoAnalyzedSolve={(timeMs, splitsMs, comment) => {
             const newSolve: Solve = {
               id: generateUuid(),
@@ -1038,6 +1418,17 @@ export default function RukTimerApp() {
             }
             showToast("Đã lưu lượt giải phân tích từ Video vào Session!");
           }}
+          onExportBackupBlob={() => {
+            const json = exportDataAsJson(
+              sessions,
+              solves,
+              cfopProgress,
+              practiceSetIds
+            );
+            return new Blob([json], { type: "application/json" });
+          }}
+          onRequestConfirm={requestConfirm}
+          onOpenAuth={() => setAuthModalOpen(true)}
         />
       ) : (
         <main className="flex-1 w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-3 pb-20 lg:pb-5 grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
@@ -1097,11 +1488,42 @@ export default function RukTimerApp() {
                 scramble={scramble}
                 previousScramble={previousScramble}
                 trainingSubset={trainingSubset}
+                scrambleSource={scrambleSource}
+                isGeneratingScramble={isGeneratingScramble}
                 onChangeTrainingSubset={handleChangeTrainingSubset}
                 onNextScramble={() => handleNextScramble()}
                 onRestorePreviousScramble={handleRestorePreviousScramble}
-                onSetCustomScramble={(custom) => setScramble(custom)}
+                onSetCustomScramble={(custom) => {
+                  setScramble(custom);
+                  setScrambleSource("random-move");
+                }}
               />
+
+              {/* Active Guided F2L Workout HUD Banner */}
+              {guidedWorkout && (
+                <div className="w-full max-w-4xl mx-auto px-3 sm:px-6 pt-2">
+                  <div className="rounded-xl bg-emerald-500/10 border border-emerald-400/35 px-3.5 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="text-emerald-200">
+                      <strong>Bài tập F2L:</strong>{" "}
+                      {guidedWorkout.phase === "drill_f2l"
+                        ? `Pha 1/2 — Luyện F2L Only (${guidedWorkout.drillSolveIds.length}/${guidedWorkout.targetDrillCount} lượt)`
+                        : guidedWorkout.phase === "remeasure_splits"
+                        ? `Pha 2/2 — Đo lại 4 pha Split (${guidedWorkout.remeasureSolveIds.length}/${guidedWorkout.targetRemeasureCount} lượt)`
+                        : evaluateWorkoutOutcome(guidedWorkout).message}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHubSubTab("coach");
+                        setMainView("coach");
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-100 font-semibold"
+                    >
+                      Xem chi tiết
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <TimerDisplay
@@ -1126,6 +1548,13 @@ export default function RukTimerApp() {
               onToggleSplitMode={(splitMode) =>
                 handleUpdateSettings({ splitMode })
               }
+              compModeTrigger={compModeTrigger}
+              onCompetitionModeChange={(active) => {
+                setCompModeActive(active);
+                if (active && activeSession.puzzle === "3x3") {
+                  void requestScramble("3x3", "wca", true);
+                }
+              }}
             />
 
             {settings.showCubePreview && (
@@ -1291,12 +1720,48 @@ export default function RukTimerApp() {
 
       <SettingsModal
         isOpen={settingsModalOpen}
-        onClose={() => setSettingsModalOpen(false)}
+        onClose={() => {
+          setSettingsModalOpen(false);
+          handleCancelImport();
+        }}
         settings={settings}
         onUpdateSettings={handleUpdateSettings}
         onExportJson={handleExportJson}
         onExportCsv={handleExportCsv}
         onImportJsonFile={handleImportJsonFile}
+        pendingImportPlan={pendingImportPlan}
+        importFileName={importFileName}
+        isImporting={isImporting}
+        onConfirmImport={handleConfirmImport}
+        onCancelImport={handleCancelImport}
+      />
+
+      <ConfirmDialog
+        open={confirmState !== null}
+        options={
+          confirmState
+            ? {
+                title: confirmState.title,
+                description: confirmState.description,
+                syncScopeWarning: confirmState.scopeNote,
+                confirmLabel: confirmState.confirmLabel ?? "Xác nhận xóa",
+              }
+            : null
+        }
+        busy={confirmBusy}
+        onCancel={() => {
+          if (!confirmBusy) setConfirmState(null);
+        }}
+        onConfirm={async () => {
+          if (!confirmState || confirmBusy) return;
+          setConfirmBusy(true);
+          try {
+            await confirmState.onConfirm();
+          } finally {
+            setConfirmBusy(false);
+            setConfirmState(null);
+          }
+        }}
       />
 
       <SolveDetailModal

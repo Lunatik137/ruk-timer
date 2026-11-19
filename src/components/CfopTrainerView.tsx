@@ -14,6 +14,7 @@ import {
   CalendarClock,
   Check,
   CheckCircle2,
+  CheckSquare,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -22,11 +23,13 @@ import {
   Flame,
   GraduationCap,
   HelpCircle,
+  ListChecks,
   Play,
   RotateCcw,
   Search,
   Shuffle,
   Sparkles,
+  Square,
   Timer,
   Trash2,
   Trophy,
@@ -34,6 +37,11 @@ import {
 } from "lucide-react";
 import CfopCaseDiagram from "@/components/CfopCaseDiagram";
 import { buildCfopTutorGuidance } from "@/lib/analytics/coach";
+import {
+  createPracticeQueue,
+  drawNextFromPracticeQueue,
+  type PracticeQueueState,
+} from "@/lib/core/practiceQueue";
 import {
   CFOP_ALGORITHMS,
   CFOP_LEARNING_PATH_TIERS,
@@ -69,7 +77,10 @@ interface CfopTrainerViewProps {
   solves: Solve[];
   settings: TimerSettings;
   cfopProgress: Record<string, CfopProgressItem>;
+  practiceSetIds: string[];
+  onUpdatePracticeSetIds: (ids: string[]) => void;
   onUpdateCfopProgress: (item: CfopProgressItem) => void;
+  onRequestConfirmResetProgress?: (alg: CfopAlgorithm, onConfirm: () => void) => void;
   onEnsureAlgSession: (alg: CfopAlgorithm) => CubeSession;
   onRecordAlgSolve: (
     sessionId: string,
@@ -89,7 +100,10 @@ export default function CfopTrainerView({
   solves,
   settings,
   cfopProgress,
+  practiceSetIds,
+  onUpdatePracticeSetIds,
   onUpdateCfopProgress,
+  onRequestConfirmResetProgress,
   onEnsureAlgSession,
   onRecordAlgSolve,
   onUpdateSolvePenalty,
@@ -114,6 +128,11 @@ export default function CfopTrainerView({
   const [adaptiveRevealed, setAdaptiveRevealed] = useState(true);
   const [adaptiveReason, setAdaptiveReason] = useState<string>("");
   const [adaptiveAuf, setAdaptiveAuf] = useState<"" | "U" | "U'" | "U2">("");
+
+  // Custom Practice Set Random Mode (multi-group round-robin shuffle)
+  const [showPracticeSetDrawer, setShowPracticeSetDrawer] = useState(false);
+  const [customSetMode, setCustomSetMode] = useState(false);
+  const [customQueue, setCustomQueue] = useState<PracticeQueueState | null>(null);
 
   // Step-by-Step Trigger Scrubber & AI Tutor inside Drill Studio
   const [scrubberStep, setScrubberStep] = useState<number | null>(null);
@@ -160,22 +179,52 @@ export default function CfopTrainerView({
       (existing.status === "learned" || existing.status === "mastered");
 
     if (currentlyLearned) {
-      const nowIso = new Date().toISOString();
-      onUpdateCfopProgress({
-        alg_id: alg.id,
-        status: "unlearned",
-        preferred_formula: existing?.preferred_formula,
-        ease_factor: 2.5,
-        interval_days: 0,
-        repetitions: 0,
-        next_review_at: nowIso,
-        updated_at: nowIso,
-      });
+      const doReset = () => {
+        const nowIso = new Date().toISOString();
+        onUpdateCfopProgress({
+          alg_id: alg.id,
+          status: "unlearned",
+          preferred_formula: existing?.preferred_formula,
+          ease_factor: 2.5,
+          interval_days: 0,
+          repetitions: 0,
+          next_review_at: nowIso,
+          updated_at: nowIso,
+        });
+      };
+      if (onRequestConfirmResetProgress) {
+        onRequestConfirmResetProgress(alg, doReset);
+      } else {
+        doReset();
+      }
     } else {
       const next = computeNextSm2Progress(alg.id, existing, 4);
       onUpdateCfopProgress(next);
     }
   };
+
+  const practiceSetLookup = useMemo(
+    () => new Set(practiceSetIds),
+    [practiceSetIds]
+  );
+
+  const selectedPracticeAlgs = useMemo(() => {
+    const byId = new Map(CFOP_ALGORITHMS.map((a) => [a.id, a]));
+    return practiceSetIds
+      .map((id) => byId.get(id))
+      .filter((a): a is CfopAlgorithm => Boolean(a));
+  }, [practiceSetIds]);
+
+  const togglePracticeSetItem = useCallback(
+    (algId: string) => {
+      if (practiceSetLookup.has(algId)) {
+        onUpdatePracticeSetIds(practiceSetIds.filter((id) => id !== algId));
+      } else {
+        onUpdatePracticeSetIds([...practiceSetIds, algId]);
+      }
+    },
+    [onUpdatePracticeSetIds, practiceSetIds, practiceSetLookup]
+  );
 
   // Precompute stats per CFOP session name
   const sessionStatsByName = useMemo(() => {
@@ -275,20 +324,58 @@ export default function CfopTrainerView({
     return counts;
   }, [isAlgLearned]);
 
-  const handleOpenDrill = (alg: CfopAlgorithm, isAdaptive = false) => {
-    const sess = onEnsureAlgSession(alg);
-    setActiveDrillSessionId(sess.id);
-    setDrillingAlg(alg);
-    setDrillMs(0);
-    setIsDrillPb(false);
-    setBlindMode(isAdaptive);
-    setAdaptiveMode(isAdaptive);
-    setAdaptiveRevealed(!isAdaptive);
-    setScrubberStep(null);
-    setTutorAiReply(null);
-    drillPhaseRef.current = "idle";
-    setDrillPhase("idle");
-  };
+  const handleOpenDrill = useCallback(
+    (
+      alg: CfopAlgorithm,
+      isAdaptive = false,
+      opts?: { customSet?: boolean; preserveBlind?: boolean }
+    ) => {
+      const sess = onEnsureAlgSession(alg);
+      setActiveDrillSessionId(sess.id);
+      setDrillingAlg(alg);
+      setDrillMs(0);
+      setIsDrillPb(false);
+      if (!opts?.preserveBlind) {
+        setBlindMode(isAdaptive);
+      }
+      setAdaptiveMode(isAdaptive);
+      setCustomSetMode(Boolean(opts?.customSet));
+      setAdaptiveRevealed(!isAdaptive && !opts?.customSet);
+      setScrubberStep(null);
+      setTutorAiReply(null);
+      drillPhaseRef.current = "idle";
+      setDrillPhase("idle");
+    },
+    [onEnsureAlgSession]
+  );
+
+  // Start Custom Practice Set Random Drill (round-robin shuffle, supports 1-case set)
+  const handleStartCustomSetDrill = useCallback(() => {
+    if (selectedPracticeAlgs.length === 0) return;
+    const initialQueue = createPracticeQueue(
+      selectedPracticeAlgs.map((a) => a.id)
+    );
+    const { caseId, nextState } = drawNextFromPracticeQueue(initialQueue);
+    if (!caseId) return;
+    const alg = selectedPracticeAlgs.find((a) => a.id === caseId);
+    if (!alg) return;
+    const aufs: ("" | "U" | "U'" | "U2")[] = ["", "U", "U'", "U2"];
+    setAdaptiveAuf(aufs[Math.floor(Math.random() * aufs.length)]);
+    setCustomQueue(nextState);
+    handleOpenDrill(alg, false, { customSet: true });
+  }, [handleOpenDrill, selectedPracticeAlgs]);
+
+  const handleNextCustomSetCase = useCallback(() => {
+    if (!customQueue || selectedPracticeAlgs.length === 0) return;
+    const { caseId, nextState } = drawNextFromPracticeQueue(customQueue);
+    if (!caseId) return;
+    const alg = selectedPracticeAlgs.find((a) => a.id === caseId);
+    if (!alg) return;
+    const aufs: ("" | "U" | "U'" | "U2")[] = ["", "U", "U'", "U2"];
+    setAdaptiveAuf(aufs[Math.floor(Math.random() * aufs.length)]);
+    setCustomQueue(nextState);
+    handleOpenDrill(alg, false, { customSet: true, preserveBlind: true });
+  }, [customQueue, handleOpenDrill, selectedPracticeAlgs]);
 
   // Start Adaptive Random Drill across currently filtered algorithms
   const handleStartAdaptiveDrill = useCallback(
@@ -302,9 +389,10 @@ export default function CfopTrainerView({
       );
       setAdaptiveReason(picked.reason);
       setAdaptiveAuf(picked.randomAuf);
+      setCustomQueue(null);
       handleOpenDrill(picked.alg, true);
     },
-    [cfopProgress, filteredAlgs, sessionStatsByName]
+    [cfopProgress, filteredAlgs, handleOpenDrill, sessionStatsByName]
   );
 
   // Start Recognition Quiz Round
@@ -619,7 +707,23 @@ export default function CfopTrainerView({
         }),
       });
       const data = await res.json();
-      if (data?.aiEnhancedText) {
+      if (res.status === 401) {
+        const fallback =
+          tutorGuidance?.questionAnswer ||
+          tutorGuidance?.fingertrickCoach ||
+          "";
+        setTutorAiReply(
+          `${fallback}\n\n(Đăng nhập tài khoản để dùng thêm giải thích nâng cao từ Gemini AI — chế độ hướng dẫn cục bộ vẫn hoạt động bình thường.)`
+        );
+      } else if (res.status === 429) {
+        const fallback =
+          tutorGuidance?.questionAnswer ||
+          tutorGuidance?.fingertrickCoach ||
+          "";
+        setTutorAiReply(
+          `${fallback}\n\n(${data?.error || "Đã đạt hạn mức AI trong ngày."} Bạn vẫn có thể luyện Drill Studio bình thường.)`
+        );
+      } else if (data?.aiEnhancedText) {
         setTutorAiReply(data.aiEnhancedText);
       } else if (tutorGuidance?.questionAnswer) {
         setTutorAiReply(tutorGuidance.questionAnswer);
@@ -842,6 +946,84 @@ export default function CfopTrainerView({
             <span>Chưa thuộc</span>
           </button>
         </div>
+
+        {/* Custom Multi-Group Practice Set Bar */}
+        <div className="rounded-xl bg-black/30 border border-white/10 p-3 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 font-semibold text-cyan-300">
+                <ListChecks className="w-4 h-4" />
+                <span>Bộ case luyện ngẫu nhiên:</span>
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-cyan-500/15 border border-cyan-400/30 font-mono text-cyan-200 font-semibold">
+                {selectedPracticeAlgs.length} case đã chọn
+              </span>
+              {selectedPracticeAlgs.length === 0 && (
+                <span className="text-slate-400">
+                  Tích ô <strong>Chọn luyện</strong> trên từng thẻ (có thể trộn F2L, OLL, PLL cùng lúc) để tạo bộ luyện riêng.
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedPracticeAlgs.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowPracticeSetDrawer((v) => !v)}
+                    className="h-8 px-2.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs font-medium text-slate-200 transition"
+                  >
+                    {showPracticeSetDrawer
+                      ? "Ẩn danh sách"
+                      : `Xem danh sách (${selectedPracticeAlgs.length})`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onUpdatePracticeSetIds([])}
+                    className="h-8 px-2.5 rounded-lg bg-white/[0.05] hover:bg-rose-500/20 hover:text-rose-300 border border-white/10 text-xs text-slate-300 transition"
+                  >
+                    Bỏ chọn hết
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                disabled={selectedPracticeAlgs.length === 0}
+                onClick={handleStartCustomSetDrill}
+                className="h-8 px-3.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition"
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+                <span>Luyện ngẫu nhiên</span>
+              </button>
+            </div>
+          </div>
+
+          {showPracticeSetDrawer && selectedPracticeAlgs.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-2 border-t border-white/10">
+              {selectedPracticeAlgs.map((a) => (
+                <span
+                  key={a.id}
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/[0.06] border border-white/10 text-xs"
+                >
+                  <span className="font-mono font-bold text-cyan-300">
+                    {a.code}
+                  </span>
+                  <span className="text-slate-300 max-w-[140px] truncate">
+                    {a.name}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Bỏ chọn ${a.code}`}
+                    onClick={() => togglePracticeSetItem(a.id)}
+                    className="text-slate-400 hover:text-rose-400"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Algorithm Cards Grid */}
@@ -906,23 +1088,48 @@ export default function CfopTrainerView({
                     </p>
                   </div>
 
-                  {/* Learned Toggle */}
-                  <button
-                    type="button"
-                    title={
-                      isLearned
-                        ? "Bỏ đánh dấu đã thuộc"
-                        : "Đánh dấu đã thuộc (Lên lịch SRS)"
-                    }
-                    onClick={() => toggleLearned(alg)}
-                    className={`p-1.5 rounded-lg border transition shrink-0 ${
-                      isLearned
-                        ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300"
-                        : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                  </button>
+                  {/* Selection Checkbox + Learned Toggle */}
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      aria-pressed={practiceSetLookup.has(alg.id)}
+                      title={
+                        practiceSetLookup.has(alg.id)
+                          ? "Bỏ khỏi bộ luyện ngẫu nhiên"
+                          : "Thêm vào bộ luyện ngẫu nhiên"
+                      }
+                      onClick={() => togglePracticeSetItem(alg.id)}
+                      className={`px-2 py-1 rounded-lg border text-[11px] font-medium inline-flex items-center gap-1 transition ${
+                        practiceSetLookup.has(alg.id)
+                          ? "bg-cyan-500/20 border-cyan-400/60 text-cyan-200"
+                          : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      {practiceSetLookup.has(alg.id) ? (
+                        <CheckSquare className="w-3.5 h-3.5 text-cyan-300" />
+                      ) : (
+                        <Square className="w-3.5 h-3.5" />
+                      )}
+                      <span>{practiceSetLookup.has(alg.id) ? "Đã chọn" : "Chọn"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      title={
+                        isLearned
+                          ? "Đặt lại trạng thái chưa thuộc (cần xác nhận)"
+                          : "Đánh dấu đã thuộc (Lên lịch SRS)"
+                      }
+                      onClick={() => toggleLearned(alg)}
+                      className={`p-1.5 rounded-lg border transition ${
+                        isLearned
+                          ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300"
+                          : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Formula Box */}
@@ -1141,15 +1348,31 @@ export default function CfopTrainerView({
                       Adaptive Drill: {adaptiveReason}
                     </span>
                   )}
+                  {customSetMode && customQueue && (
+                    <span className="text-xs px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/35 text-emerald-200 font-mono">
+                      Bộ tự chọn • Vòng #{customQueue.roundNumber} • Case{" "}
+                      {customQueue.completedInRound}/{customQueue.caseIds.length}
+                    </span>
+                  )}
                 </div>
                 <h2 className="text-lg sm:text-xl font-bold mt-1">
-                  {adaptiveMode && !adaptiveRevealed
+                  {(adaptiveMode || customSetMode) && !adaptiveRevealed
                     ? "Tráo theo Setup Moves bên dưới, tự nhìn khối Rubik và giải!"
                     : drillingAlg.name}
                 </h2>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {customSetMode && (
+                  <button
+                    type="button"
+                    onClick={handleNextCustomSetCase}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1 transition"
+                  >
+                    <Shuffle className="w-3.5 h-3.5" />
+                    <span>Case tiếp theo trong bộ</span>
+                  </button>
+                )}
                 {adaptiveMode && (
                   <button
                     type="button"

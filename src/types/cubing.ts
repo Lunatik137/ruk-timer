@@ -183,16 +183,17 @@ export interface PersonalAchievement {
   category: "volume" | "speed" | "cfop" | "consistency";
 }
 
-export interface DailySubmissionRecord {
-  id?: string;
+export type ScrambleSource = "random-state" | "random-move";
+
+export interface UserFileRecord {
+  id: string;
   user_id?: string;
-  challenge_date: string;
-  puzzle: PuzzleType;
-  display_name: string;
-  division: "sub12" | "sub18" | "sub25" | "open";
-  ao5_ms: number | null;
-  best_single_ms: number | null;
-  times_ms: number[];
-  penalties: PenaltyType[];
-  created_at?: string;
+  object_key?: string;
+  kind: "video" | "backup" | "other";
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  status: "pending" | "ready";
+  solve_id?: string | null;
+  created_at: string;
 }

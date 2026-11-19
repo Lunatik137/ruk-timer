@@ -1,10 +1,23 @@
 import type { Solve, SolveWithRollingStats, StatSummary } from "../types/cubing";
+import {
+  computeMeanOfN,
+  computeTrimmedAverage,
+  getEffectiveMs,
+} from "./core/solveMath";
+import {
+  computeActivity,
+  computeWeeklyReport,
+  getDeviceTimeZone,
+} from "./core/activity";
 
-export function getEffectiveMs(solve: Pick<Solve, "time_ms" | "penalty">): number | "DNF" {
-  if (solve.penalty === "DNF") return "DNF";
-  if (solve.penalty === "+2") return solve.time_ms + 2000;
-  return solve.time_ms;
-}
+export {
+  getEffectiveMs,
+  computeMeanOfN,
+  computeTrimmedAverage,
+  computeActivity,
+  computeWeeklyReport,
+  getDeviceTimeZone,
+};
 
 export function formatTimeMs(
   ms: number | "DNF" | null | undefined,
@@ -40,43 +53,6 @@ export function formatSolveDisplay(
   const eff = getEffectiveMs(solve);
   const base = formatTimeMs(eff, decimals);
   return solve.penalty === "+2" ? `${base}+` : base;
-}
-
-export function computeMeanOfN(window: (number | "DNF")[]): number | "DNF" | null {
-  if (window.length === 0) return null;
-  let sum = 0;
-  for (const v of window) {
-    if (v === "DNF") return "DNF";
-    sum += v;
-  }
-  return Math.round(sum / window.length);
-}
-
-export function computeTrimmedAverage(
-  window: (number | "DNF")[],
-  n: number
-): number | "DNF" | null {
-  if (window.length < n) return null;
-  const slice = window.slice(window.length - n);
-  const trimCount = Math.max(1, Math.ceil(n * 0.05));
-
-  let dnfCount = 0;
-  const numericValues: number[] = [];
-  for (const v of slice) {
-    if (v === "DNF") dnfCount++;
-    else numericValues.push(v);
-  }
-  if (dnfCount > trimCount) return "DNF";
-
-  numericValues.sort((a, b) => a - b);
-  const upperNumericDrop = trimCount - dnfCount;
-  const counted = numericValues.slice(
-    trimCount,
-    numericValues.length - upperNumericDrop
-  );
-  if (counted.length === 0) return "DNF";
-  const sum = counted.reduce((acc, x) => acc + x, 0);
-  return Math.round(sum / counted.length);
 }
 
 export function calculateSessionStats(chronologicalSolves: Solve[]): {

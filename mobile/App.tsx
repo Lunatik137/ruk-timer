@@ -19,7 +19,20 @@ import {
 import { StatusBar } from "expo-status-bar";
 import * as Haptics from "expo-haptics";
 import { useKeepAwake } from "expo-keep-awake";
+import ConfirmModal from "./src/components/ConfirmModal";
 import CubeNetNative from "./src/components/CubeNetNative";
+import {
+  CFOP_ALGORITHMS,
+  computeNextSm2Progress,
+  getCfopSessionName,
+  isCfopDueForReview,
+  type CfopAlgorithm,
+} from "./src/lib/core/cfop";
+import {
+  createPracticeQueue,
+  drawNextFromPracticeQueue,
+  type PracticeQueueState,
+} from "./src/lib/core/practiceQueue";
 import { generateScramble, invertAlgorithm } from "./src/lib/scrambles";
 import {
   calculateSessionStats,
@@ -28,15 +41,29 @@ import {
   getEffectiveMs,
 } from "./src/lib/stats";
 import {
+  cloudDeleteMobileSession,
+  cloudDeleteMobileSolve,
+  cloudInsertMobileSession,
+  cloudInsertMobileSolve,
+  cloudSaveMobilePracticeSet,
+  cloudUpdateMobileSolve,
+  cloudUpsertMobileCfopProgress,
   createDefaultSession,
   fetchCloudMobileData,
   generateUuid,
   loadGuestMobileData,
+  loadLocalMobileCfopProgress,
+  loadLocalMobilePracticeSet,
   loadMobileSettings,
+  loadMobileUserCache,
   saveGuestMobileSessions,
   saveGuestMobileSolves,
+  saveLocalMobileCfopProgress,
+  saveLocalMobilePracticeSet,
   saveMobileSettings,
+  saveMobileUserCache,
   syncGuestMobileToCloud,
+  type CfopProgressItem,
 } from "./src/lib/storage";
 import { supabase } from "./src/lib/supabase";
 import {
@@ -64,93 +91,6 @@ const getNowMs = () =>
     ? performance.now()
     : Date.now();
 
-const MOBILE_CFOP_CASES = [
-  {
-    code: "Trigger 01",
-    stage: "CROSS",
-    name: "Sexy Move x6 (Luyện tốc độ tay)",
-    formula: "(R U R' U') (R U R' U') (R U R' U') (R U R' U') (R U R' U') (R U R' U')",
-    recognition: "Lặp chuỗi 4 nước R U R' U' đúng 6 lần liên tiếp (mục tiêu < 2.5s).",
-  },
-  {
-    code: "F2L 01",
-    stage: "F2L",
-    name: "Chèn cơ bản khe Phải",
-    formula: "U (R U' R')",
-    recognition: "Góc trắng hướng sang phải, mặt trên góc & cạnh khác màu.",
-  },
-  {
-    code: "F2L 17",
-    stage: "F2L",
-    name: "Đúng góc nhưng Cạnh bị ngược trong khe",
-    formula: "(R U' R') U' (R U R') U2 (R U' R')",
-    recognition: "Cả góc và cạnh nằm trong khe FR nhưng cạnh bị lật ngược màu.",
-  },
-  {
-    code: "OLL 45",
-    stage: "OLL",
-    name: "Chữ I ngang (Tạo dấu cộng vàng)",
-    formula: "F (R U R' U') F'",
-    recognition: "[2-Look OLL] Vạch ngang 3 ô vàng trên mặt U.",
-  },
-  {
-    code: "OLL 27",
-    stage: "OLL",
-    name: "Sune (Con cá bơi sang trái)",
-    formula: "(R U R' U) (R U2 R')",
-    recognition: "[2-Look OLL] Hình con cá có 1 góc vàng ở Trước-Trái.",
-  },
-  {
-    code: "OLL 33",
-    stage: "OLL",
-    name: "T-Shape (Sexy + Sledge)",
-    formula: "(R U R' U') (R' F R F')",
-    recognition: "[Full OLL] Hình chữ T nằm ngang, tổ hợp 8 nước siêu tốc.",
-  },
-  {
-    code: "PLL - T",
-    stage: "PLL",
-    name: "T Perm (Hoán vị hình chữ T)",
-    formula: "(R U R' U') R' F R2 U' R' U' (R U R' F')",
-    recognition: "[2-Look PLL] Đèn pha bên Trái, đổi 2 góc bên Phải và 2 cạnh.",
-  },
-  {
-    code: "PLL - Y",
-    stage: "PLL",
-    name: "Y Perm (Đổi 2 góc chéo nhau)",
-    formula: "F (R U' R' U') (R U R' F') (R U R' U') (R' F R F')",
-    recognition: "[2-Look PLL] Không có đèn pha ở cả 4 mặt, đổi 2 góc chéo.",
-  },
-  {
-    code: "PLL - Ua",
-    stage: "PLL",
-    name: "Ua Perm (Đổi 3 cạnh ngược chiều KĐH)",
-    formula: "(R U' R U) (R U) (R U' R' U') R2",
-    recognition: "[2-Look PLL] Thanh 3 ô đã giải đặt ở mặt Sau.",
-  },
-  {
-    code: "PLL - Ub",
-    stage: "PLL",
-    name: "Ub Perm (Đổi 3 cạnh cùng chiều KĐH)",
-    formula: "R2 U (R U R' U') R' U' (R' U R')",
-    recognition: "[2-Look PLL] Thanh 3 ô đã giải ở mặt Sau, 3 cạnh xoay chiều KĐH.",
-  },
-  {
-    code: "PLL - H",
-    stage: "PLL",
-    name: "H Perm (Đổi chéo 2 cặp cạnh đối diện)",
-    formula: "M2 U M2 U2 M2 U M2",
-    recognition: "[2-Look PLL] Cả 4 mặt có đèn pha kèm viên cạnh đối diện ở giữa.",
-  },
-  {
-    code: "PLL - Jb",
-    stage: "PLL",
-    name: "Jb Perm (Chữ J phải siêu tốc)",
-    formula: "(R U R' F') (R U R' U') R' F R2 U' R'",
-    recognition: "[Full PLL] Nguyên thanh 3 ô đã giải đặt ở bên Trái.",
-  },
-] as const;
-
 export default function App() {
   useKeepAwake();
 
@@ -163,6 +103,24 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   const [solves, setSolves] = useState<Solve[]>([]);
   const [scramble, setScramble] = useState<string>("");
+  const [cfopProgress, setCfopProgress] = useState<
+    Record<string, CfopProgressItem>
+  >({});
+  const [practiceSetIds, setPracticeSetIds] = useState<string[]>([]);
+  const [cfopFilter, setCfopFilter] = useState<
+    "DUE" | "ALL" | "F2L" | "OLL" | "PLL"
+  >("DUE");
+  const [practiceQueue, setPracticeQueue] = useState<PracticeQueueState | null>(
+    null
+  );
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    description: string;
+    scopeNote?: string;
+    confirmLabel?: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   // Auth & Cloud state
   const [userId, setUserId] = useState<string | null>(null);
@@ -217,14 +175,36 @@ export default function App() {
     setUserId(uid);
     setUserEmail(email);
     setSyncing(true);
+    const cached = await loadMobileUserCache(uid);
+    if (cached) {
+      setSessions(cached.sessions);
+      setSolves(cached.solves);
+      setCfopProgress(cached.cfopProgress);
+      setPracticeSetIds(cached.practiceSetIds);
+    }
     const res = await fetchCloudMobileData(uid);
     setSyncing(false);
     if (res.error) {
-      Alert.alert("Lỗi tải Cloud DB", res.error);
+      Alert.alert("Chế độ Offline Cache", res.error);
       return;
     }
     setSessions(res.sessions);
     setSolves(res.solves);
+    const localCfop = await loadLocalMobileCfopProgress();
+    const mergedCfop = { ...localCfop, ...(res.cfopProgress ?? {}) };
+    setCfopProgress(mergedCfop);
+    await saveLocalMobileCfopProgress(mergedCfop);
+    const nextPracticeSet = Array.isArray(res.practiceSetIds)
+      ? res.practiceSetIds
+      : await loadLocalMobilePracticeSet();
+    setPracticeSetIds(nextPracticeSet);
+    await saveLocalMobilePracticeSet(nextPracticeSet);
+    await saveMobileUserCache(uid, {
+      sessions: res.sessions,
+      solves: res.solves,
+      cfopProgress: mergedCfop,
+      practiceSetIds: nextPracticeSet,
+    });
     const target = res.sessions[0];
     if (target) {
       setActiveSessionId(target.id);
@@ -234,13 +214,17 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const [loadedSettings, guest] = await Promise.all([
+      const [loadedSettings, guest, localCfop, localSet] = await Promise.all([
         loadMobileSettings(),
         loadGuestMobileData(),
+        loadLocalMobileCfopProgress(),
+        loadLocalMobilePracticeSet(),
       ]);
       setSettings(loadedSettings);
       setSessions(guest.sessions);
       setSolves(guest.solves);
+      setCfopProgress(localCfop);
+      setPracticeSetIds(localSet);
       setActiveSessionId(guest.sessions[0].id);
       setScramble(generateScramble(guest.sessions[0].puzzle));
       setReadyApp(true);
@@ -350,17 +334,7 @@ export default function App() {
 
       if (userId) {
         setSyncing(true);
-        await supabase.from("solves").insert({
-          id: newSolve.id,
-          user_id: userId,
-          session_id: newSolve.session_id,
-          puzzle: newSolve.puzzle,
-          time_ms: newSolve.time_ms,
-          penalty: newSolve.penalty,
-          scramble: newSolve.scramble,
-          comment: newSolve.comment,
-          solved_at: newSolve.solved_at,
-        });
+        await cloudInsertMobileSolve(userId, newSolve);
         setSyncing(false);
       }
     },
@@ -385,11 +359,7 @@ export default function App() {
       setSelectedSolve((prev) => (prev ? { ...prev, penalty } : null));
     }
     if (userId) {
-      await supabase
-        .from("solves")
-        .update({ penalty })
-        .eq("id", solveId)
-        .eq("user_id", userId);
+      await cloudUpdateMobileSolve(userId, solveId, { penalty });
     }
   };
 
@@ -400,15 +370,11 @@ export default function App() {
       return next;
     });
     if (userId) {
-      await supabase
-        .from("solves")
-        .update({ comment })
-        .eq("id", solveId)
-        .eq("user_id", userId);
+      await cloudUpdateMobileSolve(userId, solveId, { comment });
     }
   };
 
-  const handleDeleteSolve = async (solveId: string) => {
+  const performDeleteSolve = async (solveId: string) => {
     setIsNewPb(false);
     setSolves((prev) => {
       const next = prev.filter((s) => s.id !== solveId);
@@ -417,13 +383,126 @@ export default function App() {
     });
     if (selectedSolve?.id === solveId) setSelectedSolve(null);
     if (userId) {
-      await supabase
-        .from("solves")
-        .delete()
-        .eq("id", solveId)
-        .eq("user_id", userId);
+      await cloudDeleteMobileSolve(userId, solveId);
     }
   };
+
+  const handleDeleteSolve = (solveId: string) => {
+    const target = solves.find((s) => s.id === solveId);
+    const label = target ? formatSolveDisplay(target, settings.decimals) : "1 lượt";
+    setConfirmState({
+      title: "Xóa lượt giải này?",
+      description: `Bạn sắp xóa lượt giải ${label}${target ? ` (${target.puzzle.toUpperCase()})` : ""}.`,
+      scopeNote: userId
+        ? "Tài khoản đang đồng bộ Cloud — lượt giải này sẽ bị xóa trên mọi thiết bị."
+        : undefined,
+      confirmLabel: "Xác nhận xóa",
+      onConfirm: () => performDeleteSolve(solveId),
+    });
+  };
+
+  const performDeleteSession = async (sessionId: string) => {
+    if (sessions.length <= 1) return;
+    const nextSessions = sessions.filter((s) => s.id !== sessionId);
+    const nextSolves = solves.filter((sv) => sv.session_id !== sessionId);
+    setSessions(nextSessions);
+    setSolves(nextSolves);
+    const fallback = nextSessions[0];
+    setActiveSessionId(fallback.id);
+    setScramble(generateScramble(fallback.puzzle));
+    if (userId) {
+      await cloudDeleteMobileSession(userId, sessionId);
+    } else {
+      await saveGuestMobileSessions(nextSessions);
+      await saveGuestMobileSolves(nextSolves);
+    }
+  };
+
+  const handleDeleteSession = (sess: CubeSession) => {
+    if (sessions.length <= 1) return;
+    const count = solves.filter((sv) => sv.session_id === sess.id).length;
+    setConfirmState({
+      title: `Xóa phiên "${sess.name}"?`,
+      description: `Phiên "${sess.name}" (${sess.puzzle.toUpperCase()}) và toàn bộ ${count} lượt giải bên trong sẽ bị xóa.`,
+      scopeNote: userId
+        ? "Tài khoản đang đồng bộ Cloud — phiên này sẽ bị xóa trên tất cả thiết bị."
+        : undefined,
+      confirmLabel: "Xác nhận xóa",
+      onConfirm: () => performDeleteSession(sess.id),
+    });
+  };
+
+  const handleUpdateCfopProgress = async (item: CfopProgressItem) => {
+    const next = { ...cfopProgress, [item.alg_id]: item };
+    setCfopProgress(next);
+    await saveLocalMobileCfopProgress(next);
+    if (userId) {
+      await cloudUpsertMobileCfopProgress(userId, item);
+    }
+  };
+
+  const handleTogglePracticeSet = async (algId: string) => {
+    const exists = practiceSetIds.includes(algId);
+    const next = exists
+      ? practiceSetIds.filter((id) => id !== algId)
+      : [...practiceSetIds, algId];
+    setPracticeSetIds(next);
+    await saveLocalMobilePracticeSet(next);
+    if (userId) {
+      await cloudSaveMobilePracticeSet(userId, next);
+    }
+  };
+
+  const handleOpenCfopAlgOnTimer = async (alg: CfopAlgorithm) => {
+    const targetName = getCfopSessionName(alg);
+    let targetSess = sessions.find((s) => s.name === targetName);
+    if (!targetSess) {
+      targetSess = {
+        id: generateUuid(),
+        user_id: userId ?? undefined,
+        name: targetName,
+        puzzle: "3x3",
+        created_at: new Date().toISOString(),
+      };
+      const next = [...sessions, targetSess];
+      setSessions(next);
+      if (userId) {
+        await cloudInsertMobileSession(userId, targetSess);
+      } else {
+        await saveGuestMobileSessions(next);
+      }
+    }
+    const formula = cfopProgress[alg.id]?.preferred_formula || alg.formula;
+    setActiveSessionId(targetSess.id);
+    setScramble(`z2 ${invertAlgorithm(formula)}`);
+    setTab("timer");
+  };
+
+  const handleStartRandomPracticeSet = async () => {
+    if (practiceSetIds.length === 0) return;
+    const queue =
+      practiceQueue &&
+      practiceQueue.caseIds.length === practiceSetIds.length &&
+      practiceSetIds.every((id) => practiceQueue.caseIds.includes(id))
+        ? practiceQueue
+        : createPracticeQueue(practiceSetIds);
+    const { caseId, nextState } = drawNextFromPracticeQueue(queue);
+    setPracticeQueue(nextState);
+    const alg = CFOP_ALGORITHMS.find((a) => a.id === caseId);
+    if (alg) {
+      await handleOpenCfopAlgOnTimer(alg);
+    }
+  };
+
+  useEffect(() => {
+    if (!readyApp || !userId || sessions.length === 0) return;
+    saveMobileUserCache(userId, {
+      sessions,
+      solves,
+      cfopProgress,
+      practiceSetIds,
+    });
+  }, [readyApp, userId, sessions, solves, cfopProgress, practiceSetIds]);
 
   const handleChangePuzzle = async (puzzle: PuzzleType) => {
     const nextSessions = sessions.map((s) =>
@@ -460,13 +539,7 @@ export default function App() {
     setScramble(generateScramble(created.puzzle));
 
     if (userId) {
-      await supabase.from("cube_sessions").insert({
-        id: created.id,
-        user_id: userId,
-        name: created.name,
-        puzzle: created.puzzle,
-        created_at: created.created_at,
-      });
+      await cloudInsertMobileSession(userId, created);
     } else {
       await saveGuestMobileSessions(next);
     }
@@ -928,16 +1001,7 @@ export default function App() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() =>
-                  Alert.alert("Xóa lượt giải?", "Xóa lượt giải vừa rồi?", [
-                    { text: "Hủy", style: "cancel" },
-                    {
-                      text: "Xóa",
-                      style: "destructive",
-                      onPress: () => handleDeleteSolve(lastSolve.id),
-                    },
-                  ])
-                }
+                onPress={() => handleDeleteSolve(lastSolve.id)}
                 style={styles.actionPill}
               >
                 <Text style={[styles.actionPillText, { color: "#fda4af" }]}>
@@ -949,87 +1013,223 @@ export default function App() {
         </View>
       )}
 
-      {/* TAB 2: CFOP TRAINER */}
-      {tab === "cfop" && (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-          <Text style={styles.sectionTitle}>
-            Học viện CFOP & Luyện Bấm Giờ (Đồng bộ Cloud với Web)
-          </Text>
-          {MOBILE_CFOP_CASES.map((alg) => (
-            <View key={alg.code} style={styles.card}>
+      {/* TAB 2: CFOP TRAINER (Shared 79-case catalog + Due SRS + Custom Practice Set) */}
+      {tab === "cfop" && (() => {
+        const dueAlgs = CFOP_ALGORITHMS.filter((a) =>
+          isCfopDueForReview(cfopProgress[a.id])
+        );
+        const visibleAlgs =
+          cfopFilter === "DUE"
+            ? dueAlgs
+            : cfopFilter === "ALL"
+            ? CFOP_ALGORITHMS
+            : CFOP_ALGORITHMS.filter((a) => a.stage === cfopFilter);
+
+        return (
+          <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+            <Text style={styles.sectionTitle}>
+              Học viện CFOP & Lịch ôn SRS (Đồng bộ Web)
+            </Text>
+
+            {/* Filter Pills including Đến hạn ôn */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 8 }}
+            >
+              {(
+                [
+                  { id: "DUE", label: `Đến hạn ôn (${dueAlgs.length})` },
+                  { id: "ALL", label: `Tất cả (${CFOP_ALGORITHMS.length})` },
+                  { id: "F2L", label: "F2L" },
+                  { id: "OLL", label: "OLL" },
+                  { id: "PLL", label: "PLL" },
+                ] as const
+              ).map((f) => {
+                const active = cfopFilter === f.id;
+                return (
+                  <TouchableOpacity
+                    key={f.id}
+                    onPress={() => setCfopFilter(f.id)}
+                    style={[
+                      styles.actionPill,
+                      active && { backgroundColor: "#22d3ee" },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.actionPillText,
+                        active && { color: "#020617", fontWeight: "700" },
+                      ]}
+                    >
+                      {f.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {/* Custom Practice Set Launcher */}
+            <View style={styles.card}>
               <View
                 style={{
                   flexDirection: "row",
                   justifyContent: "space-between",
                   alignItems: "center",
+                  gap: 8,
                 }}
               >
-                <Text style={{ color: "#22d3ee", fontWeight: "800", fontSize: 12 }}>
-                  {alg.code} • {alg.stage}
+                <Text style={{ color: "#e2e8f0", fontSize: 12, flex: 1 }}>
+                  Bộ tự chọn: <Text style={{ color: "#22d3ee", fontWeight: "700" }}>{practiceSetIds.length} case</Text>
+                  {practiceSetIds.length === 0
+                    ? " — Bấm 'Chọn' trên thẻ để tạo bộ luyện ngẫu nhiên."
+                    : ""}
                 </Text>
                 <TouchableOpacity
-                  style={styles.primaryBtn}
-                  onPress={async () => {
-                    const targetName = `CFOP • ${alg.code}: ${alg.name}`;
-                    let targetSess = sessions.find((s) => s.name === targetName);
-                    if (!targetSess) {
-                      targetSess = {
-                        id: generateUuid(),
-                        user_id: userId ?? undefined,
-                        name: targetName,
-                        puzzle: "3x3",
-                        created_at: new Date().toISOString(),
-                      };
-                      const next = [...sessions, targetSess];
-                      setSessions(next);
-                      if (userId) {
-                        await supabase.from("cube_sessions").insert({
-                          id: targetSess.id,
-                          user_id: userId,
-                          name: targetSess.name,
-                          puzzle: targetSess.puzzle,
-                          created_at: targetSess.created_at,
-                        });
-                      } else {
-                        await saveGuestMobileSessions(next);
-                      }
-                    }
-                    setActiveSessionId(targetSess.id);
-                    setScramble(`z2 ${invertAlgorithm(alg.formula)}`);
-                    setTab("timer");
-                  }}
+                  disabled={practiceSetIds.length === 0}
+                  onPress={handleStartRandomPracticeSet}
+                  style={[
+                    styles.primaryBtn,
+                    practiceSetIds.length === 0 && { opacity: 0.4 },
+                  ]}
                 >
-                  <Text style={styles.primaryBtnText}>Luyện trên Timer</Text>
+                  <Text style={styles.primaryBtnText}>Luyện ngẫu nhiên</Text>
                 </TouchableOpacity>
               </View>
-              <Text
-                style={{
-                  color: "#f8fafc",
-                  fontWeight: "700",
-                  fontSize: 14,
-                  marginTop: 6,
-                }}
-              >
-                {alg.name}
-              </Text>
-              <Text
-                style={{
-                  color: "#67e8f9",
-                  fontWeight: "700",
-                  fontSize: 13,
-                  marginTop: 6,
-                  fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-                }}
-              >
-                {alg.formula}
-              </Text>
-              <Text style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>
-                {alg.recognition}
-              </Text>
             </View>
-          ))}
-        </ScrollView>
-      )}
+
+            {visibleAlgs.length === 0 ? (
+              <View style={styles.card}>
+                <Text style={{ color: "#94a3b8", fontSize: 13 }}>
+                  {cfopFilter === "DUE"
+                    ? "Hiện chưa có công thức nào đến hạn ôn SRS. Hãy chọn tab F2L/OLL/PLL để đánh dấu công thức đã học!"
+                    : "Không có công thức phù hợp."}
+                </Text>
+              </View>
+            ) : (
+              visibleAlgs.map((alg) => {
+                const prog = cfopProgress[alg.id];
+                const isSelected = practiceSetIds.includes(alg.id);
+                const activeFormula = prog?.preferred_formula || alg.formula;
+                return (
+                  <View key={alg.id} style={styles.card}>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 8,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: "#22d3ee",
+                          fontWeight: "800",
+                          fontSize: 12,
+                        }}
+                      >
+                        {alg.code} • {alg.stage}
+                        {prog?.status === "mastered"
+                          ? " • Thành thạo"
+                          : prog?.status === "learned"
+                          ? " • Đã thuộc"
+                          : ""}
+                      </Text>
+
+                      <View style={{ flexDirection: "row", gap: 6 }}>
+                        <TouchableOpacity
+                          onPress={() => handleTogglePracticeSet(alg.id)}
+                          style={[
+                            styles.actionPill,
+                            isSelected && { backgroundColor: "#06b6d4" },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.actionPillText,
+                              isSelected && { color: "#020617", fontWeight: "700" },
+                            ]}
+                          >
+                            {isSelected ? "✓ Đã chọn" : "+ Chọn"}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.primaryBtn}
+                          onPress={() => handleOpenCfopAlgOnTimer(alg)}
+                        >
+                          <Text style={styles.primaryBtnText}>Luyện</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    <Text
+                      style={{
+                        color: "#f8fafc",
+                        fontWeight: "700",
+                        fontSize: 14,
+                        marginTop: 6,
+                      }}
+                    >
+                      {alg.name}
+                    </Text>
+                    <Text
+                      style={{
+                        color: "#67e8f9",
+                        fontWeight: "700",
+                        fontSize: 13,
+                        marginTop: 6,
+                        fontFamily:
+                          Platform.OS === "ios" ? "Menlo" : "monospace",
+                      }}
+                    >
+                      {activeFormula}
+                    </Text>
+                    <Text style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>
+                      {alg.recognition}
+                    </Text>
+
+                    {/* SM-2 SRS Quick Self-Grading Row */}
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        flexWrap: "wrap",
+                        gap: 6,
+                        marginTop: 10,
+                      }}
+                    >
+                      {(
+                        [
+                          { q: 1, label: "Quên" },
+                          { q: 2, label: "Khó" },
+                          { q: 4, label: "Thuộc" },
+                          { q: 5, label: "Thành thạo" },
+                        ] as const
+                      ).map((g) => (
+                        <TouchableOpacity
+                          key={g.q}
+                          onPress={() =>
+                            handleUpdateCfopProgress(
+                              computeNextSm2Progress(
+                                alg.id,
+                                prog,
+                                g.q,
+                                activeFormula
+                              )
+                            )
+                          }
+                          style={styles.actionPill}
+                        >
+                          <Text style={styles.actionPillText}>{g.label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </ScrollView>
+        );
+      })()}
 
       {/* TAB 2B: 2D CUBE NET */}
       {tab === "cube" && (
@@ -1412,25 +1612,47 @@ export default function App() {
             <Text style={styles.sectionTitle}>Chọn hoặc tạo Session</Text>
             <ScrollView style={{ maxHeight: 220, marginVertical: 10 }}>
               {sessions.map((s) => (
-                <TouchableOpacity
+                <View
                   key={s.id}
-                  onPress={() => {
-                    setActiveSessionId(s.id);
-                    setScramble(generateScramble(s.puzzle));
-                    setSessionModalOpen(false);
-                  }}
                   style={[
                     styles.sessionOption,
+                    {
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    },
                     s.id === activeSession.id && {
                       borderColor: "#22d3ee",
                       backgroundColor: "rgba(34,211,238,0.12)",
                     },
                   ]}
                 >
-                  <Text style={{ color: "#f8fafc", fontWeight: "600" }}>
-                    {s.name} ({s.puzzle.toUpperCase()})
-                  </Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ flex: 1 }}
+                    onPress={() => {
+                      setActiveSessionId(s.id);
+                      setScramble(generateScramble(s.puzzle));
+                      setSessionModalOpen(false);
+                    }}
+                  >
+                    <Text style={{ color: "#f8fafc", fontWeight: "600" }}>
+                      {s.name} ({s.puzzle.toUpperCase()})
+                    </Text>
+                  </TouchableOpacity>
+                  {sessions.length > 1 && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSessionModalOpen(false);
+                        handleDeleteSession(s);
+                      }}
+                      style={{ paddingHorizontal: 8, paddingVertical: 4 }}
+                    >
+                      <Text style={{ color: "#fb7185", fontSize: 12, fontWeight: "700" }}>
+                        Xóa
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               ))}
             </ScrollView>
 
@@ -1560,6 +1782,28 @@ export default function App() {
           )}
         </View>
       </Modal>
+      {/* Centralized Confirmation Modal for all destructive actions */}
+      <ConfirmModal
+        visible={confirmState !== null}
+        title={confirmState?.title ?? ""}
+        description={confirmState?.description ?? ""}
+        scopeNote={confirmState?.scopeNote}
+        confirmLabel={confirmState?.confirmLabel ?? "Xác nhận xóa"}
+        busy={confirmBusy}
+        onCancel={() => {
+          if (!confirmBusy) setConfirmState(null);
+        }}
+        onConfirm={async () => {
+          if (!confirmState || confirmBusy) return;
+          setConfirmBusy(true);
+          try {
+            await confirmState.onConfirm();
+          } finally {
+            setConfirmBusy(false);
+            setConfirmState(null);
+          }
+        }}
+      />
     </SafeAreaView>
   );
 }

@@ -69,6 +69,8 @@ interface TimerDisplayProps {
   onDeleteLastSolve: () => void;
   onCommentLastSolve: (comment: string) => void;
   onToggleSplitMode: (next: SplitMode) => void;
+  compModeTrigger?: number;
+  onCompetitionModeChange?: (active: boolean) => void;
 }
 
 export default function TimerDisplay({
@@ -85,6 +87,8 @@ export default function TimerDisplay({
   onDeleteLastSolve,
   onCommentLastSolve,
   onToggleSplitMode,
+  compModeTrigger = 0,
+  onCompetitionModeChange,
 }: TimerDisplayProps) {
   const [phase, setPhase] = useState<TimerPhase>("idle");
   const [displayMs, setDisplayMs] = useState<number>(0);
@@ -102,6 +106,17 @@ export default function TimerDisplay({
   // WCA Competition Simulator Mode (5-solve Ao5 round with BPA/WPA)
   const [compModeActive, setCompModeActive] = useState(false);
   const [compRoundSolves, setCompRoundSolves] = useState<Solve[]>([]);
+
+  useEffect(() => {
+    if (compModeTrigger > 0) {
+      setCompModeActive(true);
+      setCompRoundSolves([]);
+    }
+  }, [compModeTrigger]);
+
+  useEffect(() => {
+    onCompetitionModeChange?.(compModeActive);
+  }, [compModeActive, onCompetitionModeChange]);
 
   const phaseRef = useRef<TimerPhase>("idle");
   const startTimeRef = useRef<number>(0);
@@ -920,9 +935,7 @@ export default function TimerDisplay({
                 <button
                   type="button"
                   onClick={(e) => {
-                    if (window.confirm("Xóa lượt giải vừa rồi?")) {
-                      onDeleteLastSolve();
-                    }
+                    onDeleteLastSolve();
                     e.currentTarget.blur();
                   }}
                   className="px-3 py-1.5 rounded-xl text-xs font-medium bg-white/[0.06] hover:bg-rose-500/20 hover:text-rose-300 border border-white/10 transition inline-flex items-center gap-1 opacity-85"

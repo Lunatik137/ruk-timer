@@ -6,6 +6,7 @@ import {
   getCfopSessionName,
   isCfopDueForReview,
 } from "@/lib/cfop";
+import { MIN_SPLIT_DIAGNOSTIC_SAMPLES } from "@/lib/core/workout";
 import { countAlgMoves, extractAlgorithmTriggers } from "@/lib/scrambles";
 import {
   calculateSessionStats,
@@ -42,7 +43,8 @@ export interface PracticeRecommendation {
     | "ADAPTIVE_CFOP"
     | "SPLIT_TIMER"
     | "CROSS_TRAINER"
-    | "COMPETITION_SIM";
+    | "COMPETITION_SIM"
+    | "GUIDED_F2L_WORKOUT";
   targetAlg?: CfopAlgorithm;
   badgeText: string;
 }
@@ -63,6 +65,9 @@ export interface DeterministicCoachReport {
     plusTwoRatePct: number;
     dnfRatePct: number;
   };
+  splitSampleCount: number;
+  minSplitDiagnosticSamples: number;
+  hasEnoughSplitSamples: boolean;
   splitBreakdown: SplitStageBreakdown | null;
   weakestAlgorithms: WeakAlgorithmDiagnostic[];
   dueReviewAlgorithms: CfopAlgorithm[];
@@ -151,6 +156,12 @@ export function buildDeterministicCoachReport(
 
   // 2. Analyze 4-stage CFOP Splits if present
   const splitBreakdown = computeSplitBreakdown(main3x3Solves);
+  const splitSampleCount = splitBreakdown?.sampleCount ?? 0;
+  const hasEnoughSplitSamples = splitSampleCount >= MIN_SPLIT_DIAGNOSTIC_SAMPLES;
+
+  const drillSessionIds = new Set(
+    sessions.filter((s) => cfopSessionNames.has(s.name)).map((s) => s.id)
+  );
 
   // 3. Analyze dedicated CFOP Algorithm Drill Sessions to find weakest algorithms
   const sessionByName = new Map(sessions.map((s) => [s.name, s]));
@@ -213,8 +224,8 @@ export function buildDeterministicCoachReport(
     return getAlgLearningTier(a) <= recommendedTier;
   }).slice(0, 4);
 
-  // 5. Weekly & Streak metrics
-  const weeklyComparison = computeWeeklyComparison(solves);
+  // 5. Weekly & Streak metrics (Monday-start week, device timezone; drill sessions excluded from weekly speed stats)
+  const weeklyComparison = computeWeeklyComparison(solves, { drillSessionIds });
   const streakFull = computeStreakAndHeatmap(solves);
 
   // 6. Build deterministic headline & key findings
@@ -234,26 +245,32 @@ export function buildDeterministicCoachReport(
     );
   }
 
-  if (splitBreakdown) {
+  if (splitBreakdown && hasEnoughSplitSamples) {
     const worstStage = [...splitBreakdown.stages].sort(
       (a, b) => b.deltaPct - a.deltaPct
     )[0];
     if (worstStage && worstStage.deltaPct >= 3) {
       keyFindings.push(
-        `Phân tích Split Timer (${splitBreakdown.sampleCount} lượt): Giai đoạn "${worstStage.label}" đang chiếm ${worstStage.actualPct}% tổng thời gian (${formatTimeMs(
+        `Phân tích Split Timer (${splitSampleCount} lượt): Giai đoạn "${worstStage.label}" đang chiếm ${worstStage.actualPct}% tổng thời gian (${formatTimeMs(
           worstStage.avgMs
         )}), cao hơn mức chuẩn lý tưởng (${worstStage.idealPct}%) là +${
           worstStage.deltaPct
-        }%. Đây là điểm nghẽn số 1 cần tập trung rút ngắn!`
+        }%. Đây là điểm nghẽn đáng ưu tiên cải thiện.`
       );
     } else {
       keyFindings.push(
-        `Tỷ lệ 4 giai đoạn CFOP của bạn rất cân đối so với chuẩn WCA (Cross ${splitBreakdown.stages[0].actualPct}% • F2L ${splitBreakdown.stages[1].actualPct}% • OLL ${splitBreakdown.stages[2].actualPct}% • PLL ${splitBreakdown.stages[3].actualPct}%).`
+        `Tỷ lệ 4 giai đoạn CFOP (${splitSampleCount} lượt) khá cân đối so với chuẩn WCA (Cross ${splitBreakdown.stages[0].actualPct}% • F2L ${splitBreakdown.stages[1].actualPct}% • OLL ${splitBreakdown.stages[2].actualPct}% • PLL ${splitBreakdown.stages[3].actualPct}%).`
       );
     }
+  } else if (splitSampleCount > 0) {
+    keyFindings.push(
+      `Mới có ${splitSampleCount}/${MIN_SPLIT_DIAGNOSTIC_SAMPLES} lượt có Split Timer — chưa đủ mẫu để kết luận chắc chắn điểm nghẽn giai đoạn. Hãy bấm thêm ${
+        MIN_SPLIT_DIAGNOSTIC_SAMPLES - splitSampleCount
+      } lượt bật Split Timer để Coach phân tích chính xác.`
+    );
   } else {
     keyFindings.push(
-      "Mẹo chuyên sâu: Hãy bật chế độ 'Split Timer (4 pha CFOP)' trong Cài đặt và giải thử 5 lượt để AI Coach đo chính xác tỷ lệ thời gian Cross / F2L / OLL / PLL của bạn."
+      `Chưa có lượt nào ghi Split Timer (0/${MIN_SPLIT_DIAGNOSTIC_SAMPLES}). Hãy bật 'Split Timer (4 pha CFOP)' trong Cài đặt và giải đủ ${MIN_SPLIT_DIAGNOSTIC_SAMPLES} lượt để đo chính xác tỷ lệ Cross / F2L / OLL / PLL.`
     );
   }
 
@@ -323,27 +340,36 @@ export function buildDeterministicCoachReport(
   });
 
   practicePlan.push({
+    id: "plan-guided-f2l",
+    title: "Bài tập đo kiểm F2L: 10 lượt F2L Only + 5 lượt Split đo lại",
+    durationMinutes: 12,
+    reason: hasEnoughSplitSamples && splitBreakdown
+      ? `Dựa trên ${splitSampleCount} lượt có split gần đây (F2L đang ở ${splitBreakdown.stages[1].actualPct}%), bài tập này giúp luyện F2L tập trung rồi so sánh lại ngay với mốc ban đầu.`
+      : `Chu trình chọn bài → luyện 10 lượt F2L Only → đo lại 5 lượt có Split để xây dựng mốc F2L chuẩn xác (hiện có ${splitSampleCount}/${MIN_SPLIT_DIAGNOSTIC_SAMPLES} lượt split).`,
+    actionType: "GUIDED_F2L_WORKOUT",
+    badgeText: "Đo trước & sau • MVP F2L",
+  });
+
+  practicePlan.push({
     id: "plan-split-or-comp",
-    title: splitBreakdown
+    title: hasEnoughSplitSamples
       ? "Thi đấu mô phỏng 1 vòng WCA Ao5 (Kiểm tra tâm lý BPA/WPA)"
-      : "Giải 5 lượt với chế độ Split Timer (Đo tỷ lệ Cross/F2L/OLL/PLL)",
+      : `Giải thêm ${Math.max(1, MIN_SPLIT_DIAGNOSTIC_SAMPLES - splitSampleCount)} lượt với Split Timer (${splitSampleCount}/${MIN_SPLIT_DIAGNOSTIC_SAMPLES})`,
     durationMinutes: 7,
-    reason: splitBreakdown
-      ? `Kiểm chứng sự ổn định dưới áp lực 15s Inspection để phá mốc Sub-${
-          nextMilestoneMs / 1000
-        }s.`
-      : "Thu thập dữ liệu 4 giai đoạn CFOP giúp phát hiện chính xác khâu nào đang làm chậm lượt giải của bạn.",
-    actionType: splitBreakdown ? "COMPETITION_SIM" : "SPLIT_TIMER",
-    badgeText: splitBreakdown ? "Thực chiến WCA" : "Chẩn đoán 4 pha",
+    reason: hasEnoughSplitSamples
+      ? `Vào thẳng vòng mô phỏng WCA Ao5 với scramble 3x3 chuẩn random-state để kiểm chứng phong độ dưới áp lực 15s Inspection.`
+      : `Thu thập tối thiểu ${MIN_SPLIT_DIAGNOSTIC_SAMPLES} lượt có Split 4 pha CFOP giúp Coach nhận định điểm nghẽn đủ độ tin cậy.`,
+    actionType: hasEnoughSplitSamples ? "COMPETITION_SIM" : "SPLIT_TIMER",
+    badgeText: hasEnoughSplitSamples ? "Thực chiến WCA Ao5" : `Chẩn đoán 4 pha (${splitSampleCount}/${MIN_SPLIT_DIAGNOSTIC_SAMPLES})`,
   });
 
   const headlineDiagnosis =
     main3x3Solves.length === 0
       ? "Sẵn sàng chẩn đoán! Hãy thực hiện vài lượt giải hoặc bấm vào các bài tập CFOP bên dưới để bắt đầu."
-      : splitBreakdown
+      : splitBreakdown && hasEnoughSplitSamples
       ? `Phong độ ${cuberTierLabel} • Độ ổn định ${
           consistency.consistencyScore ?? 80
-        }/100. Trọng tâm cải thiện nhanh nhất: tối ưu giai đoạn ${
+        }/100 (dựa trên ${splitSampleCount} lượt có split). Trọng tâm cải thiện: giai đoạn ${
           [...splitBreakdown.stages].sort((a, b) => b.deltaPct - a.deltaPct)[0]
             .label
         } và nâng TPS các bài ${
@@ -353,9 +379,7 @@ export function buildDeterministicCoachReport(
           mainStats.mean
         )}, PB: ${formatTimeMs(
           mainStats.bestSingle
-        )}). Hãy kết hợp luyện phản xạ CFOP ngẫu nhiên và bật Split Timer để bứt phá lên Sub-${
-          nextMilestoneMs / 1000
-        }s!`;
+        )}). Đã có ${splitSampleCount}/${MIN_SPLIT_DIAGNOSTIC_SAMPLES} lượt Split Timer — hãy hoàn thành đủ mẫu để mở khóa chẩn đoán điểm nghẽn 4 pha!`;
 
   return {
     generatedAt: new Date().toISOString(),
@@ -373,6 +397,9 @@ export function buildDeterministicCoachReport(
       plusTwoRatePct,
       dnfRatePct,
     },
+    splitSampleCount,
+    minSplitDiagnosticSamples: MIN_SPLIT_DIAGNOSTIC_SAMPLES,
+    hasEnoughSplitSamples,
     splitBreakdown,
     weakestAlgorithms: topWeakAlgs,
     dueReviewAlgorithms,

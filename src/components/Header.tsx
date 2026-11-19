@@ -155,7 +155,7 @@ export default function Header({
               }`}
             >
               <BrainCircuit className="w-3.5 h-3.5" />
-              <span>AI Coach & Thử thách</span>
+              <span>AI Coach & Video</span>
             </button>
           </div>
 
@@ -231,15 +231,7 @@ export default function Header({
                   type="button"
                   title="Xóa Session hiện tại"
                   aria-label="Xóa Session hiện tại"
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        `Xóa session "${activeSession.name}" và toàn bộ lịch sử trong session này?`
-                      )
-                    ) {
-                      onDeleteSession(activeSession.id);
-                    }
-                  }}
+                  onClick={() => onDeleteSession(activeSession.id)}
                   className="h-9 w-9 hidden sm:inline-flex items-center justify-center rounded-lg bg-white/[0.05] hover:bg-rose-500/20 hover:text-rose-400 border border-white/10 transition"
                 >
                   <Trash2 className="w-3.5 h-3.5 text-slate-300" />

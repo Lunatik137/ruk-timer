@@ -6,17 +6,20 @@ import type {
   SplitStageBreakdown,
   StatSummary,
 } from "@/types/cubing";
+import {
+  computeMeanOfN,
+  computeTrimmedAverage,
+  getEffectiveMs,
+} from "./core/solveMath";
+import {
+  computeActivity,
+  computeWeeklyReport,
+  getDeviceTimeZone,
+  type WeeklyReport,
+} from "./core/activity";
 
-/**
- * Returns effective solve time in ms, or "DNF".
- */
-export function getEffectiveMs(
-  solve: Pick<Solve, "time_ms" | "penalty">
-): number | "DNF" {
-  if (solve.penalty === "DNF") return "DNF";
-  if (solve.penalty === "+2") return solve.time_ms + 2000;
-  return solve.time_ms;
-}
+export { getEffectiveMs, computeMeanOfN, computeTrimmedAverage };
+export type { WeeklyReport };
 
 /**
  * Formats milliseconds into standard cubing time display (e.g. 9.42, 1:04.28).
@@ -112,59 +115,6 @@ export function parseManualTimeInput(raw: string): number | null {
   }
 
   return null;
-}
-
-/**
- * Calculates Mean of N (no trimming; any DNF makes result DNF).
- */
-export function computeMeanOfN(
-  window: (number | "DNF")[]
-): number | "DNF" | null {
-  if (window.length === 0) return null;
-  let sum = 0;
-  for (const v of window) {
-    if (v === "DNF") return "DNF";
-    sum += v;
-  }
-  return Math.round(sum / window.length);
-}
-
-/**
- * Calculates WCA Trimmed Average of N (Ao5, Ao12, Ao50, Ao100).
- * Trims ceil(N * 0.05) best and worst solves (minimum 1 each when N >= 5).
- */
-export function computeTrimmedAverage(
-  window: (number | "DNF")[],
-  n: number
-): number | "DNF" | null {
-  if (window.length < n) return null;
-  const slice = window.slice(window.length - n);
-  const trimCount = Math.max(1, Math.ceil(n * 0.05));
-
-  let dnfCount = 0;
-  const numericValues: number[] = [];
-
-  for (const v of slice) {
-    if (v === "DNF") {
-      dnfCount++;
-    } else {
-      numericValues.push(v);
-    }
-  }
-
-  if (dnfCount > trimCount) return "DNF";
-
-  numericValues.sort((a, b) => a - b);
-
-  const upperNumericDrop = trimCount - dnfCount;
-  const counted = numericValues.slice(
-    trimCount,
-    numericValues.length - upperNumericDrop
-  );
-
-  if (counted.length === 0) return "DNF";
-  const sum = counted.reduce((acc, x) => acc + x, 0);
-  return Math.round(sum / counted.length);
 }
 
 /**
@@ -590,91 +540,24 @@ export function computeBpaWpa(
 }
 
 /**
- * Computes daily training streak and 84-day (12-week) activity heatmap.
+ * Computes daily training streak and 84-day (12-week) activity heatmap using
+ * Monday-start, IANA timezone-aware DST-safe calendar rules.
  */
-export function computeStreakAndHeatmap(allSolves: Solve[]): {
+export function computeStreakAndHeatmap(
+  allSolves: Solve[],
+  opts?: { tz?: string; now?: number | Date }
+): {
   currentStreak: number;
   longestStreak: number;
   todayCount: number;
   activeDaysCount: number;
   heatmapDays: { date: string; count: number; level: 0 | 1 | 2 | 3 | 4 }[];
 } {
-  const countsByDate = new Map<string, number>();
-
-  const toLocalDateKey = (d: Date) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  };
-
-  for (const s of allSolves) {
-    const dt = new Date(s.solved_at);
-    if (!Number.isNaN(dt.getTime())) {
-      const k = toLocalDateKey(dt);
-      countsByDate.set(k, (countsByDate.get(k) || 0) + 1);
-    }
-  }
-
-  const today = new Date();
-  const todayKey = toLocalDateKey(today);
-  const todayCount = countsByDate.get(todayKey) || 0;
-
-  // Calculate current streak (counting back from today or yesterday)
-  let currentStreak = 0;
-  const cursor = new Date(today);
-  if ((countsByDate.get(toLocalDateKey(cursor)) || 0) === 0) {
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  while ((countsByDate.get(toLocalDateKey(cursor)) || 0) > 0) {
-    currentStreak++;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  // Calculate longest streak over sorted dates
-  const sortedDates = [...countsByDate.keys()].sort();
-  let longestStreak = currentStreak;
-  let running = 0;
-  let prevTime: number | null = null;
-
-  for (const dStr of sortedDates) {
-    const t = new Date(`${dStr}T00:00:00`).getTime();
-    if (prevTime !== null && Math.round((t - prevTime) / 86400000) === 1) {
-      running++;
-    } else {
-      running = 1;
-    }
-    if (running > longestStreak) longestStreak = running;
-    prevTime = t;
-  }
-
-  // 84-day (12 weeks) heatmap
-  const heatmapDays: { date: string; count: number; level: 0 | 1 | 2 | 3 | 4 }[] = [];
-  for (let i = 83; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const key = toLocalDateKey(d);
-    const count = countsByDate.get(key) || 0;
-    const level: 0 | 1 | 2 | 3 | 4 =
-      count === 0
-        ? 0
-        : count < 10
-        ? 1
-        : count < 30
-        ? 2
-        : count < 60
-        ? 3
-        : 4;
-    heatmapDays.push({ date: key, count, level });
-  }
-
-  return {
-    currentStreak,
-    longestStreak,
-    todayCount,
-    activeDaysCount: countsByDate.size,
-    heatmapDays,
-  };
+  return computeActivity(allSolves, {
+    tz: opts?.tz ?? getDeviceTimeZone(),
+    now: opts?.now ?? Date.now(),
+    heatmapDays: 84,
+  });
 }
 
 /**
@@ -716,11 +599,23 @@ export function computeSessionFatigueAlert(
 }
 
 /**
- * Compares the last 7 days of practice with the previous 7 days for the Weekly Progress Report.
+ * Compares the current Monday-start calendar week with the same elapsed days
+ * of the previous week (plus full previous week), excluding CFOP drill sessions
+ * from speed performance metrics while keeping them in practice activity count.
  */
-export function computeWeeklyComparison(allSolves: Solve[]): {
+export function computeWeeklyComparison(
+  allSolves: Solve[],
+  opts?: { drillSessionIds?: Set<string>; tz?: string; now?: number | Date }
+): {
+  weekStart: string;
+  today: string;
+  elapsedDays: number;
+  isCurrentWeekComplete: boolean;
   thisWeekCount: number;
   lastWeekCount: number;
+  thisWeekPracticeCount: number;
+  lastWeekPracticeCount: number;
+  lastWeekFullCount: number;
   thisWeekMeanMs: number | null;
   lastWeekMeanMs: number | null;
   thisWeekBestSingleMs: number | null;
@@ -729,41 +624,29 @@ export function computeWeeklyComparison(allSolves: Solve[]): {
   lastWeekStdDevMs: number | null;
   meanDeltaPct: number | null; // negative means faster (improvement)
 } {
-  const now = Date.now();
-  const sevenDaysMs = 7 * 86400 * 1000;
-  const fourteenDaysMs = 14 * 86400 * 1000;
-
-  const thisWeek: Solve[] = [];
-  const lastWeek: Solve[] = [];
-
-  for (const s of allSolves) {
-    const t = new Date(s.solved_at).getTime();
-    if (Number.isNaN(t)) continue;
-    const age = now - t;
-    if (age <= sevenDaysMs) thisWeek.push(s);
-    else if (age <= fourteenDaysMs) lastWeek.push(s);
-  }
-
-  const sThis = calculateSessionStats(thisWeek).summary;
-  const sLast = calculateSessionStats(lastWeek).summary;
-
-  let meanDeltaPct: number | null = null;
-  if (sThis.mean && sLast.mean && sLast.mean > 0) {
-    meanDeltaPct = Number(
-      (((sThis.mean - sLast.mean) / sLast.mean) * 100).toFixed(1)
-    );
-  }
+  const report = computeWeeklyReport(allSolves, {
+    tz: opts?.tz ?? getDeviceTimeZone(),
+    now: opts?.now ?? Date.now(),
+    drillSessionIds: opts?.drillSessionIds,
+  });
 
   return {
-    thisWeekCount: thisWeek.length,
-    lastWeekCount: lastWeek.length,
-    thisWeekMeanMs: sThis.mean,
-    lastWeekMeanMs: sLast.mean,
-    thisWeekBestSingleMs: sThis.bestSingle,
-    lastWeekBestSingleMs: sLast.bestSingle,
-    thisWeekStdDevMs: sThis.stdDev,
-    lastWeekStdDevMs: sLast.stdDev,
-    meanDeltaPct,
+    weekStart: report.weekStart,
+    today: report.today,
+    elapsedDays: report.elapsedDays,
+    isCurrentWeekComplete: report.isCurrentWeekComplete,
+    thisWeekCount: report.thisWeek.mainCount,
+    lastWeekCount: report.lastWeekToDate.mainCount,
+    thisWeekPracticeCount: report.thisWeek.practiceCount,
+    lastWeekPracticeCount: report.lastWeekToDate.practiceCount,
+    lastWeekFullCount: report.lastWeekFull.practiceCount,
+    thisWeekMeanMs: report.thisWeek.meanMs,
+    lastWeekMeanMs: report.lastWeekToDate.meanMs,
+    thisWeekBestSingleMs: report.thisWeek.bestSingleMs,
+    lastWeekBestSingleMs: report.lastWeekToDate.bestSingleMs,
+    thisWeekStdDevMs: report.thisWeek.stdDevMs,
+    lastWeekStdDevMs: report.lastWeekToDate.stdDevMs,
+    meanDeltaPct: report.meanDeltaPct,
   };
 }
 

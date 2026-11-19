@@ -35,14 +35,7 @@ function HistoryPanelInner({
   onClearSession,
 }: HistoryPanelProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [confirmClear, setConfirmClear] = useState(false);
   const [visibleLimit, setVisibleLimit] = useState(PAGE_WINDOW_STEP);
-
-  React.useEffect(() => {
-    if (!confirmClear) return;
-    const t = setTimeout(() => setConfirmClear(false), 3000);
-    return () => clearTimeout(t);
-  }, [confirmClear]);
 
   // Reverse chronological so newest solve is on top
   const reversedSolves = useMemo(() => {
@@ -75,22 +68,11 @@ function HistoryPanelInner({
         {enrichedSolves.length > 0 && (
           <button
             type="button"
-            onClick={() => {
-              if (confirmClear) {
-                setConfirmClear(false);
-                onClearSession();
-              } else {
-                setConfirmClear(true);
-              }
-            }}
-            className={`text-[11px] px-2 py-1 rounded-lg border inline-flex items-center gap-1 transition ${
-              confirmClear
-                ? "bg-rose-500 text-white border-rose-400 font-semibold"
-                : "bg-white/[0.05] hover:bg-rose-500/20 hover:text-rose-300 border-white/10 text-slate-300"
-            }`}
+            onClick={() => onClearSession()}
+            className="text-[11px] px-2 py-1 rounded-lg border inline-flex items-center gap-1 transition bg-white/[0.05] hover:bg-rose-500/20 hover:text-rose-300 border-white/10 text-slate-300"
           >
             <Trash2 className="w-3 h-3" />
-            <span>{confirmClear ? "Xác nhận xóa?" : "Xóa hết"}</span>
+            <span>Xóa hết</span>
           </button>
         )}
       </div>

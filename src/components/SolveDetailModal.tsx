@@ -327,14 +327,10 @@ export default function SolveDetailModal({
 
             <button
               type="button"
-              onClick={() => {
-                if (window.confirm("Xóa lượt giải này?")) {
-                  onDeleteSolve(solve.id);
-                  onClose();
-                }
-              }}
+              onClick={() => onDeleteSolve(solve.id)}
               className="p-2 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 transition"
-              title="Xóa"
+              title="Xóa lượt giải"
+              aria-label="Xóa lượt giải"
             >
               <Trash2 className="w-4 h-4" />
             </button>

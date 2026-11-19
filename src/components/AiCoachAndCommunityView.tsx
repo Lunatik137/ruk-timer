@@ -1,22 +1,27 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   ArrowRight,
   Award,
   BrainCircuit,
   Calendar,
-  Check,
+  Camera,
   CheckCircle2,
-  Copy,
+  CloudUpload,
+  Download,
   Flame,
+  FolderLock,
   Layers,
+  Loader2,
   Play,
-  Share2,
+  RotateCcw,
   Sparkles,
+  Square,
   Target,
-  Trophy,
+  Trash2,
   Upload,
   Video,
 } from "lucide-react";
@@ -25,30 +30,34 @@ import {
   PracticeRecommendation,
 } from "@/lib/analytics/coach";
 import { CFOP_ALGORITHMS, CfopAlgorithm } from "@/lib/cfop";
-import { generateDailyScrambles } from "@/lib/scrambles";
+import {
+  evaluateWorkoutOutcome,
+  type GuidedWorkoutState,
+} from "@/lib/core/workout";
 import {
   computePersonalAchievements,
   computeStreakAndHeatmap,
-  computeTrimmedAverage,
   formatTimeMs,
-  parseManualTimeInput,
 } from "@/lib/stats";
-import {
-  fetchDailyLeaderboard,
-  submitDailyChallengeRecord,
-} from "@/lib/storage";
 import {
   CfopProgressItem,
   CubeSession,
-  DailySubmissionRecord,
-  PenaltyType,
-  PuzzleType,
   Solve,
   TimerSettings,
-  TrainingSubset,
+  UserFileRecord,
 } from "@/types/cubing";
 
-export type HubSubTab = "coach" | "weekly" | "daily" | "video";
+export type HubSubTab = "coach" | "weekly" | "video" | "files";
+
+type MarkOrigin = "user" | "suggested" | null;
+
+interface ConfirmRequest {
+  title: string;
+  description: string;
+  scopeNote?: string;
+  confirmLabel?: string;
+  onConfirm: () => void | Promise<void>;
+}
 
 interface AiCoachAndCommunityViewProps {
   initialTab?: HubSubTab;
@@ -58,17 +67,26 @@ interface AiCoachAndCommunityViewProps {
   cfopProgress: Record<string, CfopProgressItem>;
   userId: string | null;
   userEmail: string | null;
+  guidedWorkout: GuidedWorkoutState | null;
+  onStartGuidedWorkout: () => void;
+  onResumeGuidedWorkout: () => void;
+  onResetGuidedWorkout: () => void;
   onExecuteRecommendation: (rec: PracticeRecommendation) => void;
   onOpenAlgDrill: (alg: CfopAlgorithm) => void;
-  onLoadScrambleInMainTimer: (
-    scramble: string,
-    subset?: TrainingSubset
-  ) => void;
   onSaveVideoAnalyzedSolve: (
     timeMs: number,
     splitsMs: number[],
     comment: string
   ) => void;
+  onExportBackupBlob: () => Blob;
+  onRequestConfirm: (req: ConfirmRequest) => void;
+  onOpenAuth: () => void;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 export default function AiCoachAndCommunityView({
@@ -79,10 +97,16 @@ export default function AiCoachAndCommunityView({
   cfopProgress,
   userId,
   userEmail,
+  guidedWorkout,
+  onStartGuidedWorkout,
+  onResumeGuidedWorkout,
+  onResetGuidedWorkout,
   onExecuteRecommendation,
   onOpenAlgDrill,
-  onLoadScrambleInMainTimer,
   onSaveVideoAnalyzedSolve,
+  onExportBackupBlob,
+  onRequestConfirm,
+  onOpenAuth,
 }: AiCoachAndCommunityViewProps) {
   const [subTab, setSubTab] = useState<HubSubTab>(initialTab);
 
@@ -94,6 +118,11 @@ export default function AiCoachAndCommunityView({
   const coachReport = useMemo(
     () => buildDeterministicCoachReport(sessions, solves, cfopProgress),
     [sessions, solves, cfopProgress]
+  );
+
+  const workoutOutcome = useMemo(
+    () => (guidedWorkout ? evaluateWorkoutOutcome(guidedWorkout) : null),
+    [guidedWorkout]
   );
 
   const [coachQuestion, setCoachQuestion] = useState("");
@@ -111,7 +140,10 @@ export default function AiCoachAndCommunityView({
           deterministicReport: {
             tier: coachReport.cuberTierLabel,
             summary: coachReport.active3x3Summary,
-            splits: coachReport.splitBreakdown,
+            splits: coachReport.hasEnoughSplitSamples
+              ? coachReport.splitBreakdown
+              : null,
+            splitSampleCount: coachReport.splitSampleCount,
             weakestAlgs: coachReport.weakestAlgorithms.map((w) => ({
               code: w.alg.code,
               tps: w.estimatedTps,
@@ -122,14 +154,19 @@ export default function AiCoachAndCommunityView({
         }),
       });
       const data = await res.json();
-      if (data?.aiEnhancedText) {
+      const deterministicFallback = `${coachReport.headlineDiagnosis}\n\n• ${coachReport.keyFindings.join("\n• ")}`;
+      if (res.status === 401) {
+        setAiCoachReply(
+          `${deterministicFallback}\n\n(Đăng nhập để sử dụng thêm hỏi-đáp nâng cao từ Gemini AI. Báo cáo phân tích toán học ở trên luôn hoạt động miễn phí cho Guest.)`
+        );
+      } else if (res.status === 429) {
+        setAiCoachReply(
+          `${deterministicFallback}\n\n(${data?.error || "Đã đạt hạn mức gọi AI trong ngày."} Timer và báo cáo toán học vẫn hoạt động bình thường.)`
+        );
+      } else if (data?.aiEnhancedText) {
         setAiCoachReply(data.aiEnhancedText);
       } else {
-        setAiCoachReply(
-          `${coachReport.headlineDiagnosis}\n\n• ${coachReport.keyFindings.join(
-            "\n• "
-          )}`
-        );
+        setAiCoachReply(deterministicFallback);
       }
     } catch {
       setAiCoachReply(
@@ -163,82 +200,15 @@ export default function AiCoachAndCommunityView({
     [solves, learnedAlgCount]
   );
 
-  // 3. Daily Global Scramble Challenge & Friend Room Seed
-  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const [challengeSeed, setChallengeSeed] = useState<string>(todayStr);
-  const [customRoomInput, setCustomRoomInput] = useState<string>("");
-  const [challengePuzzle, setChallengePuzzle] = useState<PuzzleType>("3x3");
-  const [dailyInputs, setDailyInputs] = useState<string[]>([
-    "",
-    "",
-    "",
-    "",
-    "",
-  ]);
-  const [leaderboard, setLeaderboard] = useState<DailySubmissionRecord[]>([]);
-  const [copiedRoomLink, setCopiedRoomLink] = useState(false);
-
-  const dailyScrambles = useMemo(
-    () => generateDailyScrambles(challengeSeed, challengePuzzle, 5),
-    [challengeSeed, challengePuzzle]
-  );
-
-  useEffect(() => {
-    fetchDailyLeaderboard(challengeSeed, challengePuzzle).then(setLeaderboard);
-  }, [challengeSeed, challengePuzzle]);
-
-  const parsedDailyMs = useMemo(
-    () => dailyInputs.map((raw) => parseManualTimeInput(raw)),
-    [dailyInputs]
-  );
-
-  const dailyComputedAo5 = useMemo(() => {
-    if (parsedDailyMs.some((v) => v === null || v <= 0)) return null;
-    return computeTrimmedAverage(parsedDailyMs as number[], 5);
-  }, [parsedDailyMs]);
-
-  const handleSubmitDailyAo5 = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (typeof dailyComputedAo5 !== "number") return;
-    const validTimes = parsedDailyMs.filter(
-      (v): v is number => typeof v === "number" && v > 0
-    );
-    if (validTimes.length !== 5) return;
-
-    const bestSingle = Math.min(...validTimes);
-    const division: DailySubmissionRecord["division"] =
-      dailyComputedAo5 < 12000
-        ? "sub12"
-        : dailyComputedAo5 < 18000
-        ? "sub18"
-        : dailyComputedAo5 < 25000
-        ? "sub25"
-        : "open";
-
-    const displayName = userEmail
-      ? userEmail.split("@")[0]
-      : "Guest Cuber";
-
-    const record: DailySubmissionRecord = {
-      challenge_date: challengeSeed,
-      puzzle: challengePuzzle,
-      display_name: displayName,
-      division,
-      ao5_ms: dailyComputedAo5,
-      best_single_ms: bestSingle,
-      times_ms: validTimes,
-      penalties: ["OK", "OK", "OK", "OK", "OK"],
-      created_at: new Date().toISOString(),
-    };
-
-    await submitDailyChallengeRecord(userId, record);
-    const updated = await fetchDailyLeaderboard(challengeSeed, challengePuzzle);
-    setLeaderboard(updated);
-  };
-
-  // 4. AI Video Solve Analyzer (Client-side CV Frame-Difference Motion & Phase Marker)
+  // 3. Video Analyzer + Direct Camera Recording (getUserMedia + MediaRecorder)
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const livePreviewRef = useRef<HTMLVideoElement | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoName, setVideoName] = useState<string>("");
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [videoMarksSec, setVideoMarksSec] = useState<{
@@ -254,15 +224,198 @@ export default function AiCoachAndCommunityView({
     oll: null,
     pll: null,
   });
+  const [markOrigins, setMarkOrigins] = useState<{
+    start: MarkOrigin;
+    cross: MarkOrigin;
+    f2l: MarkOrigin;
+    oll: MarkOrigin;
+    pll: MarkOrigin;
+  }>({
+    start: null,
+    cross: null,
+    f2l: null,
+    oll: null,
+    pll: null,
+  });
   const [motionWaveform, setMotionWaveform] = useState<
     { timeSec: number; energy: number; isPause: boolean }[]
   >([]);
   const [analyzingVideo, setAnalyzingVideo] = useState(false);
 
+  // Camera Recorder state
+  const [recorderOpen, setRecorderOpen] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [recordedPreviewUrl, setRecordedPreviewUrl] = useState<string | null>(
+    null
+  );
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopCameraTracks = useCallback(() => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !== "inactive"
+    ) {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {
+        // ignore
+      }
+    }
+    mediaRecorderRef.current = null;
+    if (mediaStreamRef.current) {
+      for (const track of mediaStreamRef.current.getTracks()) {
+        track.stop();
+      }
+      mediaStreamRef.current = null;
+    }
+    if (livePreviewRef.current) {
+      livePreviewRef.current.srcObject = null;
+    }
+    setIsRecording(false);
+    setCameraReady(false);
+  }, []);
+
+  // Stop camera cleanly when switching sub-tab or unmounting
+  useEffect(() => {
+    if (subTab !== "video") {
+      stopCameraTracks();
+      setRecorderOpen(false);
+    }
+  }, [subTab, stopCameraTracks]);
+
+  useEffect(() => {
+    return () => {
+      stopCameraTracks();
+    };
+  }, [stopCameraTracks]);
+
+  const handleOpenCameraRecorder = async () => {
+    setCameraError(null);
+    setRecorderOpen(true);
+    setRecordedBlob(null);
+    if (recordedPreviewUrl) {
+      URL.revokeObjectURL(recordedPreviewUrl);
+      setRecordedPreviewUrl(null);
+    }
+
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia ||
+      typeof MediaRecorder === "undefined"
+    ) {
+      setCameraError(
+        "Trình duyệt này chưa hỗ trợ quay video trực tiếp (thiếu MediaDevices hoặc MediaRecorder). Bạn vẫn có thể dùng nút 'Tải video lên'."
+      );
+      return;
+    }
+
+    try {
+      // Request video only (no microphone permission needed for cubing split analysis)
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+        audio: false,
+      });
+      mediaStreamRef.current = stream;
+      setCameraReady(true);
+      requestAnimationFrame(() => {
+        if (livePreviewRef.current) {
+          livePreviewRef.current.srcObject = stream;
+          livePreviewRef.current.play().catch(() => {});
+        }
+      });
+    } catch (err) {
+      const name = err instanceof Error ? err.name : "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setCameraError(
+          "Bạn đã từ chối quyền truy cập camera. Hãy cấp quyền camera trong cài đặt trình duyệt rồi thử lại, hoặc chọn 'Tải video lên'."
+        );
+      } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        setCameraError(
+          "Không tìm thấy camera khả dụng trên thiết bị này. Bạn có thể tải video có sẵn lên để phân tích."
+        );
+      } else {
+        setCameraError(
+          "Không thể mở camera lúc này (có thể đang được ứng dụng khác sử dụng). Hãy thử lại hoặc tải video lên."
+        );
+      }
+    }
+  };
+
+  const handleStartRecording = () => {
+    const stream = mediaStreamRef.current;
+    if (!stream) return;
+    setCameraError(null);
+    recordedChunksRef.current = [];
+    setRecordSeconds(0);
+
+    const mimeCandidates = [
+      "video/webm;codecs=vp9",
+      "video/webm;codecs=vp8",
+      "video/webm",
+      "video/mp4",
+    ];
+    const mimeType =
+      mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) || "";
+
+    try {
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          recordedChunksRef.current.push(ev.data);
+        }
+      };
+      recorder.onstop = () => {
+        const type = recorder.mimeType || "video/webm";
+        const blob = new Blob(recordedChunksRef.current, { type });
+        if (blob.size > 0) {
+          const url = URL.createObjectURL(blob);
+          setRecordedBlob(blob);
+          setRecordedPreviewUrl(url);
+        }
+        if (recordTimerRef.current) {
+          clearInterval(recordTimerRef.current);
+          recordTimerRef.current = null;
+        }
+        setIsRecording(false);
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start(250);
+      setIsRecording(true);
+      recordTimerRef.current = setInterval(() => {
+        setRecordSeconds((s) => s + 1);
+      }, 1000);
+    } catch {
+      setCameraError(
+        "Không thể khởi chạy bộ ghi hình trên trình duyệt này. Vui lòng thử tải video lên."
+      );
+    }
+  };
+
+  const handleStopRecording = () => {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !== "inactive"
+    ) {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
   const handleSelectVideoFile = (file: File) => {
     if (videoUrl) URL.revokeObjectURL(videoUrl);
     const nextUrl = URL.createObjectURL(file);
     setVideoUrl(nextUrl);
+    setVideoFile(file);
     setVideoName(file.name);
     setVideoMarksSec({
       start: 0,
@@ -271,7 +424,32 @@ export default function AiCoachAndCommunityView({
       oll: null,
       pll: null,
     });
+    setMarkOrigins({
+      start: "user",
+      cross: null,
+      f2l: null,
+      oll: null,
+      pll: null,
+    });
     setMotionWaveform([]);
+  };
+
+  const handleUseRecordedClip = () => {
+    if (!recordedBlob) return;
+    const ext = recordedBlob.type.includes("mp4") ? "mp4" : "webm";
+    const file = new File(
+      [recordedBlob],
+      `ruktimer-solve-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.${ext}`,
+      { type: recordedBlob.type || "video/webm" }
+    );
+    stopCameraTracks();
+    setRecorderOpen(false);
+    if (recordedPreviewUrl) {
+      URL.revokeObjectURL(recordedPreviewUrl);
+      setRecordedPreviewUrl(null);
+    }
+    setRecordedBlob(null);
+    handleSelectVideoFile(file);
   };
 
   // On-Device Computer Vision: Samples frames from video to detect hand/cube motion & lookahead pauses
@@ -281,7 +459,7 @@ export default function AiCoachAndCommunityView({
 
     setAnalyzingVideo(true);
     const duration = Math.min(45, vid.duration);
-    const sampleStep = 0.25; // 4 samples per second
+    const sampleStep = 0.25;
     const canvas = document.createElement("canvas");
     canvas.width = 64;
     canvas.height = 64;
@@ -332,17 +510,24 @@ export default function AiCoachAndCommunityView({
     vid.currentTime = origTime;
     setMotionWaveform(samples);
 
-    // Auto-suggest 4 CFOP stage split timestamps if not manually marked yet
-    if (videoMarksSec.pll === null && duration >= 3) {
+    // Suggest 4 CFOP stage split timestamps ONLY for unmarked slots, clearly labeled as system-suggested
+    if (duration >= 3) {
       const s0 = videoMarksSec.start ?? 0;
       const span = Math.max(2, duration - s0);
-      setVideoMarksSec({
-        start: s0,
-        cross: Number((s0 + span * 0.14).toFixed(2)),
-        f2l: Number((s0 + span * 0.64).toFixed(2)),
-        oll: Number((s0 + span * 0.8).toFixed(2)),
-        pll: Number((s0 + span).toFixed(2)),
-      });
+      setVideoMarksSec((prev) => ({
+        start: prev.start ?? s0,
+        cross: prev.cross ?? Number((s0 + span * 0.14).toFixed(2)),
+        f2l: prev.f2l ?? Number((s0 + span * 0.64).toFixed(2)),
+        oll: prev.oll ?? Number((s0 + span * 0.8).toFixed(2)),
+        pll: prev.pll ?? Number((s0 + span).toFixed(2)),
+      }));
+      setMarkOrigins((prev) => ({
+        start: prev.start ?? "suggested",
+        cross: prev.cross ?? "suggested",
+        f2l: prev.f2l ?? "suggested",
+        oll: prev.oll ?? "suggested",
+        pll: prev.pll ?? "suggested",
+      }));
     }
 
     setAnalyzingVideo(false);
@@ -369,6 +554,141 @@ export default function AiCoachAndCommunityView({
     };
   }, [videoMarksSec]);
 
+  const hasUnconfirmedSuggestedMarks = Object.values(markOrigins).some(
+    (o) => o === "suggested"
+  );
+
+  // 4. Private Personal File Storage (Cloudflare R2)
+  const [r2Files, setR2Files] = useState<UserFileRecord[]>([]);
+  const [r2Mode, setR2Mode] = useState<"r2" | "mock" | null>(null);
+  const [r2Loading, setR2Loading] = useState(false);
+  const [r2Uploading, setR2Uploading] = useState(false);
+  const [r2StatusMessage, setR2StatusMessage] = useState<string | null>(null);
+
+  const loadR2Files = useCallback(async () => {
+    if (!userId) return;
+    setR2Loading(true);
+    try {
+      const res = await fetch("/api/files");
+      const data = await res.json();
+      if (res.ok) {
+        setR2Files(data.files ?? []);
+        setR2Mode(data.storageMode ?? null);
+      } else {
+        setR2StatusMessage(data.error || "Không tải được danh sách tệp");
+      }
+    } catch {
+      setR2StatusMessage("Lỗi kết nối tới kho lưu trữ");
+    } finally {
+      setR2Loading(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    if (subTab === "files" && userId) {
+      loadR2Files();
+    }
+  }, [subTab, userId, loadR2Files]);
+
+  const uploadBlobToR2 = async (
+    blob: Blob,
+    filename: string,
+    kind: "video" | "backup" | "other"
+  ) => {
+    if (!userId) {
+      onOpenAuth();
+      return;
+    }
+    setR2Uploading(true);
+    setR2StatusMessage(null);
+    try {
+      const contentType =
+        blob.type ||
+        (kind === "backup" ? "application/json" : "application/octet-stream");
+      const initRes = await fetch("/api/files/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename,
+          contentType,
+          sizeBytes: blob.size,
+          kind,
+        }),
+      });
+      const initData = await initRes.json();
+      if (!initRes.ok) {
+        setR2StatusMessage(initData.error || "Không khởi tạo được phiên tải lên");
+        return;
+      }
+
+      const putRes = await fetch(initData.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": contentType },
+        body: blob,
+      });
+      if (!putRes.ok) {
+        setR2StatusMessage(
+          "Tải tệp lên kho lưu trữ bị gián đoạn. Metadata chưa được xác nhận — bạn có thể thử lại."
+        );
+        return;
+      }
+
+      const compRes = await fetch("/api/files/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileId: initData.fileId }),
+      });
+      const compData = await compRes.json();
+      if (!compRes.ok) {
+        setR2StatusMessage(compData.error || "Xác nhận lưu tệp thất bại");
+        return;
+      }
+
+      setR2StatusMessage(`Đã lưu riêng tư "${filename}" thành công.`);
+      await loadR2Files();
+    } catch {
+      setR2StatusMessage("Lỗi mạng khi tải tệp lên kho cá nhân.");
+    } finally {
+      setR2Uploading(false);
+    }
+  };
+
+  const handleDownloadR2File = async (file: UserFileRecord) => {
+    try {
+      const res = await fetch(`/api/files/${file.id}/download`);
+      const data = await res.json();
+      if (res.ok && data.downloadUrl) {
+        window.open(data.downloadUrl, "_blank", "noopener,noreferrer");
+      } else {
+        setR2StatusMessage(data.error || "Không lấy được liên kết tải xuống");
+      }
+    } catch {
+      setR2StatusMessage("Lỗi khi yêu cầu liên kết tải xuống");
+    }
+  };
+
+  const handleDeleteR2File = (file: UserFileRecord) => {
+    onRequestConfirm({
+      title: `Xóa tệp "${file.filename}"?`,
+      description: `Tệp ${
+        file.kind === "video" ? "video" : file.kind === "backup" ? "sao lưu" : "cá nhân"
+      } (${formatBytes(file.size_bytes)}) sẽ bị xóa khỏi kho lưu trữ riêng tư của bạn.`,
+      scopeNote:
+        "Thao tác này xóa vĩnh viễn tệp trên kho lưu trữ đám mây và không thể hoàn tác.",
+      confirmLabel: "Xác nhận xóa",
+      onConfirm: async () => {
+        const res = await fetch(`/api/files/${file.id}`, { method: "DELETE" });
+        const data = await res.json();
+        if (!res.ok) {
+          setR2StatusMessage(data.error || "Xóa tệp thất bại");
+        } else {
+          setR2Files((prev) => prev.filter((f) => f.id !== file.id));
+          setR2StatusMessage(`Đã xóa "${file.filename}".`);
+        }
+      },
+    });
+  };
+
   return (
     <div className="w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-4 pb-24 lg:pb-8 space-y-4">
       {/* Sub-navigation Banner */}
@@ -379,10 +699,10 @@ export default function AiCoachAndCommunityView({
           </div>
           <div>
             <h1 className="text-lg sm:text-xl font-bold tracking-tight">
-              Trung tâm AI Practice Coach, Thử thách Hàng ngày & Phân tích Video
+              AI Practice Coach, Báo cáo Tuần, Phân tích Video & Kho tệp
             </h1>
             <p className="text-xs sm:text-sm text-slate-300">
-              Chẩn đoán điểm yếu bằng toán học xác định, theo dõi Streak 84 ngày, thi đấu Daily Ao5 & bóc tách Video
+              Chẩn đoán điểm yếu từ dữ liệu thật, theo dõi chuỗi ngày luyện tập, quay/phân tích video và lưu tệp riêng tư
             </p>
           </div>
         </div>
@@ -392,8 +712,8 @@ export default function AiCoachAndCommunityView({
             [
               { id: "coach", label: "AI Practice Coach", icon: BrainCircuit },
               { id: "weekly", label: "Báo cáo Tuần & Streak", icon: Flame },
-              { id: "daily", label: "Daily Ao5 Challenge", icon: Trophy },
-              { id: "video", label: "AI Video Analyzer", icon: Video },
+              { id: "video", label: "Video Analyzer", icon: Video },
+              { id: "files", label: "Kho tệp cá nhân", icon: FolderLock },
             ] as const
           ).map((item) => {
             const Icon = item.icon;
@@ -418,11 +738,11 @@ export default function AiCoachAndCommunityView({
       </div>
 
       {/* ==================================================================== */}
-      {/* TAB 1: HYBRID AI PRACTICE COACH & WEAKNESS DETECTOR                  */}
+      {/* TAB 1: HYBRID AI PRACTICE COACH & GUIDED F2L WORKOUT                 */}
       {/* ==================================================================== */}
       {subTab === "coach" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Left Column: Diagnosis Summary & Actionable 3-Step Practice Plan */}
+          {/* Left Column: Diagnosis Summary & Actionable Practice Plan */}
           <div className="lg:col-span-7 space-y-4">
             <div className="rounded-2xl border border-cyan-500/30 bg-white/[0.04] p-5 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -430,9 +750,15 @@ export default function AiCoachAndCommunityView({
                   <Sparkles className="w-5 h-5 text-cyan-400" />
                   <span>Chẩn đoán Phong độ & Điểm yếu Cốt lõi</span>
                 </h2>
-                <span className="px-2.5 py-1 rounded-lg bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 font-mono text-xs font-bold">
-                  {coachReport.cuberTierLabel}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-1 rounded-lg bg-white/[0.06] border border-white/10 font-mono text-[11px] text-slate-200">
+                    Split: {coachReport.splitSampleCount}/
+                    {coachReport.minSplitDiagnosticSamples} lượt
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 font-mono text-xs font-bold">
+                    {coachReport.cuberTierLabel}
+                  </span>
+                </div>
               </div>
 
               <p className="text-sm text-cyan-100 font-medium leading-relaxed">
@@ -476,15 +802,115 @@ export default function AiCoachAndCommunityView({
               </div>
             </div>
 
+            {/* Guided F2L Workout MVP Card (Select -> Drill 10 F2L -> Remeasure 5 Split) */}
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.04] p-5 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-bold flex items-center gap-2 text-white">
+                  <Layers className="w-5 h-5 text-emerald-400" />
+                  <span>Bài tập đo kiểm F2L (Luyện 10 lượt + Đo lại 5 Split)</span>
+                </h2>
+                {guidedWorkout && (
+                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/40 font-mono text-[11px] text-emerald-200">
+                    {guidedWorkout.phase === "drill_f2l"
+                      ? `Pha 1/2 • F2L Drill ${guidedWorkout.drillSolveIds.length}/${guidedWorkout.targetDrillCount}`
+                      : guidedWorkout.phase === "remeasure_splits"
+                      ? `Pha 2/2 • Đo lại Split ${guidedWorkout.remeasureSolveIds.length}/${guidedWorkout.targetRemeasureCount}`
+                      : "Hoàn thành chu trình"}
+                  </span>
+                )}
+              </div>
+
+              {!guidedWorkout ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300">
+                  <p className="flex-1 min-w-[220px] leading-relaxed">
+                    Ghi mốc F2L ban đầu từ các lượt có split gần nhất, chuyển sang{" "}
+                    <strong>10 lượt Luyện F2L (Cross giải sẵn)</strong>, sau đó đo lại{" "}
+                    <strong>5 lượt Split Timer</strong> để kiểm chứng tiến bộ thực tế.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={onStartGuidedWorkout}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold inline-flex items-center gap-1.5 transition shrink-0"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    <span>Bắt đầu bài tập F2L</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="rounded-xl bg-black/35 border border-white/10 p-3">
+                      <div className="text-slate-400 text-[11px]">Mốc ban đầu</div>
+                      <div className="font-mono font-bold text-white text-sm mt-0.5">
+                        {guidedWorkout.baseline.baselineMs !== null
+                          ? `${formatTimeMs(guidedWorkout.baseline.baselineMs, settings.decimals)} (${guidedWorkout.baseline.sampleCount} mẫu)`
+                          : "Chưa đủ mẫu mốc"}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        {guidedWorkout.baseline.label}
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-black/35 border border-white/10 p-3">
+                      <div className="text-slate-400 text-[11px]">Tiến độ luyện F2L</div>
+                      <div className="font-mono font-bold text-cyan-300 text-sm mt-0.5">
+                        {guidedWorkout.drillSolveIds.length}/{guidedWorkout.targetDrillCount} lượt
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-black/35 border border-white/10 p-3">
+                      <div className="text-slate-400 text-[11px]">Đo lại Split 4 pha</div>
+                      <div className="font-mono font-bold text-emerald-300 text-sm mt-0.5">
+                        {guidedWorkout.remeasureSolveIds.length}/{guidedWorkout.targetRemeasureCount} lượt
+                      </div>
+                    </div>
+                  </div>
+
+                  {workoutOutcome && guidedWorkout.phase === "done" && (
+                    <div className="rounded-xl bg-black/45 border border-emerald-400/35 p-3 text-emerald-100 leading-relaxed">
+                      <strong>Kết quả đo lại:</strong> {workoutOutcome.message}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {guidedWorkout.phase !== "done" && (
+                      <button
+                        type="button"
+                        onClick={onResumeGuidedWorkout}
+                        className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold inline-flex items-center gap-1.5 transition"
+                      >
+                        <span>Tiếp tục bài tập trên Timer</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onRequestConfirm({
+                          title: "Đặt lại bài tập F2L đang thực hiện?",
+                          description:
+                            "Tiến độ đo kiểm của chu trình F2L hiện tại sẽ được đặt lại. Các lượt giải đã lưu trong lịch sử vẫn được giữ nguyên.",
+                          confirmLabel: "Xác nhận đặt lại",
+                          onConfirm: onResetGuidedWorkout,
+                        })
+                      }
+                      className="px-3 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-slate-200 inline-flex items-center gap-1.5 transition"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Đặt lại bài tập</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* 3-Step Personalized Practice Plan */}
             <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-bold flex items-center gap-2">
                   <Target className="w-5 h-5 text-emerald-400" />
-                  <span>Giáo án Luyện tập Đề xuất Hôm nay (25 Phút)</span>
+                  <span>Giáo án Luyện tập Đề xuất Hôm nay</span>
                 </h2>
                 <span className="text-xs text-slate-400">
-                  Cá nhân hóa từ dữ liệu thật
+                  Mở thẳng bài luyện phù hợp
                 </span>
               </div>
 
@@ -523,7 +949,7 @@ export default function AiCoachAndCommunityView({
             </div>
           </div>
 
-          {/* Right Column: Weakest Algorithms Table & CFOP Stage Breakdown */}
+          {/* Right Column: Weakest Algorithms Table & Recommended Next Algs */}
           <div className="lg:col-span-5 space-y-4">
             <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-3">
               <h2 className="text-base font-bold flex items-center gap-2">
@@ -538,7 +964,7 @@ export default function AiCoachAndCommunityView({
                     <strong>Học viện CFOP</strong>.
                   </p>
                   <p className="text-slate-400">
-                    Khi bạn bấm giờ các bài PLL/OLL/F2L trong Drill Studio, hệ thống sẽ tự động xếp hạng các bài có tốc độ ngón tay (TPS) thấp nhất tại đây!
+                    Khi bạn bấm giờ các bài PLL/OLL/F2L trong Drill Studio, hệ thống sẽ tự động xếp hạng các bài có tốc độ ngón tay (TPS) thấp nhất tại đây.
                   </p>
                 </div>
               ) : (
@@ -582,7 +1008,6 @@ export default function AiCoachAndCommunityView({
               )}
             </div>
 
-            {/* Recommended Next Algorithms to Learn */}
             <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-3">
               <h2 className="text-base font-bold flex items-center gap-2">
                 <Layers className="w-5 h-5 text-indigo-400" />
@@ -618,11 +1043,24 @@ export default function AiCoachAndCommunityView({
       )}
 
       {/* ==================================================================== */}
-      {/* TAB 2: WEEKLY REPORT, 84-DAY STREAK HEATMAP & ACHIEVEMENTS           */}
+      {/* TAB 2: WEEKLY REPORT (MONDAY-START), 84-DAY STREAK & ACHIEVEMENTS    */}
       {/* ==================================================================== */}
       {subTab === "weekly" && (
         <div className="space-y-4">
-          {/* Top KPI Row: Weekly Comparison & Streak */}
+          <div className="rounded-xl bg-black/30 border border-white/10 px-4 py-2.5 text-xs text-slate-300 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Tuần hiện tại (bắt đầu Thứ Hai):{" "}
+              <strong className="text-cyan-300 font-mono">
+                {coachReport.weeklyComparison.weekStart} →{" "}
+                {coachReport.weeklyComparison.today}
+              </strong>{" "}
+              ({coachReport.weeklyComparison.elapsedDays}/7 ngày — so sánh cùng số ngày với tuần trước)
+            </span>
+            <span className="text-slate-400">
+              Hoạt động & Streak tính mọi lượt (gồm +2, DNF, CFOP Drill); Mean tuần chỉ tính phiên giải chính.
+            </span>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
               <div className="text-xs text-slate-400">Chuỗi ngày luyện tập</div>
@@ -638,19 +1076,19 @@ export default function AiCoachAndCommunityView({
 
             <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
               <div className="text-xs text-slate-400">
-                Số lượt giải 7 ngày qua
+                Tổng lượt luyện tuần này
               </div>
               <div className="font-mono text-2xl font-bold text-cyan-300 mt-1 tabular-nums">
-                {coachReport.weeklyComparison.thisWeekCount} lượt
+                {coachReport.weeklyComparison.thisWeekPracticeCount} lượt
               </div>
               <div className="text-[11px] text-slate-400 mt-1">
-                7 ngày trước đó: {coachReport.weeklyComparison.lastWeekCount} lượt
+                Cùng kỳ tuần trước: {coachReport.weeklyComparison.lastWeekPracticeCount} lượt (cả tuần trước: {coachReport.weeklyComparison.lastWeekFullCount})
               </div>
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
               <div className="text-xs text-slate-400">
-                Mean Tuần Này vs Tuần Trước
+                Mean Phiên chính (Tuần này vs Cùng kỳ)
               </div>
               <div className="font-mono text-2xl font-bold text-emerald-400 mt-1 tabular-nums">
                 {formatTimeMs(
@@ -659,7 +1097,7 @@ export default function AiCoachAndCommunityView({
                 )}
               </div>
               <div className="text-[11px] text-slate-400 mt-1">
-                Tuần trước:{" "}
+                Cùng kỳ tuần trước:{" "}
                 {formatTimeMs(
                   coachReport.weeklyComparison.lastWeekMeanMs,
                   settings.decimals
@@ -748,23 +1186,19 @@ export default function AiCoachAndCommunityView({
                   className={`rounded-xl border p-3.5 flex flex-col justify-between gap-2 ${
                     ach.unlocked
                       ? "bg-emerald-500/10 border-emerald-400/40"
-                      : "bg-black/30 border-white/10 opacity-75"
+                      : "bg-black/30 border-white/10 opacity-70"
                   }`}
                 >
                   <div>
                     <div className="flex items-center justify-between gap-1">
-                      <span
-                        className={`text-xs font-bold ${
-                          ach.unlocked ? "text-emerald-300" : "text-slate-300"
-                        }`}
-                      >
+                      <strong className="text-xs font-bold text-white">
                         {ach.title}
-                      </span>
+                      </strong>
                       {ach.unlocked && (
                         <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-400 mt-1">
+                    <p className="text-[11px] text-slate-300 mt-1">
                       {ach.description}
                     </p>
                   </div>
@@ -779,218 +1213,7 @@ export default function AiCoachAndCommunityView({
       )}
 
       {/* ==================================================================== */}
-      {/* TAB 3: DAILY GLOBAL SCRAMBLE Ao5 CHALLENGE & FRIEND ROOM             */}
-      {/* ==================================================================== */}
-      {subTab === "daily" && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Left: 5 Official Seeded Scrambles & Result Entry */}
-          <div className="lg:col-span-7 rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
-                  <Trophy className="w-5 h-5 text-amber-400" />
-                  <span>
-                    Bộ 5 Scramble Cố Định ({challengeSeed} •{" "}
-                    {challengePuzzle.toUpperCase()})
-                  </span>
-                </h2>
-                <p className="text-xs text-slate-400">
-                  Mọi người chơi nhập cùng mã ngày/phòng đều nhận đúng 5 công thức Scramble giống hệt nhau!
-                </p>
-              </div>
-
-              <select
-                value={challengePuzzle}
-                onChange={(e) =>
-                  setChallengePuzzle(e.target.value as PuzzleType)
-                }
-                className="h-8 rounded-lg bg-slate-900 border border-white/15 px-2.5 text-xs"
-              >
-                <option value="3x3">3x3x3 Cube</option>
-                <option value="2x2">2x2x2 Cube</option>
-                <option value="4x4">4x4x4 Cube</option>
-                <option value="3x3oh">3x3x3 One-Handed</option>
-                <option value="pyraminx">Pyraminx</option>
-              </select>
-            </div>
-
-            {/* Friend Challenge Room Seed Bar */}
-            <div className="rounded-xl bg-black/35 border border-white/10 p-3 flex flex-wrap items-center gap-2 text-xs">
-              <input
-                type="text"
-                value={customRoomInput}
-                onChange={(e) => setCustomRoomInput(e.target.value)}
-                placeholder="Nhập mã Phòng Thách Đấu Bạn Bè (VD: solo-match-01)..."
-                className="flex-1 min-w-[180px] h-8 rounded-lg bg-slate-950 border border-white/15 px-2.5 text-xs"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  if (customRoomInput.trim()) {
-                    setChallengeSeed(customRoomInput.trim());
-                  }
-                }}
-                className="h-8 px-3 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 font-semibold"
-              >
-                Vào Phòng
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setChallengeSeed(todayStr);
-                  setCustomRoomInput("");
-                }}
-                className="h-8 px-2.5 rounded-lg bg-white/10 hover:bg-white/15 text-slate-300"
-              >
-                Về Hôm Nay
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  const shareTxt = `Thách đấu RukTimer Ao5 (Mã phòng: ${challengeSeed} • ${challengePuzzle.toUpperCase()})\n${dailyScrambles
-                    .map((s, i) => `${i + 1}. ${s}`)
-                    .join("\n")}`;
-                  try {
-                    await navigator.clipboard.writeText(shareTxt);
-                    setCopiedRoomLink(true);
-                    setTimeout(() => setCopiedRoomLink(false), 1800);
-                  } catch {
-                    // ignore
-                  }
-                }}
-                className="h-8 px-2.5 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/40 text-indigo-200 inline-flex items-center gap-1"
-              >
-                {copiedRoomLink ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Đã copy 5 Scramble</span>
-                  </>
-                ) : (
-                  <>
-                    <Share2 className="w-3.5 h-3.5" />
-                    <span>Copy Đề Thi</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* 5 Scrambles + Time Input Form */}
-            <form onSubmit={handleSubmitDailyAo5} className="space-y-2.5">
-              {dailyScrambles.map((scr, idx) => (
-                <div
-                  key={idx}
-                  className="rounded-xl bg-black/35 border border-white/10 p-3 flex flex-wrap items-center justify-between gap-2 text-xs"
-                >
-                  <div className="flex-1 min-w-[200px]">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-bold text-cyan-300">
-                        Lượt #{idx + 1}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onLoadScrambleInMainTimer(scr)}
-                        className="text-[11px] text-amber-300 hover:underline inline-flex items-center gap-1"
-                      >
-                        <Play className="w-3 h-3" />
-                        <span>Nạp vào Bàn Timer chính</span>
-                      </button>
-                    </div>
-                    <code className="font-mono text-slate-200 break-words">
-                      {scr}
-                    </code>
-                  </div>
-
-                  <input
-                    type="text"
-                    value={dailyInputs[idx]}
-                    onChange={(e) => {
-                      const next = [...dailyInputs];
-                      next[idx] = e.target.value;
-                      setDailyInputs(next);
-                    }}
-                    placeholder="VD: 12.45 / 1245"
-                    className="w-28 h-9 rounded-lg bg-slate-950 border border-white/15 px-2.5 text-center font-mono text-xs focus:outline-none focus:border-cyan-400"
-                  />
-                </div>
-              ))}
-
-              <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
-                <div className="text-sm font-mono">
-                  <span className="text-slate-400">Kết quả Ao5 của bạn: </span>
-                  <strong className="text-emerald-400 text-lg">
-                    {formatTimeMs(dailyComputedAo5, settings.decimals)}
-                  </strong>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={typeof dailyComputedAo5 !== "number"}
-                  className="px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-bold text-xs transition"
-                >
-                  Ghi danh lên Bảng Xếp Hạng Ngày
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Right: Tiered Daily Leaderboard */}
-          <div className="lg:col-span-5 rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-3">
-            <h2 className="text-base font-bold flex items-center gap-2">
-              <Award className="w-5 h-5 text-cyan-400" />
-              <span>
-                Bảng Xếp Hạng ({challengeSeed} • {challengePuzzle.toUpperCase()})
-              </span>
-            </h2>
-
-            {leaderboard.length === 0 ? (
-              <div className="rounded-xl bg-black/30 border border-white/10 p-6 text-center text-xs text-slate-400">
-                Chưa có kết quả nào cho mã thử thách này. Hãy là người đầu tiên hoàn thành 5 lượt giải và ghi danh!
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {leaderboard.map((row, idx) => (
-                  <div
-                    key={row.id || `${row.display_name}-${idx}`}
-                    className="rounded-xl bg-black/35 border border-white/10 p-3 flex items-center justify-between text-xs"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        className={`w-6 h-6 rounded-full flex items-center justify-center font-mono font-bold ${
-                          idx === 0
-                            ? "bg-amber-400 text-slate-950"
-                            : idx === 1
-                            ? "bg-slate-300 text-slate-950"
-                            : idx === 2
-                            ? "bg-amber-700 text-white"
-                            : "bg-white/10 text-slate-300"
-                        }`}
-                      >
-                        {idx + 1}
-                      </span>
-                      <div>
-                        <div className="font-bold text-white">
-                          {row.display_name}
-                        </div>
-                        <div className="text-[10px] text-slate-400 uppercase">
-                          Hạng: {row.division} • Best Single:{" "}
-                          {formatTimeMs(row.best_single_ms, settings.decimals)}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="font-mono text-sm font-bold text-emerald-400 tabular-nums">
-                      Ao5: {formatTimeMs(row.ao5_ms, settings.decimals)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ==================================================================== */}
-      {/* TAB 4: AI VIDEO SOLVE ANALYZER (CLIENT CV + PHASE TIMELINE)          */}
+      {/* TAB 3: VIDEO ANALYZER + DIRECT CAMERA RECORDING                      */}
       {/* ==================================================================== */}
       {subTab === "video" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -999,38 +1222,150 @@ export default function AiCoachAndCommunityView({
               <div>
                 <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
                   <Video className="w-5 h-5 text-cyan-400" />
-                  <span>
-                    AI Video Solve Analyzer (Quét Chuyển Động Tay & Tách Pha CFOP)
-                  </span>
+                  <span>Video Solve Analyzer (Quay trực tiếp & Tách pha CFOP)</span>
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Xử lý trực tiếp trên trình duyệt (On-device Computer Vision): phát hiện đoạn dừng tay (Pause) và đo thời gian 4 pha CFOP
+                  Phân tích tại chỗ trên trình duyệt — chỉ tải clip lên kho cá nhân khi bạn chủ động chọn lưu
                 </p>
               </div>
 
-              <label className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer transition">
-                <Upload className="w-3.5 h-3.5" />
-                <span>Chọn Video Lượt Giải (.mp4/.mov)</span>
-                <input
-                  type="file"
-                  accept="video/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleSelectVideoFile(f);
-                  }}
-                />
-              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleOpenCameraRecorder}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Quay video</span>
+                </button>
+
+                <label className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer transition">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Tải video lên</span>
+                  <input
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleSelectVideoFile(f);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
             </div>
 
+            {/* Direct Camera Recorder Panel */}
+            {recorderOpen && (
+              <div className="rounded-xl bg-black/50 border border-emerald-500/35 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+                    <Camera className="w-4 h-4" />
+                    <span>Quay clip lượt giải trực tiếp (không ghi âm)</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopCameraTracks();
+                      setRecorderOpen(false);
+                    }}
+                    className="text-xs px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200"
+                  >
+                    Đóng camera
+                  </button>
+                </div>
+
+                {cameraError ? (
+                  <div className="rounded-xl bg-rose-500/15 border border-rose-400/35 p-3 text-xs text-rose-200 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{cameraError}</span>
+                  </div>
+                ) : recordedPreviewUrl ? (
+                  <div className="space-y-3">
+                    <video
+                      src={recordedPreviewUrl}
+                      controls
+                      className="w-full max-h-[300px] rounded-xl bg-black object-contain"
+                    />
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (recordedPreviewUrl)
+                            URL.revokeObjectURL(recordedPreviewUrl);
+                          setRecordedPreviewUrl(null);
+                          setRecordedBlob(null);
+                          if (!mediaStreamRef.current) {
+                            handleOpenCameraRecorder();
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-medium inline-flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Quay lại</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleUseRecordedClip}
+                        className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Đưa clip vào Analyzer</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="relative rounded-xl overflow-hidden bg-black border border-white/10">
+                      <video
+                        ref={livePreviewRef}
+                        autoPlay
+                        muted
+                        playsInline
+                        className="w-full max-h-[300px] object-contain"
+                      />
+                      {isRecording && (
+                        <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-rose-600 text-white font-mono text-xs font-bold">
+                          REC • {recordSeconds}s
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-center gap-2">
+                      {!isRecording ? (
+                        <button
+                          type="button"
+                          disabled={!cameraReady}
+                          onClick={handleStartRecording}
+                          className="px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 disabled:opacity-50 text-white text-xs font-bold inline-flex items-center gap-1.5"
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                          <span>Bắt đầu quay</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleStopRecording}
+                          className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
+                        >
+                          <Square className="w-3.5 h-3.5" />
+                          <span>Dừng quay</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {!videoUrl ? (
-              <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 py-16 px-4 text-center space-y-2">
+              <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 py-14 px-4 text-center space-y-2">
                 <Video className="w-8 h-8 text-cyan-400 mx-auto opacity-75" />
                 <p className="text-sm font-semibold text-slate-200">
                   Chưa có video nào được nạp
                 </p>
                 <p className="text-xs text-slate-400 max-w-md mx-auto">
-                  Hãy chọn một video quay lượt giải Rubik của bạn để xem chậm 0.25x/0.5x, quét biểu đồ vận tốc tay phát hiện điểm khựng (Lookahead Pause) và bấm chốt 4 mốc Cross / F2L / OLL / PLL.
+                  Chọn <strong>Quay video</strong> để ghi hình trực tiếp từ camera hoặc <strong>Tải video lên</strong> từ máy để phát chậm 0.25x/0.5x, quét điểm khựng tay và chốt 4 mốc Cross / F2L / OLL / PLL.
                 </p>
               </div>
             ) : (
@@ -1079,7 +1414,7 @@ export default function AiCoachAndCommunityView({
                     <span>
                       {analyzingVideo
                         ? "Đang quét khung hình CV..."
-                        : "Quét Chuyển Động & Phát Hiện Pause (CV)"}
+                        : "Quét Chuyển Động & Gợi ý Mốc (CV)"}
                     </span>
                   </button>
                 </div>
@@ -1096,6 +1431,7 @@ export default function AiCoachAndCommunityView({
                     ] as const
                   ).map((st) => {
                     const val = videoMarksSec[st.key];
+                    const origin = markOrigins[st.key];
                     return (
                       <button
                         key={st.key}
@@ -1106,6 +1442,10 @@ export default function AiCoachAndCommunityView({
                             ...prev,
                             [st.key]: Number(cur.toFixed(2)),
                           }));
+                          setMarkOrigins((prev) => ({
+                            ...prev,
+                            [st.key]: "user",
+                          }));
                         }}
                         className="p-2 rounded-xl bg-black/40 hover:bg-white/10 border border-white/15 text-center transition"
                       >
@@ -1115,6 +1455,17 @@ export default function AiCoachAndCommunityView({
                         <div className="font-mono text-[11px] text-white mt-0.5">
                           {val !== null ? `${val}s` : "Bấm chốt"}
                         </div>
+                        {origin && (
+                          <div
+                            className={`text-[9px] mt-0.5 ${
+                              origin === "user"
+                                ? "text-emerald-300"
+                                : "text-amber-300"
+                            }`}
+                          >
+                            {origin === "user" ? "Bạn chốt" : "Hệ thống gợi ý"}
+                          </div>
+                        )}
                       </button>
                     );
                   })}
@@ -1123,7 +1474,7 @@ export default function AiCoachAndCommunityView({
             )}
           </div>
 
-          {/* Right: CV Motion Waveform, Pause Detection & Stage Breakdown */}
+          {/* Right: CV Motion Waveform, Stage Breakdown & Optional R2 Upload */}
           <div className="lg:col-span-5 rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-4">
             <h2 className="text-base font-bold flex items-center gap-2">
               <Activity className="w-5 h-5 text-emerald-400" />
@@ -1137,7 +1488,7 @@ export default function AiCoachAndCommunityView({
                     Biểu đồ Cường độ Chuyển động Tay (CV Motion)
                   </span>
                   <span className="text-[11px] text-rose-300">
-                    Đỏ = Khựng tay (Pause)
+                    Đỏ = Gợi ý đoạn khựng
                   </span>
                 </div>
                 <div className="h-20 flex items-end gap-[2px] pt-2">
@@ -1145,7 +1496,7 @@ export default function AiCoachAndCommunityView({
                     <div
                       key={idx}
                       title={`${pt.timeSec}s: Cường độ ${pt.energy}% ${
-                        pt.isPause ? "(Khựng tay / Pause)" : ""
+                        pt.isPause ? "(Gợi ý khựng tay)" : ""
                       }`}
                       style={{ height: `${Math.max(12, pt.energy)}%` }}
                       className={`flex-1 rounded-t ${
@@ -1155,11 +1506,11 @@ export default function AiCoachAndCommunityView({
                   ))}
                 </div>
                 <p className="text-[11px] text-slate-300">
-                  Phát hiện{" "}
+                  Hệ thống gợi ý{" "}
                   <strong className="text-rose-300">
                     {motionWaveform.filter((p) => p.isPause).length} khoảng giảm tốc/dừng tay
-                  </strong>{" "}
-                  trong quá trình chuyển giai đoạn.
+                  </strong>
+                  . Hãy tua chậm để kiểm tra và chốt lại các mốc nếu cần.
                 </p>
               </div>
             )}
@@ -1177,6 +1528,12 @@ export default function AiCoachAndCommunityView({
                     )}
                   </strong>
                 </div>
+
+                {hasUnconfirmedSuggestedMarks && (
+                  <div className="rounded-lg bg-amber-500/10 border border-amber-400/30 px-2.5 py-1.5 text-[11px] text-amber-200">
+                    Một số mốc đang là <strong>gợi ý ước lượng của hệ thống</strong> (chưa do bạn tự bấm chốt). Bạn có thể tua video và bấm lại từng nút mốc để chỉnh chính xác.
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-2 font-mono">
                   {["1. Cross", "2. F2L", "3. OLL", "4. PLL"].map(
@@ -1213,20 +1570,179 @@ export default function AiCoachAndCommunityView({
                   }
                   className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition"
                 >
-                  Lưu lượt giải & 4 mốc Split này vào Session hiện tại
+                  Lưu lượt giải & 4 mốc Split vào Session hiện tại
                 </button>
               </div>
             ) : (
               <div className="rounded-xl bg-black/30 border border-white/10 p-4 text-xs text-slate-400 leading-relaxed">
-                Hướng dẫn: Sau khi chọn video, bạn có thể bấm nút{" "}
+                Hướng dẫn: Sau khi quay hoặc tải video lên, bạn có thể bấm{" "}
                 <strong className="text-indigo-200">
-                  &ldquo;Quét Chuyển Động & Phát Hiện Pause (CV)&rdquo;
+                  &ldquo;Quét Chuyển Động & Gợi ý Mốc (CV)&rdquo;
                 </strong>{" "}
-                để tự động phân đoạn, hoặc bấm vào 5 nút mốc thời gian bên dưới video khi xem tới cuối mỗi pha{" "}
+                để xem đoạn khựng gợi ý, hoặc tự bấm 5 nút mốc bên dưới video khi xem tới cuối mỗi pha{" "}
                 <code>Cross → F2L → OLL → PLL</code>.
               </div>
             )}
+
+            {/* Optional Save Video to Private R2 Storage */}
+            {videoFile && (
+              <div className="rounded-xl bg-black/35 border border-white/10 p-3.5 space-y-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-200 truncate">
+                    Clip hiện tại: {videoName} ({formatBytes(videoFile.size)})
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Clip đang nằm tại máy của bạn. Chỉ tải lên kho cá nhân riêng tư (Cloudflare R2) nếu bạn muốn lưu lâu dài.
+                </p>
+                <button
+                  type="button"
+                  disabled={r2Uploading}
+                  onClick={() =>
+                    uploadBlobToR2(videoFile, videoFile.name, "video")
+                  }
+                  className="w-full py-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/15 text-cyan-200 font-semibold inline-flex items-center justify-center gap-1.5 transition disabled:opacity-50"
+                >
+                  {r2Uploading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <CloudUpload className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {userId
+                      ? r2Uploading
+                        ? "Đang tải lên kho cá nhân..."
+                        : "Lưu clip vào kho cá nhân (R2)"
+                      : "Đăng nhập để lưu clip lên kho cá nhân"}
+                  </span>
+                </button>
+                {r2StatusMessage && (
+                  <p className="text-[11px] text-cyan-300">{r2StatusMessage}</p>
+                )}
+              </div>
+            )}
           </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* TAB 4: PRIVATE PERSONAL FILE STORAGE (CLOUDFLARE R2)                 */}
+      {/* ==================================================================== */}
+      {subTab === "files" && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
+                <FolderLock className="w-5 h-5 text-cyan-400" />
+                <span>Kho tệp cá nhân riêng tư (Cloudflare R2)</span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                Lưu riêng tư video lượt giải và bản sao lưu JSON của riêng tài khoản bạn qua URL ký ngắn hạn
+                {r2Mode && (
+                  <span className="ml-2 px-2 py-0.5 rounded bg-white/10 text-cyan-300 font-mono text-[10px]">
+                    Chế độ: {r2Mode === "r2" ? "Cloudflare R2" : "Mock cục bộ (Dev)"}
+                  </span>
+                )}
+              </p>
+            </div>
+
+            {userId && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={r2Uploading}
+                  onClick={() => {
+                    const blob = onExportBackupBlob();
+                    const fname = `ruktimer-backup-${new Date()
+                      .toISOString()
+                      .slice(0, 10)}.json`;
+                    uploadBlobToR2(blob, fname, "backup");
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition"
+                >
+                  {r2Uploading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <CloudUpload className="w-3.5 h-3.5" />
+                  )}
+                  <span>Sao lưu JSON hiện tại lên kho R2</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {r2StatusMessage && (
+            <div className="rounded-xl bg-cyan-500/10 border border-cyan-400/30 px-3.5 py-2 text-xs text-cyan-200">
+              {r2StatusMessage}
+            </div>
+          )}
+
+          {!userId ? (
+            <div className="rounded-xl bg-black/35 border border-white/10 p-6 text-center space-y-3">
+              <FolderLock className="w-8 h-8 text-cyan-400 mx-auto opacity-80" />
+              <p className="text-sm font-semibold text-white">
+                Đăng nhập để sử dụng Kho tệp cá nhân riêng tư
+              </p>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Mọi video và bản sao lưu trong kho được phân quyền theo tài khoản đăng nhập. Bạn vẫn có thể phân tích video và xuất file sao lưu trực tiếp trên máy ở chế độ Guest.
+              </p>
+              <button
+                type="button"
+                onClick={onOpenAuth}
+                className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs"
+              >
+                Đăng nhập tài khoản
+              </button>
+            </div>
+          ) : r2Loading ? (
+            <div className="py-10 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+              <span>Đang tải danh sách tệp cá nhân...</span>
+            </div>
+          ) : r2Files.length === 0 ? (
+            <div className="rounded-xl bg-black/30 border border-white/10 p-6 text-center text-xs text-slate-400">
+              Chưa có tệp nào trong kho riêng tư ({userEmail}). Bạn có thể lưu bản sao lưu JSON ở nút phía trên hoặc lưu clip từ tab Video Analyzer.
+            </div>
+          ) : (
+            <div className="divide-y divide-white/10 rounded-xl border border-white/10 bg-black/30 overflow-hidden">
+              {r2Files.map((file) => (
+                <div
+                  key={file.id}
+                  className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs"
+                >
+                  <div className="min-w-0">
+                    <div className="font-semibold text-white truncate max-w-[360px]">
+                      {file.filename}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      Loại: {file.kind.toUpperCase()} •{" "}
+                      {formatBytes(file.size_bytes)} •{" "}
+                      {new Date(file.created_at).toLocaleString("vi-VN")}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadR2File(file)}
+                      className="px-3 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.15] border border-white/10 text-cyan-200 font-medium inline-flex items-center gap-1 transition"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Tải xuống</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteR2File(file)}
+                      className="px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-400/30 text-rose-300 font-medium inline-flex items-center gap-1 transition"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Xóa</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

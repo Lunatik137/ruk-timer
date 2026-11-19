@@ -15,13 +15,15 @@ import {
   solveOptimalCross,
   validateScramble,
 } from "@/lib/scrambles";
-import { PuzzleType, TrainingSubset } from "@/types/cubing";
+import { PuzzleType, ScrambleSource, TrainingSubset } from "@/types/cubing";
 
 interface ScrambleBarProps {
   puzzle: PuzzleType;
   scramble: string;
   previousScramble: string | null;
   trainingSubset: TrainingSubset;
+  scrambleSource?: ScrambleSource;
+  isGeneratingScramble?: boolean;
   onChangeTrainingSubset: (subset: TrainingSubset) => void;
   onNextScramble: () => void;
   onRestorePreviousScramble: () => void;
@@ -41,6 +43,8 @@ export default function ScrambleBar({
   scramble,
   previousScramble,
   trainingSubset,
+  scrambleSource = "random-move",
+  isGeneratingScramble = false,
   onChangeTrainingSubset,
   onNextScramble,
   onRestorePreviousScramble,
@@ -90,13 +94,23 @@ export default function ScrambleBar({
           <div className="flex flex-col items-center gap-2.5">
             {/* Top Bar: Validation Status + 3x3 Training Subset Picker */}
             <div className="w-full flex flex-wrap items-center justify-between gap-2 text-[11px]">
-              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-black/30 border border-white/10 text-slate-300">
-                <CheckCircle2
-                  className={`w-3.5 h-3.5 ${
-                    validation.valid ? "text-emerald-400" : "text-amber-400"
-                  }`}
-                />
-                <span>{validation.message}</span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-black/30 border border-white/10 text-slate-300">
+                  <CheckCircle2
+                    className={`w-3.5 h-3.5 ${
+                      validation.valid ? "text-emerald-400" : "text-amber-400"
+                    }`}
+                  />
+                  <span>{validation.message}</span>
+                </div>
+                {scrambleSource === "random-state" && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 font-medium">
+                    WCA Random-State
+                  </span>
+                )}
+                {isGeneratingScramble && (
+                  <span className="text-cyan-300">Đang tạo scramble WCA...</span>
+                )}
               </div>
 
               {is3x3Family && (
