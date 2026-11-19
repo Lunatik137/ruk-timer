@@ -47,22 +47,25 @@ import {
   UserFileRecord,
 } from "@/types/cubing";
 
+import VideoTimeline from "@/components/VideoTimeline";
+import { loadVideoDraft, saveVideoDraft } from "@/lib/videoDraft";
 import CubeNetPreview from "@/components/CubeNetPreview";
 import { generateScramble } from "@/lib/scrambles";
 import { uploadPrivateFile } from "@/lib/r2/uploadClient";
 import {
+  getRecentSplitMedians,
   getVideoSplits,
   resolveVideoDuration,
   seekVideo,
   suggestVideoMarks,
   videoPhases,
   type VideoMarks,
+  type VideoMarkOrigins,
+  type VideoPhase,
   type VideoSolveContext,
 } from "@/lib/videoAnalysis";
 
 export type HubSubTab = "coach" | "weekly" | "video" | "files";
-
-type MarkOrigin = "user" | "suggested" | null;
 
 interface ConfirmRequest {
   title: string;
@@ -254,13 +257,7 @@ export default function AiCoachAndCommunityView({
     oll: null,
     pll: null,
   });
-  const [markOrigins, setMarkOrigins] = useState<{
-    start: MarkOrigin;
-    cross: MarkOrigin;
-    f2l: MarkOrigin;
-    oll: MarkOrigin;
-    pll: MarkOrigin;
-  }>({
+  const [markOrigins, setMarkOrigins] = useState<VideoMarkOrigins>({
     start: null,
     cross: null,
     f2l: null,
@@ -272,11 +269,56 @@ export default function AiCoachAndCommunityView({
   >([]);
   const [analyzingVideo, setAnalyzingVideo] = useState(false);
 
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftStartedAt, setDraftStartedAt] = useState<number | null>(null);
+  const [draftMessage, setDraftMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!videoActive || draftReady) return;
+    let cancelled = false;
+    void loadVideoDraft().then((draft) => {
+      if (cancelled || !draft) return;
+      setVideoUrl(URL.createObjectURL(draft.file));
+      setVideoFile(draft.file);
+      setVideoName(draft.file.name);
+      setClipContext(draft.context);
+      setVideoMarksSec(draft.marks);
+      setMarkOrigins(draft.origins);
+      setDraftStartedAt(draft.startedAt);
+    }).catch(() => {
+      if (!cancelled) setDraftMessage("Không đọc được bản nháp trên trình duyệt này.");
+    }).finally(() => {
+      if (!cancelled) setDraftReady(true);
+    });
+    return () => { cancelled = true; };
+  }, [videoActive, draftReady]);
+
+  useEffect(() => {
+    if (!draftReady || !videoFile || !clipContext || draftStartedAt === null) return;
+    let current = true;
+    setDraftMessage(null);
+    void saveVideoDraft({
+      file: videoFile,
+      context: clipContext,
+      marks: videoMarksSec,
+      origins: markOrigins,
+      startedAt: draftStartedAt,
+    }).then(() => {
+      if (current) setDraftMessage("Đã lưu bản nháp trên thiết bị này.");
+    }).catch(() => {
+      if (current) setDraftMessage("Không lưu được bản nháp. Hãy kiểm tra dung lượng trình duyệt.");
+    });
+    return () => { current = false; };
+  }, [draftReady, videoFile, clipContext, videoMarksSec, markOrigins, draftStartedAt]);
+
   // Camera Recorder state
   const [recorderOpen, setRecorderOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordMs, setRecordMs] = useState(0);
+  const [useCountdown, setUseCountdown] = useState(false);
+  const [countdownDeadline, setCountdownDeadline] = useState<number | null>(null);
+  const [countdownSeconds, setCountdownSeconds] = useState(3);
   const [holdState, setHoldState] = useState<"idle" | "holding" | "ready">("idle");
   const recordStart = useRef<number | null>(null);
   const holdStart = useRef<number | null>(null);
@@ -307,6 +349,7 @@ export default function AiCoachAndCommunityView({
 
   const stopCameraTracks = useCallback(() => {
     cameraRequest.current += 1;
+    setCountdownDeadline(null);
     handledSpace.current = false;
     clearHold();
     stopRecordClock();
@@ -479,6 +522,38 @@ export default function AiCoachAndCommunityView({
     }
   }, [clearHold, currentContext, stopCameraTracks, stopRecordClock]);
 
+  useEffect(() => {
+    if (!videoActive || !recorderOpen || countdownDeadline === null) return;
+    const timer = setInterval(() => {
+      const remaining = countdownDeadline - performance.now();
+      if (remaining <= 0) {
+        clearInterval(timer);
+        setCountdownDeadline(null);
+        handleStartRecording();
+      } else {
+        setCountdownSeconds(Math.ceil(remaining / 1000));
+      }
+    }, 50);
+    const onVisibility = () => {
+      if (document.hidden) setCountdownDeadline(null);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [videoActive, recorderOpen, countdownDeadline, handleStartRecording]);
+
+  const startFromButton = () => {
+    if (!useCountdown) {
+      handleStartRecording();
+      return;
+    }
+    clearHold();
+    setCountdownSeconds(3);
+    setCountdownDeadline(performance.now() + 3000);
+  };
+
   const handleStopRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === "recording") {
       stopRecordClock();
@@ -494,7 +569,7 @@ export default function AiCoachAndCommunityView({
         Boolean(target.closest("input, textarea, select, video, [role='textbox'], [role='dialog']")));
 
     const keydown = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || !cameraReady || recordedPreviewUrl || cameraError) return;
+      if (event.code !== "Space" || !cameraReady || recordedPreviewUrl || cameraError || countdownDeadline !== null) return;
       if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       if (usesSpace(event.target)) return;
 
@@ -538,7 +613,7 @@ export default function AiCoachAndCommunityView({
     };
   }, [
     videoActive, recorderOpen, cameraReady, recordedPreviewUrl, cameraError,
-    settings.holdDelayMs, clearHold, handleStartRecording, handleStopRecording,
+    settings.holdDelayMs, clearHold, handleStartRecording, handleStopRecording, countdownDeadline,
   ]);
 
   const handleSelectVideoFile = (file: File, context: VideoSolveContext | null = null) => {
@@ -547,6 +622,8 @@ export default function AiCoachAndCommunityView({
     setVideoDuration(null);
     setVideoError(null);
     setPlaybackRate(1);
+    setDraftMessage(null);
+    setDraftStartedAt(Date.now());
     setClipContext(context ?? { ...currentContext, scramble: "" });
     const nextUrl = URL.createObjectURL(file);
     setVideoUrl(nextUrl);
@@ -567,6 +644,37 @@ export default function AiCoachAndCommunityView({
       pll: null,
     });
     setMotionWaveform([]);
+  };
+
+  const discardDraft = () => {
+    onRequestConfirm({
+      title: "Xóa bản nháp video?",
+      description: "Clip và các mốc đã lưu trên thiết bị này sẽ bị xóa khỏi Video Analyzer.",
+      confirmLabel: "Xóa bản nháp",
+      onConfirm: async () => {
+        scanRef.current?.abort();
+        setAnalyzingVideo(false);
+        try {
+          await saveVideoDraft(null);
+          setVideoUrl(null);
+          setVideoFile(null);
+          setVideoName("");
+          setVideoDuration(null);
+          setClipContext(null);
+          setMotionWaveform([]);
+          setVideoError(null);
+          setDraftStartedAt(null);
+          setDraftMessage(null);
+        } catch {
+          setDraftMessage("Không xóa được bản nháp. Hãy thử lại.");
+        }
+      },
+    });
+  };
+
+  const stampVideoPhase = (phase: VideoPhase, time: number) => {
+    setVideoMarksSec((prev) => ({ ...prev, [phase]: time }));
+    setMarkOrigins((prev) => ({ ...prev, [phase]: "user" }));
   };
 
   const handleUseRecordedClip = () => {
@@ -676,6 +784,20 @@ export default function AiCoachAndCommunityView({
 
   const { result: videoStageDurationsMs, error: markError } =
     getVideoSplits(videoMarksSec, videoDuration);
+  const clipPuzzle = clipContext?.puzzle;
+  const splitBaseline = useMemo(() => clipPuzzle && draftStartedAt !== null
+    ? getRecentSplitMedians(solves, clipPuzzle, draftStartedAt)
+    : null, [solves, clipPuzzle, draftStartedAt]);
+
+  const seekToPhase = (index: number) => {
+    const video = videoRef.current;
+    const stamp = videoMarksSec[videoPhases[index]];
+    if (!video || stamp === null) return;
+    video.pause();
+    video.currentTime = stamp;
+    video.scrollIntoView({ block: "nearest" });
+  };
+
   const targetSession = clipContext && sessions.find((session) => session.id === clipContext.sessionId);
   const scrambleLocked = isRecording || Boolean(recorderOpen && recordedPreviewUrl);
   const displayedContext = scrambleLocked ? recordingContext.current ?? currentContext : currentContext;
@@ -1317,14 +1439,14 @@ export default function AiCoachAndCommunityView({
                   <span>Video Solve Analyzer (Quay trực tiếp & Tách pha CFOP)</span>
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Phân tích tại chỗ trên trình duyệt — chỉ tải clip lên kho cá nhân khi bạn chủ động chọn lưu
+                  Video được lưu nháp trên thiết bị. Bạn có thể chủ động tải clip lên kho cá nhân.
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  disabled={recorderOpen}
+                  disabled={recorderOpen || !draftReady}
                   onClick={handleOpenCameraRecorder}
                   className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition disabled:opacity-50"
                 >
@@ -1338,7 +1460,7 @@ export default function AiCoachAndCommunityView({
                   <input
                     type="file"
                     accept="video/*"
-                    disabled={isRecording}
+                    disabled={isRecording || !draftReady}
                     className="hidden"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
@@ -1461,11 +1583,24 @@ export default function AiCoachAndCommunityView({
                       )}
                     </div>
                     <div className="flex items-center justify-center gap-2">
-                      {!isRecording ? (
+                      {countdownDeadline !== null ? (
+                        <>
+                          <output aria-live="polite" className="text-2xl font-bold tabular-nums">
+                            {countdownSeconds}
+                          </output>
+                          <button
+                            type="button"
+                            onClick={() => setCountdownDeadline(null)}
+                            className="min-h-11 rounded-lg bg-white/10 px-3 text-xs hover:bg-white/15"
+                          >
+                            Hủy đếm ngược
+                          </button>
+                        </>
+                      ) : !isRecording ? (
                         <button
                           type="button"
                           disabled={!cameraReady || !currentContext.scramble}
-                          onClick={handleStartRecording}
+                          onClick={startFromButton}
                           className="min-h-11 px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 disabled:opacity-50 text-white text-xs font-bold inline-flex items-center gap-1.5"
                         >
                           <Play className="w-3.5 h-3.5" />
@@ -1482,17 +1617,29 @@ export default function AiCoachAndCommunityView({
                         </button>
                       )}
                     </div>
-                    <p role="status" className={`text-center text-xs text-slate-300 ${cameraReady ? "[@media(pointer:coarse)]:sr-only" : ""}`}>
+                    {cameraReady && !isRecording && countdownDeadline === null && (
+                      <label className="flex min-h-11 items-center justify-center gap-2 text-sm text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={useCountdown}
+                          onChange={(event) => setUseCountdown(event.currentTarget.checked)}
+                          className="h-4 w-4 accent-cyan-400"
+                        />
+                        Đếm ngược 3 giây khi bấm nút quay
+                      </label>
+                    )}
+                    {countdownDeadline === null && <p role="status" className={`text-center text-xs text-slate-300 ${cameraReady ? "[@media(pointer:coarse)]:sr-only" : ""}`}>
                       {!cameraReady ? "Đang chờ camera…" : isRecording ? "Bấm Space để dừng quay."
                         : holdState === "ready" ? "Nhả Space để bắt đầu quay."
                         : holdState === "holding" ? "Tiếp tục giữ Space…"
                         : "Giữ rồi nhả Space để bắt đầu quay."}
-                    </p>
+                    </p>}
                   </div>
                 )}
               </div>
             )}
 
+            {!videoUrl && draftMessage && <p role="status" className="text-xs">{draftMessage}</p>}
             {!videoUrl ? !recorderOpen && (
               <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 py-14 px-4 text-center space-y-2">
                 <Video className="w-8 h-8 text-cyan-400 mx-auto opacity-75" />
@@ -1532,6 +1679,16 @@ export default function AiCoachAndCommunityView({
                     )}
                   </div>
                 )}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
+                  <p role="status">{draftMessage ?? "Đang lưu bản nháp trên thiết bị…"}</p>
+                  <button
+                    type="button"
+                    onClick={discardDraft}
+                    className="min-h-11 rounded-lg px-2 text-rose-200 hover:bg-rose-500/15"
+                  >
+                    Xóa bản nháp
+                  </button>
+                </div>
                 {videoError && <p role="alert" className="text-xs text-rose-200">{videoError}</p>}
 
                 {/* Playback Rate & CV Scan Controls */}
@@ -1574,59 +1731,15 @@ export default function AiCoachAndCommunityView({
                   </button>
                 </div>
 
-                {/* 5 Phase Stamp Buttons while watching video */}
-                <div className="grid grid-cols-3 gap-2 text-xs sm:grid-cols-5">
-                  {(
-                    [
-                      { key: "start", label: "0. Bắt đầu" },
-                      { key: "cross", label: "1. Xong Cross" },
-                      { key: "f2l", label: "2. Xong F2L" },
-                      { key: "oll", label: "3. Xong OLL" },
-                      { key: "pll", label: "4. Xong PLL" },
-                    ] as const
-                  ).map((st) => {
-                    const val = videoMarksSec[st.key];
-                    const origin = markOrigins[st.key];
-                    return (
-                      <button
-                        key={st.key}
-                        type="button"
-                        onClick={() => {
-                          const video = videoRef.current;
-                          if (!video || video.seeking || video.readyState < 2) return;
-                          const cur = video.currentTime;
-                          setVideoMarksSec((prev) => ({
-                            ...prev,
-                            [st.key]: cur,
-                          }));
-                          setMarkOrigins((prev) => ({
-                            ...prev,
-                            [st.key]: "user",
-                          }));
-                        }}
-                        className="p-2 rounded-xl bg-black/40 hover:bg-white/10 border border-white/15 text-center transition"
-                      >
-                        <div className="font-semibold text-cyan-300">
-                          {st.label}
-                        </div>
-                        <div className="font-mono text-[11px] text-white mt-0.5">
-                          {val !== null ? `${val.toFixed(2)}s` : "Bấm chốt"}
-                        </div>
-                        {origin && (
-                          <div
-                            className={`text-[9px] mt-0.5 ${
-                              origin === "user"
-                                ? "text-emerald-300"
-                                : "text-amber-300"
-                            }`}
-                          >
-                            {origin === "user" ? "Bạn chốt" : "Hệ thống gợi ý"}
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
+                <VideoTimeline
+                  key={videoUrl}
+                  videoRef={videoRef}
+                  duration={videoDuration}
+                  marks={videoMarksSec}
+                  origins={markOrigins}
+                  decimals={settings.decimals}
+                  onStamp={stampVideoPhase}
+                />
               </div>
             )}
           </div>
@@ -1693,10 +1806,15 @@ export default function AiCoachAndCommunityView({
 
                 {hasUnconfirmedSuggestedMarks && (
                   <div className="rounded-lg bg-amber-500/10 border border-amber-400/30 px-2.5 py-1.5 text-[11px] text-amber-200">
-                    Một số mốc đang là <strong>gợi ý ước lượng của hệ thống</strong> (chưa do bạn tự bấm chốt). Bạn có thể tua video và bấm lại từng nút mốc để chỉnh chính xác.
+                    Một số mốc đang là <strong>gợi ý ước lượng của hệ thống</strong> (chưa do bạn tự bấm chốt). Bạn có thể chọn và chốt lại mốc trên timeline để chỉnh chính xác.
                   </div>
                 )}
 
+                <p className="text-xs text-slate-300">
+                  {splitBaseline
+                    ? `So với trung vị ${splitBaseline.count} lượt gần nhất có đủ split cùng bộ môn`
+                    : "Chưa có lượt cùng bộ môn với đủ split để so sánh."}
+                </p>
                 <div className="grid grid-cols-2 gap-2 font-mono">
                   {["1. Cross", "2. F2L", "3. OLL", "4. PLL"].map(
                     (label, idx) => {
@@ -1704,6 +1822,7 @@ export default function AiCoachAndCommunityView({
                       const pct = Math.round(
                         (ms / videoStageDurationsMs.totalMs) * 100
                       );
+                      const delta = splitBaseline ? ms - splitBaseline.medians[idx] : null;
                       return (
                         <div
                           key={label}
@@ -1715,6 +1834,20 @@ export default function AiCoachAndCommunityView({
                           <div className="text-sm font-bold text-cyan-300 mt-0.5">
                             {formatTimeMs(ms, settings.decimals)} ({pct}%)
                           </div>
+                          {delta !== null && (
+                            <p className="mt-1 text-xs font-sans text-slate-300">
+                              {Math.abs(delta) < 10 ? "Ngang trung vị"
+                                : `${delta > 0 ? "Chậm hơn" : "Nhanh hơn"} ${formatTimeMs(Math.abs(delta), 2)} giây`}
+                            </p>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => seekToPhase(idx)}
+                            disabled={recorderOpen}
+                            className="min-h-11 rounded-lg text-xs font-sans text-cyan-200 hover:underline disabled:opacity-50"
+                          >
+                            Xem pha {label.slice(3)}
+                          </button>
                         </div>
                       );
                     }
@@ -1743,7 +1876,7 @@ export default function AiCoachAndCommunityView({
                 <strong className="text-indigo-200">
                   &ldquo;Quét Chuyển Động & Gợi ý Mốc (CV)&rdquo;
                 </strong>{" "}
-                để xem đoạn khựng gợi ý, hoặc tự bấm 5 nút mốc bên dưới video khi xem tới cuối mỗi pha{" "}
+                để xem đoạn khựng gợi ý, hoặc chốt các mốc trên timeline khi xem tới cuối mỗi pha{" "}
                 <code>Cross → F2L → OLL → PLL</code>.
               </div>
             )}

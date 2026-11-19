@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getVideoSplits, resolveVideoDuration, suggestVideoMarks } from "./videoAnalysis";
+import type { Solve } from "@/types/cubing";
+import { getRecentSplitMedians, getVideoSplits, resolveVideoDuration, suggestVideoMarks } from "./videoAnalysis";
 
 describe("Video Analyzer timeline", () => {
   const marks = { start: 2, cross: 4, f2l: 12, oll: 15, pll: 20 };
@@ -64,5 +65,40 @@ describe("Video Analyzer timeline", () => {
       video as unknown as HTMLVideoElement,
       new AbortController().signal
     )).toBeNull();
+  });
+});
+
+describe("recent Video Analyzer split comparison", () => {
+  const cutoff = Date.UTC(2026, 0, 31);
+  const solved = (day: number, f2l: number, overrides: Partial<Solve> = {}): Solve => ({
+    id: String(day),
+    session_id: "practice",
+    puzzle: "3x3",
+    time_ms: 6000 + f2l,
+    penalty: "OK",
+    scramble: "",
+    comment: "",
+    solved_at: new Date(Date.UTC(2026, 0, day)).toISOString(),
+    splits_ms: [1000, f2l, 2000, 3000],
+    ...overrides,
+  });
+
+  it("uses the median of the latest 20 eligible solves before the draft", () => {
+    const history = Array.from({ length: 22 }, (_, i) => solved(i + 1, 3000 + i * 100));
+    history.push(
+      solved(25, 500, { puzzle: "2x2" }),
+      solved(26, 500, { penalty: "DNF" }),
+      solved(27, 500, { splits_ms: [1000, 1500, 3500, 6500] }),
+      solved(28, 500, { splits_ms: undefined }),
+      solved(31, 500),
+    );
+    expect(getRecentSplitMedians(history.reverse(), "3x3", cutoff)).toEqual({
+      count: 20,
+      medians: [1000, 4150, 2000, 3000],
+    });
+  });
+
+  it("returns no comparison without eligible history for this puzzle", () => {
+    expect(getRecentSplitMedians([solved(1, 3000)], "2x2", cutoff)).toBeNull();
   });
 });

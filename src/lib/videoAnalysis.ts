@@ -1,4 +1,4 @@
-import type { CubeSession } from "@/types/cubing";
+import type { CubeSession, Solve } from "@/types/cubing";
 
 export type VideoSolveContext = {
   sessionId: CubeSession["id"];
@@ -9,6 +9,37 @@ export type VideoSolveContext = {
 export const videoPhases = ["start", "cross", "f2l", "oll", "pll"] as const;
 export type VideoPhase = (typeof videoPhases)[number];
 export type VideoMarks = Record<VideoPhase, number | null>;
+export type VideoMarkOrigins = Record<VideoPhase, "user" | "suggested" | null>;
+
+export const videoPhaseLabels = {
+  start: "Start",
+  cross: "Cross",
+  f2l: "F2L",
+  oll: "OLL",
+  pll: "PLL",
+};
+
+export function getRecentSplitMedians(solves: Solve[], puzzle: CubeSession["puzzle"], before: number) {
+  const recent = solves
+    .filter((solve) => {
+      const splits = solve.splits_ms;
+      return solve.puzzle === puzzle && solve.penalty !== "DNF" &&
+        Date.parse(solve.solved_at) < before &&
+        splits?.length === 4 && splits.every((ms) => Number.isFinite(ms) && ms > 0) &&
+        Math.abs(splits.reduce((sum, ms) => sum + ms, 0) - solve.time_ms) <= 5;
+    })
+    .sort((a, b) => Date.parse(b.solved_at) - Date.parse(a.solved_at))
+    .slice(0, 20);
+
+  if (!recent.length) return null;
+  const halfway = Math.floor(recent.length / 2);
+  const medians = videoPhases.slice(1).map((_, index) => {
+    const values = recent.map((solve) => solve.splits_ms![index]).sort((a, b) => a - b);
+    return recent.length % 2 === 1 ? values[halfway] : (values[halfway - 1] + values[halfway]) / 2;
+  });
+  return { count: recent.length, medians };
+}
+
 
 export function suggestVideoMarks(marks: VideoMarks, duration: number): VideoMarks {
   const start = marks.start ?? 0;
