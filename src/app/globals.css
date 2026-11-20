@@ -4,7 +4,7 @@
 
 :root {
   color-scheme: dark;
-  --rk-bottom-nav-height: calc(3.8125rem + env(safe-area-inset-bottom));
+  --rk-bottom-nav-height: calc(4.625rem + env(safe-area-inset-bottom));
 }
 
 html,
@@ -153,5 +153,50 @@ body {
       animation-timeline: --rk-report-entry;
       animation-range: entry 5% entry 65%;
     }
+  }
+}
+
+.rk-history {
+  container-type: inline-size;
+}
+
+.rk-history-line,
+.rk-history-values {
+  display: grid;
+  min-width: 0;
+  gap: 0.5rem;
+}
+
+.rk-history-line {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.rk-history-values {
+  grid-template-columns: minmax(1.75rem, 0.35fr) minmax(0, 1.2fr) minmax(0, 1fr) 1rem;
+}
+
+.rk-history-actions {
+  display: none;
+}
+
+@container (min-width: 24rem) {
+  .rk-history-line {
+    grid-template-columns: minmax(0, 1fr) 6.5rem;
+  }
+
+  .rk-history-values {
+    grid-template-columns: minmax(1.75rem, 0.35fr) minmax(0, 1.2fr) minmax(0, 1fr);
+  }
+
+  .rk-history-actions {
+    display: flex;
+  }
+
+  .rk-history-line > span.rk-history-actions {
+    justify-content: flex-end;
+  }
+
+  .rk-history-chevron {
+    display: none;
   }
 }

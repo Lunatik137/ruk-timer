@@ -874,7 +874,7 @@ export default function CfopTrainerView({
 
         {/* Search & Smart Filters (Including SRS Due Review Filter) */}
         <div className="flex flex-wrap items-center gap-2.5 pt-1">
-          <div className="relative flex-1 min-w-[220px]">
+          <div className="relative flex-1 min-w-0 basis-52">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
@@ -1668,7 +1668,7 @@ export default function CfopTrainerView({
                     value={tutorQuestion}
                     onChange={(e) => setTutorQuestion(e.target.value)}
                     placeholder="Hỏi thêm AI Gia sư (VD: Mẹo nhớ công thức này? Cách nhận diện 2 mặt?)..."
-                    className="flex-1 min-w-[220px] h-8 rounded-lg bg-black/50 border border-white/15 px-3 text-xs focus:outline-none focus:border-cyan-400"
+                    className="flex-1 min-w-0 basis-52 h-8 rounded-lg bg-black/50 border border-white/15 px-3 text-xs focus:outline-none focus:border-cyan-400"
                   />
                   <button
                     type="button"

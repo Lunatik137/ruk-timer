@@ -7,6 +7,7 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  useWindowDimensions,
   ScrollView,
   StatusBar as RNStatusBar,
   StyleSheet,
@@ -95,6 +96,7 @@ export default function App() {
   useKeepAwake();
 
   const [readyApp, setReadyApp] = useState(false);
+  const { width } = useWindowDimensions();
   const [tab, setTab] = useState<"timer" | "cfop" | "cube" | "history" | "stats">("timer");
 
   // Data state
@@ -794,6 +796,8 @@ export default function App() {
     return formatTimeMs(0, settings.decimals);
   };
 
+  const mainDigits = renderMainDigits();
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="light" />
@@ -910,8 +914,8 @@ export default function App() {
               </View>
             )}
 
-            <Text style={[styles.clockDigits, { color: clockColor }]}>
-              {renderMainDigits()}
+            <Text style={[styles.clockDigits, { color: clockColor, fontSize: Math.min(74, (width - 32) / (mainDigits.length * 0.64)) }]} numberOfLines={1} adjustsFontSizeToFit>
+              {mainDigits}
             </Text>
 
             <Text style={styles.padHint}>
@@ -1265,7 +1269,7 @@ export default function App() {
             contentContainerStyle={{ paddingBottom: 24 }}
             ListEmptyComponent={
               <Text style={styles.emptyText}>
-                Chưa có lượt giải nào trong session này.
+                Phiên này chưa có lượt giải.
               </Text>
             }
             renderItem={({ item }) => {
@@ -1279,8 +1283,8 @@ export default function App() {
                   style={styles.historyRow}
                 >
                   <Text style={styles.historyIndex}>#{item.indexNumber}</Text>
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
                       <Text
                         style={[
                           styles.historyTime,
@@ -1299,9 +1303,10 @@ export default function App() {
                       </Text>
                     ) : null}
                   </View>
-                  <Text style={styles.historyAo5}>
-                    Ao5: {formatTimeMs(item.rollingAo5, settings.decimals)}
-                  </Text>
+                  <View style={styles.historyAverage}>
+                    <Text style={styles.historyAverageLabel}>Ao5</Text>
+                    <Text style={styles.historyAo5}>{formatTimeMs(item.rollingAo5, settings.decimals)}</Text>
+                  </View>
                 </TouchableOpacity>
               );
             }}
@@ -1535,7 +1540,7 @@ export default function App() {
             [
               { id: "timer", label: "Timer" },
               { id: "cfop", label: "CFOP" },
-              { id: "history", label: `Lịch sử (${enrichedSolves.length})` },
+              { id: "history", label: "Lịch sử" },
               { id: "stats", label: "Thống kê" },
             ] as const
           ).map((item) => {
@@ -1545,6 +1550,7 @@ export default function App() {
                 key={item.id}
                 onPress={() => setTab(item.id)}
                 accessibilityRole="tab"
+                accessibilityLabel={item.id === "history" ? `Lịch sử, ${enrichedSolves.length} lượt` : item.label}
                 accessibilityState={{ selected: active }}
                 style={[styles.bottomTabBtn, active && styles.bottomTabBtnActive]}
               >
@@ -1556,6 +1562,7 @@ export default function App() {
                 >
                   {item.label}
                 </Text>
+                {item.id === "history" && <Text style={styles.historyTabCount}>{enrichedSolves.length > 99 ? "99+" : enrichedSolves.length}</Text>}
               </TouchableOpacity>
             );
           })}
@@ -1570,7 +1577,7 @@ export default function App() {
         onRequestClose={() => setCubeModalOpen(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalBox}>
+          <ScrollView style={styles.modalBox} contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
             <Text style={styles.sectionTitle}>
               Hình trải 2D ({activeSession.puzzle.toUpperCase()})
             </Text>
@@ -1598,7 +1605,7 @@ export default function App() {
                 <Text style={styles.actionPillText}>Đóng</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -1610,8 +1617,8 @@ export default function App() {
         onRequestClose={() => setSessionModalOpen(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalBox}>
-            <Text style={styles.sectionTitle}>Chọn hoặc tạo Session</Text>
+          <ScrollView style={styles.modalBox} contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+            <Text style={styles.sectionTitle}>Chọn hoặc tạo phiên</Text>
             <ScrollView style={{ maxHeight: 220, marginVertical: 10 }}>
               {sessions.map((s) => (
                 <View
@@ -1662,7 +1669,7 @@ export default function App() {
               <TextInput
                 value={newSessionName}
                 onChangeText={setNewSessionName}
-                placeholder="Tên session mới..."
+                placeholder="Tên phiên mới"
                 placeholderTextColor="#64748b"
                 style={[styles.input, { flex: 1 }]}
               />
@@ -1680,7 +1687,7 @@ export default function App() {
             >
               <Text style={{ color: "#94a3b8", fontSize: 13 }}>Đóng</Text>
             </TouchableOpacity>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -1693,12 +1700,12 @@ export default function App() {
       >
         <View style={styles.modalBackdrop}>
           {selectedSolve && (
-            <View style={styles.modalBox}>
+            <ScrollView style={styles.modalBox} contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
               <Text style={styles.sectionTitle}>
                 Lượt giải #{selectedSolve.indexNumber} (
                 {selectedSolve.puzzle.toUpperCase()})
               </Text>
-              <Text style={[styles.clockDigits, { fontSize: 42, marginVertical: 6 }]}>
+              <Text style={[styles.clockDigits, { fontSize: 42, marginVertical: 6 }]} numberOfLines={1} adjustsFontSizeToFit>
                 {formatSolveDisplay(selectedSolve, settings.decimals)}
               </Text>
               <Text style={[styles.scrambleText, { marginVertical: 8 }]}>
@@ -1780,7 +1787,7 @@ export default function App() {
                   <Text style={{ color: "#94a3b8" }}>Đóng</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            </ScrollView>
           )}
         </View>
       </Modal>
@@ -1843,6 +1850,8 @@ const styles = StyleSheet.create({
     borderBottomColor: "rgba(255,255,255,0.08)",
   },
   brandRow: {
+    flexShrink: 1,
+    flexWrap: "wrap",
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
@@ -1858,7 +1867,10 @@ const styles = StyleSheet.create({
     borderRadius: 99,
   },
   sessionBtn: {
-    maxWidth: 190,
+    flexShrink: 1,
+    maxWidth: "48%",
+    minHeight: 44,
+    justifyContent: "center",
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -1971,6 +1983,8 @@ const styles = StyleSheet.create({
   },
   inlineAvgRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
     alignItems: "center",
     gap: 12,
     marginTop: 22,
@@ -1989,6 +2003,7 @@ const styles = StyleSheet.create({
   },
   postSolveBar: {
     flexDirection: "row",
+    flexWrap: "wrap",
     justifyContent: "center",
     gap: 8,
     paddingBottom: 12,
@@ -2054,7 +2069,8 @@ const styles = StyleSheet.create({
   },
   historyIndex: {
     color: colors.muted,
-    width: 36,
+    flexShrink: 1,
+    minWidth: 28,
     fontSize: 12,
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
@@ -2078,7 +2094,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
+  historyAverage: {
+    maxWidth: "36%",
+    alignItems: "flex-end",
+  },
+  historyAverageLabel: {
+    color: colors.muted,
+    fontSize: 11,
+  },
   historyAo5: {
+    textAlign: "right",
     color: "#94a3b8",
     fontSize: 12,
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
@@ -2147,6 +2172,8 @@ const styles = StyleSheet.create({
   },
   settingRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: 10,
@@ -2168,6 +2195,8 @@ const styles = StyleSheet.create({
   },
   bottomTabBtn: {
     flex: 1,
+    minWidth: 0,
+    paddingVertical: 4,
     minHeight: 44,
     alignItems: "center",
     justifyContent: "center",
@@ -2176,7 +2205,13 @@ const styles = StyleSheet.create({
   bottomTabBtnActive: {
     backgroundColor: "rgba(103,232,249,0.12)",
   },
+  historyTabCount: {
+    color: colors.muted,
+    fontSize: 10,
+    fontVariant: ["tabular-nums"],
+  },
   bottomTabText: {
+    textAlign: "center",
     color: colors.muted,
     fontSize: 11,
     fontWeight: "600",
@@ -2192,12 +2227,14 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   modalBox: {
+    flexGrow: 0,
+    maxHeight: "100%",
     backgroundColor: colors.dialog,
     borderRadius: 18,
-    padding: 18,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
   },
+  modalContent: { padding: 18 },
   sessionOption: {
     padding: 11,
     borderRadius: 10,

@@ -1197,7 +1197,7 @@ export default function AiCoachAndCommunityView({
                     value={coachQuestion}
                     onChange={(e) => setCoachQuestion(e.target.value)}
                     placeholder="Hỏi thêm AI Coach (VD: Làm sao giảm pause khi chuyển từ Cross sang F2L?)..."
-                    className="flex-1 min-w-[220px] h-9 rounded-xl bg-black/40 border border-white/15 px-3 text-xs focus:outline-none focus:border-cyan-400"
+                    className="flex-1 min-w-0 basis-52 h-9 rounded-xl bg-black/40 border border-white/15 px-3 text-xs focus:outline-none focus:border-cyan-400"
                   />
                   <button
                     type="button"
@@ -1237,7 +1237,7 @@ export default function AiCoachAndCommunityView({
 
               {!guidedWorkout ? (
                 <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300">
-                  <p className="flex-1 min-w-[220px] leading-relaxed">
+                  <p className="flex-1 min-w-0 basis-52 leading-relaxed">
                     Ghi mốc F2L ban đầu từ các lượt có split gần nhất, chuyển sang{" "}
                     <strong>10 lượt Luyện F2L (Cross giải sẵn)</strong>, sau đó đo lại{" "}
                     <strong>5 lượt Split Timer</strong> để kiểm chứng tiến bộ thực tế.
@@ -1335,7 +1335,7 @@ export default function AiCoachAndCommunityView({
                     key={rec.id}
                     className="rounded-xl bg-black/35 border border-white/10 p-3.5 flex flex-wrap items-center justify-between gap-3"
                   >
-                    <div className="flex-1 min-w-[220px] space-y-1">
+                    <div className="flex-1 min-w-0 basis-52 space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono text-[10px] font-bold">
                           Bài #{idx + 1} • {rec.durationMinutes} phút
@@ -1614,7 +1614,7 @@ export default function AiCoachAndCommunityView({
                     </button>
 
                     {cameraDevices.length > 0 && (
-                      <label className="flex items-center gap-1.5 flex-1 min-w-[180px]">
+                      <label className="flex items-center gap-1.5 flex-1 min-w-0 basis-44">
                         <span className="sr-only">Chọn nguồn camera</span>
                         <select
                           aria-label="Chọn nguồn camera"

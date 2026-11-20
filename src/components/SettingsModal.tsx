@@ -94,7 +94,7 @@ export default function SettingsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
-        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rk-dialog text-white p-6 relative"
+        className="w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto rk-dialog text-white p-6 relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button

@@ -232,7 +232,7 @@ export default function SolveDetailModal({
           role="dialog"
           aria-modal="true"
           aria-label={`Chi tiết lượt giải ${solve.puzzle.toUpperCase()}`}
-          className="w-full max-w-xl max-h-[90vh] overflow-y-auto rk-dialog text-white p-5 sm:p-6 relative space-y-4"
+          className="w-full max-w-xl max-h-[calc(100dvh-2rem)] overflow-y-auto rk-dialog text-white p-5 sm:p-6 relative space-y-4"
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -246,7 +246,7 @@ export default function SolveDetailModal({
 
           <div className="flex flex-wrap items-baseline justify-between gap-2 pr-8">
             <div>
-              <div className="font-mono text-4xl font-bold tabular-nums">
+              <div className="font-mono text-[clamp(1.5rem,8vw,2.25rem)] font-bold tabular-nums [overflow-wrap:anywhere]">
                 {formatSolveDisplay(solve, decimals)}
               </div>
               <div className="text-xs text-slate-400 mt-1">
@@ -570,7 +570,7 @@ export default function SolveDetailModal({
         role="dialog"
         aria-modal="true"
         aria-label={`Bảng thành tích ${target.label}`}
-        className="w-full max-w-xl max-h-[85vh] flex flex-col rk-dialog text-white p-6 relative"
+        className="w-full max-w-xl max-h-[calc(100dvh-2rem)] overflow-y-auto rk-dialog text-white p-6 relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Timer } from "lucide-react";
 import { formatTimeMs } from "@/lib/stats";
 import type { Result } from "@/lib/duel/match";
 import type { PenaltyType } from "@/types/cubing";
@@ -15,6 +16,7 @@ export default function DuelTimer({ busy, inspection, submit }: { busy: boolean;
   const heldAt = useRef<number | null>(null);
   const source = useRef<"keyboard" | "pointer" | null>(null);
   const automaticPenalty = useRef<PenaltyType>("OK");
+  const focusInspection = useRef(false);
   const surface = useRef<HTMLButtonElement>(null);
   const [screen, setScreen] = useState<Phase>(initialPhase);
   const [clock, setClock] = useState(0);
@@ -88,10 +90,10 @@ export default function DuelTimer({ busy, inspection, submit }: { busy: boolean;
     frame = requestAnimationFrame(tick);
 
     function keyDown(event: KeyboardEvent) {
-      if (event.code !== "Space" || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.code !== "Space" || event.isComposing || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
       const target = event.target;
       if (target instanceof HTMLElement && target !== surface.current &&
-          target.closest("button, input, textarea, select, a[href], [contenteditable]")) return;
+          target.closest("button, input, textarea, select, a[href], summary, video, audio, [contenteditable]")) return;
       event.preventDefault();
       down("keyboard");
     }
@@ -111,14 +113,24 @@ export default function DuelTimer({ busy, inspection, submit }: { busy: boolean;
     };
   }, [screen]);
 
+  useEffect(() => {
+    if (screen === "inspection" && focusInspection.current) {
+      focusInspection.current = false;
+      surface.current?.focus({ preventScroll: true });
+    }
+  }, [screen]);
+
   if (screen === "idle") return (
-    <div className="space-y-3">
-      <p className="text-sm text-slate-300">Bắt đầu Inspection sau khi đã xáo cube.</p>
-      <button type="button" className="rk-primary" onClick={() => {
+    <div className="space-y-2">
+      <button type="button" className="rk-primary w-full justify-center" disabled={busy} onClick={(event) => {
+        focusInspection.current = event.detail === 0;
         inspectionAt.current = performance.now();
         setClock(15);
         change("inspection");
-      }}>Bắt đầu Inspection</button>
+      }}>
+        <Timer aria-hidden="true" size={18} /> Bắt đầu Inspection (15 giây)
+      </button>
+      <p className="px-1 text-sm text-slate-300">Khi sẵn sàng giải, giữ Space hoặc chạm giữ đồng hồ.</p>
     </div>
   );
 
@@ -137,7 +149,7 @@ export default function DuelTimer({ busy, inspection, submit }: { busy: boolean;
             </label>
           ))}
         </fieldset>
-        <button type="button" className="rk-primary disabled:opacity-50" disabled={busy} onClick={() => submit(result)}>
+        <button type="button" className="rk-primary w-full justify-center disabled:opacity-50" disabled={busy} onClick={() => submit(result)}>
           {busy ? "Đang gửi…" : "Gửi kết quả"}
         </button>
       </div>
@@ -151,7 +163,7 @@ export default function DuelTimer({ busy, inspection, submit }: { busy: boolean;
         ref={surface}
         type="button"
         aria-label={running ? "Dừng đồng hồ" : "Giữ Space hoặc chạm giữ để bắt đầu giải"}
-        className="grid min-h-44 w-full touch-none select-none place-items-center rounded-xl border border-white/15 bg-black/20 px-2"
+        className="grid min-h-36 w-full touch-none select-none content-center justify-items-center gap-2 rounded-xl border border-white/15 bg-[var(--rk-canvas)] p-3 focus-visible:outline-offset-[-3px] sm:min-h-44"
         onPointerDown={(event) => {
           if (event.button !== 0 || !event.isPrimary) return;
           event.preventDefault();
@@ -163,12 +175,13 @@ export default function DuelTimer({ busy, inspection, submit }: { busy: boolean;
         onLostPointerCapture={cancelHold}
         onClick={(event) => { if (event.detail === 0 && phase.current === "running") down("keyboard"); }}
       >
+        <span aria-hidden="true" className="text-sm font-medium text-slate-300">{running ? "Đang giải" : screen === "inspection" ? "Inspection" : "Đồng hồ"}</span>
         <span aria-hidden="true" className={`font-mono text-5xl tabular-nums ${ready ? "text-green-300" : holding || !running ? "text-amber-300" : "text-white"}`}>
           {running || screen === "armed" ? formatTimeMs(clock, 2) : clock || "+2"}
         </span>
       </button>
       <p role="status" className="text-sm text-slate-300">
-        {running ? "Nhấn Space hoặc chạm để dừng" : ready ? "Thả để bắt đầu giải" : "Giữ Space hoặc chạm giữ đến khi đồng hồ chuyển xanh"}
+        {running ? "Space hoặc chạm để dừng" : ready ? "Thả để bắt đầu giải" : "Giữ Space hoặc chạm giữ đến khi đồng hồ chuyển xanh."}
       </p>
     </div>
   );

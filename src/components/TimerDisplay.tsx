@@ -570,6 +570,7 @@ export default function TimerDisplay({
     return formatTimeMs(0, settings.decimals);
   };
 
+  const clockText = renderMainClockText();
   const isSolvingOrInspecting =
     phase === "running" ||
     phase === "inspecting" ||
@@ -715,7 +716,7 @@ export default function TimerDisplay({
             e.preventDefault();
             handlePressUp();
           }}
-          className="w-full flex-1 min-h-[174px] sm:min-h-[250px] flex flex-col items-center justify-center cursor-pointer rounded-3xl transition"
+          className="w-full flex-1 min-h-[174px] sm:min-h-[250px] flex flex-col items-center justify-center cursor-pointer rounded-3xl transition [container-type:inline-size]"
         >
           {/* PB Celebration Pill */}
           {isNewPb && !isSolvingOrInspecting && lastSolve && (
@@ -735,9 +736,10 @@ export default function TimerDisplay({
 
           {/* Giant Timer Digits */}
           <div
-            className={`font-mono font-bold tracking-tight transition-transform duration-100 leading-none text-[clamp(2.6rem,11vw,5.75rem)] lg:text-[clamp(3rem,6vw,7.5rem)] tabular-nums ${getTimerColorClass()}`}
+            className={`font-mono font-bold tracking-tight transition-transform duration-100 leading-none [--rk-clock-size:clamp(2.6rem,11vw,5.75rem)] lg:[--rk-clock-size:clamp(3rem,6vw,7.5rem)] [font-size:var(--rk-clock-size)] tabular-nums ${getTimerColorClass()}`}
+            style={{ fontSize: `min(var(--rk-clock-size), ${160 / clockText.length}cqi)` }}
           >
-            {renderMainClockText()}
+            {clockText}
           </div>
 
           {/* Live / Post-Solve CFOP 4-Stage Split Pills */}
@@ -751,7 +753,7 @@ export default function TimerDisplay({
                   return (
                     <div
                       key={label}
-                      className={`rounded-xl py-1.5 px-2 border transition ${
+                      className={`min-w-0 rounded-xl px-1 py-1.5 border transition [overflow-wrap:anywhere] ${
                         typeof stageMs === "number"
                           ? "bg-white/[0.07] border-cyan-500/40 text-white"
                           : isActiveStage

@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronDown, Eye, Globe2, Link2, Lock, RefreshCw, Share2, ShieldCheck, Swords } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronDown, Eye, Globe2, Link2, Lock, RefreshCw, Share2, ShieldCheck, Swords } from "lucide-react";
 import DuelTimer from "@/components/DuelTimer";
 import { isDuelRoomId, readDuelInvite } from "@/lib/duel/invite";
 import { isDuelPuzzle, officialCentiseconds, otherSeat, type DuelActiveRoom, type DuelHistoryItem, type DuelMode, type DuelPublicRoom, type DuelView, type Result, type Role } from "@/lib/duel/match";
@@ -406,10 +406,35 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
     }
   }
 
+  const roundAction = useRef<HTMLDivElement>(null);
+  const readyRound = useRef<number | null>(null);
   const myTurn = member?.canTime ?? false;
+  const roundNumber = match?.round.number;
+  const playing = Boolean(member && match?.started && match.winner === null);
+  useEffect(() => {
+    if (!playing) return;
+    function keepSpaceInRound(event: KeyboardEvent) {
+      if (event.code !== "Space" || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest("button, input, textarea, select, a[href], summary, video, audio, [contenteditable]")) return;
+      event.preventDefault();
+    }
+    window.addEventListener("keydown", keepSpaceInRound);
+    return () => window.removeEventListener("keydown", keepSpaceInRound);
+  }, [playing]);
+  useEffect(() => {
+    if (!myTurn || roundNumber === undefined || readyRound.current !== roundNumber) return;
+    readyRound.current = null;
+    const stage = roundAction.current;
+    const focused = document.activeElement;
+    if (stage?.contains(focused) || focused === document.body) {
+      stage?.querySelector("button")?.focus({ preventScroll: true });
+    }
+  }, [myTurn, roundNumber]);
   const mySeat = member?.seat ?? null;
   const canReady = match?.started && match.winner === null && !member?.reviewing &&
     mySeat !== null && !match.round.ready?.[mySeat] && (simultaneous || member?.turn === mySeat);
+  const markedReady = mySeat !== null && Boolean(match?.round.ready?.[mySeat]);
   const canApprove = member?.reviewing && (member.reviewOfficial ? member.canReferee : mySeat !== null);
   const access = initialInvite?.access;
   const accessAvailable = view?.accessAvailable === true;
@@ -715,18 +740,33 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
                 </p>
                 {match.winner === null && !simultaneous && <p className="text-xs text-slate-300">{playerLabel(match.round.first)} → {playerLabel(otherSeat(match.round.first))}</p>}
               </section>
-              {match.winner === null && !member.reviewing && match.round.scramble && (myTurn || canReady || (simultaneous && !match.round.ready?.every(Boolean))) && <section className="rk-panel space-y-4 p-4 sm:p-5" aria-labelledby="duel-scramble">
+              {match.winner === null && !member.reviewing && match.round.scramble && (myTurn || canReady || (simultaneous && !match.round.ready?.every(Boolean))) && <section className="rk-panel space-y-3 p-3 sm:p-5" aria-labelledby="duel-scramble">
                 <div className="rounded-xl border border-white/10 bg-[var(--rk-canvas)] p-3 sm:px-4">
                   <h2 id="duel-scramble" className="text-sm font-medium text-slate-300">Scramble</h2>
                   <p className="mt-2 break-words font-mono text-lg leading-relaxed sm:text-xl">{match.round.scramble}</p>
                 </div>
-                {simultaneous && !match.round.ready?.every(Boolean) && <>
-                  <p className="text-sm text-slate-300">{match.round.ready?.filter(Boolean).length ?? 0}/2 người đã xáo xong</p>
-                </>}
-                {canReady && <button type="button" disabled={busy} className="rk-primary disabled:opacity-50"
-                  onClick={() => void action({ action: "ready", round: match.round.number })}>Đã xáo xong</button>}
-                {myTurn && <DuelTimer key={match.round.number} inspection={match.settings.inspection !== false} busy={busy}
-                  submit={(result) => void action({ action: "submit", round: match.round.number, ...result })} />}
+                <div ref={roundAction} className="scroll-my-3">
+                  {myTurn ? (
+                    <DuelTimer key={match.round.number} inspection={match.settings.inspection !== false} busy={busy}
+                      submit={(result) => void action({ action: "submit", round: match.round.number, ...result })} />
+                  ) : (
+                    <div className="space-y-2">
+                      {canReady && <button type="button" disabled={busy}
+                        className="rk-primary w-full justify-center disabled:opacity-60"
+                        onClick={() => {
+                          readyRound.current = match.round.number;
+                          void action({ action: "ready", round: match.round.number });
+                        }}>
+                        <Check aria-hidden="true" size={18} />
+                        {busy ? "Đang xác nhận…" : "Đã xáo xong"}
+                      </button>}
+                      {simultaneous && <div role="status" className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1 text-sm text-slate-300">
+                        <span>{markedReady ? "Đang chờ đối thủ xáo xong." : mySeat !== null ? "Xác nhận khi đã xáo xong." : "Hai người chơi đang xáo."}</span>
+                        <span className="font-mono text-xs tabular-nums">{match.round.ready?.filter(Boolean).length ?? 0}/2 người đã xáo xong</span>
+                      </div>}
+                    </div>
+                  )}
+                </div>
               </section>}
               {member.reviewing && (mySeat !== null || member.canReferee) && <section className="rk-panel space-y-3 p-4 sm:p-5" aria-labelledby="duel-review">
                 <h2 id="duel-review" className="text-lg font-semibold">Xác nhận kết quả lượt {match.round.number}</h2>
@@ -738,7 +778,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
                 </dl>
                 {!member.reviewOfficial && <p className="text-sm text-slate-300">{match.round.approvals?.filter(Boolean).length ?? 0}/2 người đã xác nhận</p>}
                 {canApprove && (mySeat === null || !match.round.approvals?.[mySeat]) &&
-                  <button type="button" disabled={busy} className="rk-primary disabled:opacity-50"
+                  <button type="button" disabled={busy} className="rk-primary w-full justify-center disabled:opacity-50"
                     onClick={() => void action({ action: "approve", round: match.round.number })}>Xác nhận kết quả</button>}
               </section>}
               {member.seat === null && !member.host && !member.canReferee && match.winner === null && <button type="button" disabled={busy} className="rk-control" onClick={() => void action({ action: "leave" })}>Rời phòng xem</button>}

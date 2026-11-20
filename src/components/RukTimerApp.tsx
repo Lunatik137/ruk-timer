@@ -1380,7 +1380,7 @@ export default function RukTimerApp() {
           {/* Left Sidebar: Statistics & Chart */}
           <aside
             inert={focusDimActive}
-            className={`lg:col-span-3 transition-opacity duration-200 ${
+            className={`min-w-0 lg:col-span-3 transition-opacity duration-200 ${
               focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
             } ${mobileTab === "stats" ? "block" : "hidden lg:block"}`}
           >
@@ -1545,7 +1545,7 @@ export default function RukTimerApp() {
           {/* Right Sidebar: Solve History */}
           <aside
             inert={focusDimActive}
-            className={`lg:col-span-3 transition-opacity duration-200 ${
+            className={`min-w-0 lg:col-span-3 transition-opacity duration-200 ${
               focusDimActive ? "opacity-0 pointer-events-none" : "opacity-100"
             } ${mobileTab === "history" ? "block" : "hidden lg:block"}`}
           >
@@ -1688,7 +1688,7 @@ export default function RukTimerApp() {
                     </span>
                   )}
                 </span>
-                <span className="whitespace-nowrap group-aria-[current=page]:underline">{label}</span>
+                <span className="max-w-full text-center group-aria-[current=page]:underline">{label === "AI & Video" ? <>AI <span className="inline-block">&amp; Video</span></> : label}</span>
               </button>
             );
           })}
