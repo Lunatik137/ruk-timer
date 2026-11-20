@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Eye, Link2, Swords } from "lucide-react";
 import DuelTimer from "@/components/DuelTimer";
+import { readDuelInvite } from "@/lib/duel/invite";
 import { isDuelPuzzle, officialCentiseconds, otherSeat, type DuelHistoryItem, type DuelMode, type DuelView, type Result, type Role } from "@/lib/duel/match";
 import { formatTimeMs } from "@/lib/stats";
 import { PUZZLES } from "@/types/cubing";
@@ -31,6 +33,7 @@ function textResult(result: Result | null) {
 }
 
 export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
+  const router = useRouter();
   const [room, setRoom] = useState(initialRoom);
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [name, setName] = useState("");
@@ -38,6 +41,9 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const [setsToWin, setSets] = useState(1);
   const [pointsToWin, setPoints] = useState(3);
   const [role, setRole] = useState<Role>("player1");
+  const [selectedSeat, setSelectedSeat] = useState<Role | null>(null);
+  const [roomLink, setRoomLink] = useState("");
+  const [roomLinkError, setRoomLinkError] = useState("");
   const [mode, setMode] = useState<DuelMode>("alternating");
   const [inspection, setInspection] = useState(true);
   const [history, setHistory] = useState<DuelHistoryItem[]>();
@@ -48,6 +54,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const [copyStatus, setCopyStatus] = useState("");
   const [invite, setInvite] = useState("");
   const linkInput = useRef<HTMLInputElement>(null);
+  const guestNameInput = useRef<HTMLInputElement>(null);
   const pending = useRef(false);
   const view = snapshot?.view;
   const member = view?.kind === "member" ? view : null;
@@ -117,6 +124,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
         next = await send();
       }
       receive(next);
+      if (values.action === "seat") setSelectedSeat(null);
       setConnection("");
       if (!room) {
         window.history.replaceState(null, "", `/duel?room=${next.id}`);
@@ -140,6 +148,16 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
     }
   }
 
+  function chooseSeat(nextRole: Role) {
+    if (member) {
+      void action({ action: "seat", role: nextRole });
+    } else {
+      setError("");
+      setSelectedSeat(nextRole);
+      guestNameInput.current?.focus();
+    }
+  }
+
   const myTurn = member?.canTime ?? false;
   const mySeat = member?.seat ?? null;
   const canReady = simultaneous && match?.started && match.winner === null && !member?.reviewing &&
@@ -151,9 +169,14 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
     <div className="rk-shell min-h-dvh">
       <main className="mx-auto max-w-4xl space-y-5 px-3 py-4 sm:px-6 sm:py-8">
         <header className="space-y-2">
-          <Link href="/" prefetch={false} className="inline-flex min-h-11 items-center gap-2 rounded-lg text-sm text-slate-300 hover:text-white">
-            <ArrowLeft aria-hidden="true" size={16} /> Về Timer
-          </Link>
+          <nav aria-label="Điều hướng khu đấu" className="mb-3 flex flex-wrap gap-2 border-b border-white/10">
+            <Link href="/" prefetch={false} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm text-slate-300 hover:text-white">
+              <ArrowLeft aria-hidden="true" size={16} /> Về Timer
+            </Link>
+            <Link href="/duel" aria-current={room ? undefined : "page"} prefetch={false} className="inline-flex min-h-11 items-center border-b-2 border-transparent px-2 text-sm text-slate-300 hover:text-white aria-[current=page]:border-cyan-300 aria-[current=page]:text-white">
+              Sảnh đấu
+            </Link>
+          </nav>
           <h1 className="flex items-center gap-2 text-2xl font-semibold text-white">
             <Swords aria-hidden="true" className="size-5 text-cyan-300" /> Đấu 1v1
           </h1>
@@ -165,7 +188,27 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
         {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
         {connection && <p role="status" className="text-sm text-amber-200">{connection}</p>}
 
-        {!room && <form className="rk-panel max-w-xl space-y-4 p-4 sm:p-5" onSubmit={(event) => {
+        {!room && <div className="grid items-start gap-4 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <form className="rk-panel space-y-3 p-4 sm:p-5 md:col-start-2 md:row-start-1" onSubmit={(event) => {
+            event.preventDefault();
+            const id = readDuelInvite(roomLink, window.location.origin);
+            if (!id) {
+              setRoomLinkError("Dán link mời RukTimer hoặc mã phòng hợp lệ.");
+              return;
+            }
+            router.push(`/duel?room=${id}`);
+          }}>
+            <h2 className="text-lg font-semibold">Vào phòng</h2>
+            <label className={label}>Link mời hoặc mã phòng
+              <input className={input} name="room-link" autoComplete="off" autoCapitalize="none" spellCheck={false}
+                aria-invalid={Boolean(roomLinkError)} aria-describedby={roomLinkError ? "duel-link-error" : undefined}
+                value={roomLink} onChange={(event) => { setRoomLink(event.target.value); setRoomLinkError(""); }}
+                placeholder="Dán link hoặc mã…" />
+            </label>
+            {roomLinkError && <p id="duel-link-error" role="alert" className="text-sm text-rose-300">{roomLinkError}</p>}
+            <button className="rk-primary">Mở phòng</button>
+          </form>
+          <form className="rk-panel space-y-4 p-4 sm:p-5 md:col-start-1 md:row-span-2 md:row-start-1" onSubmit={(event) => {
           event.preventDefault();
           void action({ action: "create", name, puzzle, setsToWin, pointsToWin, role, mode, inspection });
         }}>
@@ -197,9 +240,9 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
             <input type="checkbox" checked={inspection} onChange={(e) => setInspection(e.target.checked)} /> WCA Inspection 15 giây
           </label>
           <button disabled={busy} className="rk-primary disabled:opacity-50">{busy ? "Đang tạo…" : "Tạo phòng"}</button>
-        </form>}
+          </form>
 
-        {!room && <section className="rk-panel max-w-xl space-y-3 p-4 sm:p-5" aria-labelledby="duel-history">
+        <section className="rk-panel space-y-3 p-4 sm:p-5 md:col-start-2 md:row-start-2" aria-labelledby="duel-history">
           <h2 id="duel-history" className="text-lg font-semibold">Lịch sử đấu</h2>
           {historyError ? <p role="status" className="text-sm text-rose-300">{historyError}</p> : !history
             ? <p role="status" className="text-sm text-slate-300">Đang tải lịch sử…</p>
@@ -214,7 +257,8 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
                 </Link>
               </li>
             ))}</ul>}
-        </section>}
+        </section>
+        </div>}
 
         {room && !view && !connection && <p role="status">Đang tải phòng…</p>}
 
@@ -225,17 +269,21 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
               : <p className="mt-1 text-sm text-slate-300">Bạn là {member?.name}{member?.host ? " · Chủ phòng" : ""}</p>}
           </div>
 
-          {initialInvite && <label className={label}>Tên hiển thị<input className={input} maxLength={32} value={name} onChange={(e) => setName(e.target.value)} /></label>}
+          <form className="space-y-4" onSubmit={(event) => {
+            event.preventDefault();
+            if (selectedSeat && name.trim()) void action({ action: "seat", name, role: selectedSeat });
+          }}>
           <div className="grid grid-cols-2 gap-2">
             {([0, 1] as const).map((seat) => {
               const occupied = Boolean(match?.players[seat] || initialInvite?.slots[seat]);
-              const mine = member?.seat === seat;
+              const seatRole = seat === 0 ? "player1" : "player2";
+              const mine = member?.seat === seat || selectedSeat === seatRole;
               return <button key={seat} type="button" aria-pressed={mine}
-                disabled={busy || started || occupied || (!member && !name.trim())}
-                onClick={() => void action({ action: "seat", name, role: seat === 0 ? "player1" : "player2" })}
-                className={`min-h-20 min-w-0 rounded-lg border px-3 py-2 text-left hover:bg-white/5 ${mine ? "border-cyan-300 text-cyan-200" : "border-white/15"}`}>
+                disabled={busy || started || occupied}
+                onClick={() => chooseSeat(seatRole)}
+                className={`min-h-20 min-w-0 rounded-lg border px-3 py-2 text-left enabled:hover:bg-white/5 disabled:text-slate-400 ${mine ? "border-cyan-300 text-cyan-200" : "border-white/15"}`}>
                 <span className="block text-xs text-slate-300">Player {seat + 1}</span>
-                <span className="mt-1 block break-words font-semibold">{match?.players[seat] ?? (occupied ? "Đã có người" : "Chọn chỗ")}</span>
+                <span className="mt-1 block break-words font-semibold">{match?.players[seat] ?? (occupied ? "Đã có người" : started ? "Đã khóa" : mine ? "Đã chọn" : "Chọn chỗ")}</span>
               </button>;
             })}
           </div>
@@ -251,9 +299,16 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
               </li>)}
             </ul>}
             {!(member && member.seat === null) && <button type="button" className="rk-control disabled:opacity-50"
-              disabled={busy || spectators.length >= 2 || (!member && !name.trim())}
-              onClick={() => void action({ action: "seat", name, role: "spectator" })}>Chọn Người xem</button>}
+              aria-pressed={selectedSeat === "spectator"} disabled={busy || spectators.length >= 2}
+              onClick={() => chooseSeat("spectator")}>Chọn Người xem</button>}
           </div>
+          {initialInvite && <div className="space-y-3 border-t border-white/10 pt-3">
+            <label className={label}>Tên hiển thị<input ref={guestNameInput} className={input} name="display-name" autoComplete="nickname" required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} /></label>
+            {selectedSeat ? <button className="rk-primary disabled:opacity-50" disabled={busy}>
+              {busy ? "Đang vào phòng…" : `Vào phòng · ${roles.find((entry) => entry.id === selectedSeat)?.title}`}
+            </button> : <p className="text-sm text-slate-300">Chọn ghế người chơi hoặc Người xem ở trên.</p>}
+          </div>}
+          </form>
           {member && !started && <>
             <div className="space-y-2">
               <label className={label}>Link mời<input ref={linkInput} readOnly value={invite} className={input} onFocus={(e) => e.target.select()} /></label>

@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { isDuelRoomId } from "@/lib/duel/invite";
 import {
   approveResult, awaitingApproval, canSolve, createMatch, DUEL_EVENTS, isDuelPuzzle, markReady, recordResult, resultFor, viewFor,
   type DuelHistoryItem, type DuelMatch, type DuelPuzzle, type Pair, type Role, type Seat,
@@ -8,7 +9,6 @@ import {
 
 const table = "duel_rooms";
 const cookie = "ruk-duel";
-const roomId = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const credential = /^[a-f0-9]{64}$/;
 
 type Room = {
@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
     }
   }
   const id = req.nextUrl.searchParams.get("room") ?? "";
-  if (!roomId.test(id)) return fail("Link phòng không hợp lệ.", 400);
+  if (!isDuelRoomId(id)) return fail("Link phòng không hợp lệ.", 400);
   try {
     const room = await fetchRoom(database(), id);
     if (!room || (room.completed_at && !nameFor(room, key))) return fail("Phòng không tồn tại hoặc đã hết hạn.", 404);
@@ -178,7 +178,7 @@ export async function POST(req: NextRequest) {
       return response(room, key, token);
     }
 
-    if (typeof body.room !== "string" || !roomId.test(body.room)) return fail("Link phòng không hợp lệ.", 400);
+    if (typeof body.room !== "string" || !isDuelRoomId(body.room)) return fail("Link phòng không hợp lệ.", 400);
     const room = await fetchRoom(db, body.room);
     if (!room) return fail("Phòng không tồn tại hoặc đã hết hạn.", 404);
     const seat = seatFor(room, key);

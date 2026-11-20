@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import {
   BrainCircuit,
   Check,
@@ -17,6 +18,7 @@ import {
   MoreHorizontal,
   RefreshCw,
   Settings,
+  Swords,
   Trash2,
   User,
 } from "lucide-react";
@@ -139,6 +141,9 @@ export default function Header({
                 {label}
               </button>
             ))}
+            <Link href="/duel" prefetch={false} className="inline-flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-xs font-medium text-slate-300 hover:bg-white/10 hover:text-white focus-visible:z-10">
+              <Swords aria-hidden="true" className="size-4" /> Đấu 1v1
+            </Link>
           </nav>
 
           <div className={`order-3 grid w-full gap-2 lg:contents ${

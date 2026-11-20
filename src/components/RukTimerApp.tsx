@@ -1504,14 +1504,6 @@ export default function RukTimerApp() {
               }}
             />
 
-            {(timerPhase === "idle" || timerPhase === "just_stopped") && (
-              <div className="flex justify-center">
-                <Link href="/duel" prefetch={false} className="rk-control text-xs">
-                  <Swords aria-hidden="true" className="size-4 text-cyan-300" /> Đấu 1v1
-                </Link>
-              </div>
-            )}
-
             {settings.showCubePreview && (
               <>
                 {/* Desktop & Tablet inline 2D Cube Net */}
@@ -1663,7 +1655,7 @@ export default function RukTimerApp() {
       {!focusDimActive && (
         <nav
           aria-label="Điều hướng chính"
-          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 gap-1 border-t border-white/10 bg-[var(--rk-surface)] px-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 text-xs lg:hidden"
+          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 gap-1 border-t border-white/10 bg-[var(--rk-surface)] px-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 text-xs lg:hidden"
         >
           {([
             { view: "timer", tab: "timer", label: "Timer", Icon: Clock },
@@ -1700,6 +1692,10 @@ export default function RukTimerApp() {
               </button>
             );
           })}
+          <Link href="/duel" prefetch={false} className="flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 text-[11px] leading-tight text-slate-300 hover:bg-white/5 focus-visible:outline-offset-[-2px]">
+            <span className="grid h-6 place-items-center"><Swords aria-hidden="true" className="size-4" /></span>
+            <span>Đấu 1v1</span>
+          </Link>
         </nav>
       )}
 

@@ -65,7 +65,7 @@ Use the Tailwind 8–16px corner scale for controls and panels. Primary touch co
 - **Video intake** — Use a filled file action and an outlined camera action. Stack them at narrow widths. Explain that selecting a clip starts analysis automatically. Keep the clip and timeline available after opening a file.
 - **Practice progress** — Place the date range and period filter above a single grid of metrics. Compare with the preceding period of the same length. Use one cyan series for daily solve counts and provide the same values in a disclosure table and weekly calendar. Keep the empty state explicit and label achievements as lifetime.
 - **Footer** — Group documentation and feedback as two equal-width links on mobile. Reserve room below the links for the navigation bar and device safe area. Keep the footer out of the focus order during a solve.
-- **Đấu 1v1** — Show the player seats side by side and put spectator and referee controls below them. Once play starts, prioritise score and status, then the Scramble and timer. Put the two times and confirmation together. Keep confirmed round details available in match history.
+- **Đấu 1v1** — Give it a dedicated desktop and mobile navigation item. Put invitation entry before room creation on narrow screens. Let invited guests choose an open seat before entering their name. Once play starts, prioritise score and status, then the Scramble and timer. Put the two times and confirmation together. Keep confirmed round details available in match history.
 
 ## Do's and Don'ts
 
