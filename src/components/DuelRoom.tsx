@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Eye, Link2, Swords } from "lucide-react";
+import { ArrowLeft, Eye, Link2, ShieldCheck, Swords } from "lucide-react";
 import DuelTimer from "@/components/DuelTimer";
+import DuelCamera from "@/components/DuelCamera";
 import { readDuelInvite } from "@/lib/duel/invite";
 import { isDuelPuzzle, officialCentiseconds, otherSeat, type DuelHistoryItem, type DuelMode, type DuelView, type Result, type Role } from "@/lib/duel/match";
 import { formatTimeMs } from "@/lib/stats";
@@ -16,6 +17,7 @@ const roles = [
   { id: "player1", title: "Player 1" },
   { id: "player2", title: "Player 2" },
   { id: "spectator", title: "Người xem" },
+  { id: "referee", title: "Trọng tài" },
 ] as const;
 
 type Snapshot = { id: string; revision: number; view: DuelView };
@@ -160,10 +162,19 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
 
   const myTurn = member?.canTime ?? false;
   const mySeat = member?.seat ?? null;
-  const canReady = simultaneous && match?.started && match.winner === null && !member?.reviewing &&
-    mySeat !== null && !match.round.ready?.[mySeat];
-  const canApprove = member?.reviewing && (member.referee ? member.canReferee : mySeat !== null);
+  const canReady = match?.started && match.winner === null && !member?.reviewing &&
+    mySeat !== null && !match.round.ready?.[mySeat] && (simultaneous || member?.turn === mySeat);
+  const canApprove = member?.reviewing && (member.reviewOfficial ? member.canReferee : mySeat !== null);
+  const access = initialInvite?.access;
+  const accessAvailable = view?.accessAvailable === true;
+  const referee = initialInvite?.referee ?? member?.referee ?? null;
+  const canChooseReferee = accessAvailable && !referee && (Boolean(initialInvite) || member?.host);
   const playerLabel = (seat: 0 | 1) => match?.players[seat] ?? `Player ${seat + 1}`;
+  const inviteControls = <div className="space-y-2">
+    <label className={label}>Link mời<input ref={linkInput} readOnly value={invite} className={input} onFocus={(e) => e.target.select()} /></label>
+    <button type="button" onClick={copyInvite} className="rk-control"><Link2 aria-hidden="true" size={16} /> Sao chép link</button>
+    <span role="status" className="ml-2 text-sm text-slate-300">{copyStatus}</span>
+  </div>;
 
   return (
     <div className="rk-shell min-h-dvh">
@@ -266,10 +277,16 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
           <div>
             <h2 id="duel-lobby" className="text-lg font-semibold">{started ? "Trận đã bắt đầu" : "Phòng chờ"}</h2>
             {initialInvite ? <p className="mt-1 text-sm text-slate-300">Phòng của {initialInvite.host}. Chọn chỗ để tham gia.</p>
-              : <p className="mt-1 text-sm text-slate-300">Bạn là {member?.name}{member?.host ? " · Chủ phòng" : ""}</p>}
+              : <p className="mt-1 text-sm text-slate-300">Bạn là {member?.name}{member?.host ? " · Chủ phòng" : ""}{member?.isReferee ? " · Trọng tài" : ""}</p>}
           </div>
 
-          <form className="space-y-4" onSubmit={(event) => {
+          {access ? <div className="space-y-3 border-t border-white/10 pt-3">
+            <p role="status" className="text-sm text-slate-200">{access.status === "pending"
+              ? `Đang chờ duyệt vào ${access.role === "referee" ? "làm trọng tài" : "xem trận"}.`
+              : "Yêu cầu vào phòng đã bị từ chối."}</p>
+            {access.status === "pending" && <button type="button" className="rk-control" disabled={busy}
+              onClick={() => void action({ action: "cancel-access" })}>Rút yêu cầu</button>}
+          </div> : <form className="space-y-4" onSubmit={(event) => {
             event.preventDefault();
             if (selectedSeat && name.trim()) void action({ action: "seat", name, role: selectedSeat });
           }}>
@@ -291,30 +308,35 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
             <p className="flex items-center gap-2 text-sm font-medium"><Eye size={16} aria-hidden="true" /> Người xem ({spectators.length}/2)</p>
             {spectators.length > 0 && <ul className="space-y-2 text-sm text-slate-300">
               {spectators.map((viewer, index) => <li className="flex flex-wrap items-center justify-between gap-2" key={index}>
-                <span className="break-all">{viewer}{member?.refereeIndex === index ? " · Trọng tài" : ""}</span>
-                {member?.host && !started && <button type="button" className="rk-control" disabled={busy}
-                  onClick={() => void action({ action: "referee", index: member.refereeIndex === index ? null : index, revision: snapshot?.revision })}>
-                  {member.refereeIndex === index ? "Bỏ vai trò trọng tài" : "Chọn làm trọng tài"}
+                <span className="break-words">{viewer}</span>
+                {accessAvailable && member?.host && !started && !referee && <button type="button" className="rk-control" disabled={busy}
+                  onClick={() => void action({ action: "promote-referee", index, revision: snapshot?.revision })}>
+                  Chọn làm trọng tài
                 </button>}
               </li>)}
             </ul>}
-            {!(member && member.seat === null) && <button type="button" className="rk-control disabled:opacity-50"
-              aria-pressed={selectedSeat === "spectator"} disabled={busy || spectators.length >= 2}
+            {(!member || member.seat !== null || member.isReferee) && <button type="button" className="rk-control disabled:opacity-50"
+              aria-pressed={selectedSeat === "spectator"} disabled={busy || Boolean(member ? spectators.length >= 2 : !accessAvailable)}
               onClick={() => chooseSeat("spectator")}>Chọn Người xem</button>}
+            {initialInvite && !accessAvailable && <p className="text-sm text-slate-300">Tính năng duyệt vào xem đang được cập nhật.</p>}
+          </div>
+          <div className="space-y-2 border-t border-white/10 pt-3">
+            <p className="flex items-center gap-2 text-sm font-medium"><ShieldCheck size={16} aria-hidden="true" /> Trọng tài</p>
+            <p className="break-words text-sm text-slate-300">{referee ?? "Còn trống"}</p>
+            {canChooseReferee && <button type="button" className="rk-control" aria-pressed={selectedSeat === "referee"}
+              disabled={busy} onClick={() => chooseSeat("referee")}>Chọn Trọng tài</button>}
+            {accessAvailable && member?.host && referee && <button type="button" className="rk-control" disabled={busy || spectators.length >= 2}
+              onClick={() => void action({ action: "release-referee", revision: snapshot?.revision })}>Chuyển trọng tài thành người xem</button>}
           </div>
           {initialInvite && <div className="space-y-3 border-t border-white/10 pt-3">
             <label className={label}>Tên hiển thị<input ref={guestNameInput} className={input} name="display-name" autoComplete="nickname" required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} /></label>
             {selectedSeat ? <button className="rk-primary disabled:opacity-50" disabled={busy}>
-              {busy ? "Đang vào phòng…" : `Vào phòng · ${roles.find((entry) => entry.id === selectedSeat)?.title}`}
+              {busy ? "Đang gửi…" : `${selectedSeat === "spectator" || selectedSeat === "referee" ? "Xin vào" : "Vào phòng"} · ${roles.find((entry) => entry.id === selectedSeat)?.title}`}
             </button> : <p className="text-sm text-slate-300">Chọn ghế người chơi hoặc Người xem ở trên.</p>}
           </div>}
-          </form>
+          </form>}
           {member && !started && <>
-            <div className="space-y-2">
-              <label className={label}>Link mời<input ref={linkInput} readOnly value={invite} className={input} onFocus={(e) => e.target.select()} /></label>
-              <button type="button" onClick={copyInvite} className="rk-control"><Link2 aria-hidden="true" size={16} /> Sao chép link</button>
-              <span role="status" className="ml-2 text-sm text-slate-300">{copyStatus}</span>
-            </div>
+            {inviteControls}
             <div className="flex flex-wrap items-center gap-2">
               {member.canStart ? <button type="button" disabled={busy || !match?.players.every(Boolean)} className="rk-primary disabled:opacity-50"
                 onClick={() => void action({ action: "start" })}>{busy ? "Đang xử lý…" : "Bắt đầu trận"}</button>
@@ -328,7 +350,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
           <section className="rk-panel space-y-4 p-4 sm:p-5" aria-labelledby="duel-score">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 id="duel-score" className="text-lg font-semibold">Set {match.round.set} · Lượt {match.round.number}</h2>
-              <p className="text-sm text-slate-300">Người xem ({spectators.length}/2)</p>
+              <p className="break-words text-sm text-slate-300">Người xem ({spectators.length}/2){referee ? ` · Trọng tài: ${referee}` : ""}</p>
             </div>
             <div className="grid grid-cols-2 divide-x divide-white/10 rounded-lg border border-white/10">
               {([0, 1] as const).map((seat) => <div key={seat} className="min-w-0 p-3">
@@ -338,22 +360,22 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
             </div>
             <p role="status" className="font-medium text-cyan-200">
               {match.winner !== null ? `${playerLabel(match.winner)} thắng trận` :
-                member.reviewing ? (member.referee ? `Chờ trọng tài ${member.referee} xác nhận` : "Chờ hai người chơi xác nhận") :
+                member.reviewing ? (member.reviewOfficial ? `Chờ ${member.reviewOfficial} xác nhận` : "Chờ hai người chơi xác nhận") :
                 simultaneous ? (match.round.ready?.every(Boolean) ? (myTurn ? "Có thể bắt đầu giải" : "Đang chờ kết quả") : "Chờ cả hai xáo xong") :
-                myTurn ? "Đến lượt bạn" : member.turn !== null ? `Đang chờ ${playerLabel(member.turn)} giải` : "Đang chờ kết quả"}
+                myTurn ? "Đến lượt bạn" : canReady ? "Đến lượt bạn xáo Scramble" : member.turn !== null ? `Đang chờ ${playerLabel(member.turn)} giải` : "Đang chờ kết quả"}
             </p>
             {match.winner === null && !simultaneous && <p className="text-xs text-slate-300">{playerLabel(match.round.first)} → {playerLabel(otherSeat(match.round.first))}</p>}
           </section>
-          {match.winner === null && !member.reviewing && match.round.scramble && (myTurn || (simultaneous && !match.round.ready?.every(Boolean))) && <section className="rk-panel space-y-4 p-4 sm:p-5" aria-labelledby="duel-scramble">
+          {match.winner === null && !member.reviewing && match.round.scramble && (myTurn || canReady || (simultaneous && !match.round.ready?.every(Boolean))) && <section className="rk-panel space-y-4 p-4 sm:p-5" aria-labelledby="duel-scramble">
             <div>
               <h2 id="duel-scramble" className="text-sm font-medium text-slate-300">Scramble</h2>
               <p className="mt-2 break-words font-mono text-lg leading-relaxed">{match.round.scramble}</p>
             </div>
             {simultaneous && !match.round.ready?.every(Boolean) && <>
               <p className="text-sm text-slate-300">{match.round.ready?.filter(Boolean).length ?? 0}/2 người đã xáo xong</p>
-              {canReady && <button type="button" disabled={busy} className="rk-primary disabled:opacity-50"
-                onClick={() => void action({ action: "ready", round: match.round.number })}>Đã xáo xong</button>}
             </>}
+            {canReady && <button type="button" disabled={busy} className="rk-primary disabled:opacity-50"
+              onClick={() => void action({ action: "ready", round: match.round.number })}>Đã xáo xong</button>}
             {myTurn && <DuelTimer key={match.round.number} inspection={match.settings.inspection !== false} busy={busy}
               submit={(result) => void action({ action: "submit", round: match.round.number, ...result })} />}
           </section>}
@@ -365,7 +387,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
                 <dd className="font-mono tabular-nums">{textResult(match.round.results[seat])}</dd>
               </div>)}
             </dl>
-            {!member.referee && <p className="text-sm text-slate-300">{match.round.approvals?.filter(Boolean).length ?? 0}/2 người đã xác nhận</p>}
+            {!member.reviewOfficial && <p className="text-sm text-slate-300">{match.round.approvals?.filter(Boolean).length ?? 0}/2 người đã xác nhận</p>}
             {canApprove && (mySeat === null || !match.round.approvals?.[mySeat]) &&
               <button type="button" disabled={busy} className="rk-primary disabled:opacity-50"
                 onClick={() => void action({ action: "approve", round: match.round.number })}>Xác nhận kết quả</button>}
@@ -386,6 +408,33 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
           {member.seat === null && !member.host && !member.canReferee && match.winner === null && <button type="button" disabled={busy} className="rk-control" onClick={() => void action({ action: "leave" })}>Rời phòng xem</button>}
           {match.winner !== null && <Link href="/duel" prefetch={false} className="rk-primary">Về lịch sử đấu</Link>}
         </>}
+        {accessAvailable && member?.canModerate && <section className="rk-panel space-y-3 p-4 sm:p-5" aria-labelledby="duel-access">
+          <h2 id="duel-access" className="flex items-center gap-2 text-lg font-semibold">
+            <ShieldCheck size={18} aria-hidden="true" /> Duyệt vào phòng
+          </h2>
+          <p role="status" className="text-sm text-slate-300">{member.accessRequests.length
+            ? `${member.accessRequests.length} yêu cầu đang chờ.` : "Chưa có yêu cầu nào."}</p>
+          {member.accessRequests.length > 0 && <ul className="divide-y divide-white/10">
+            {member.accessRequests.map((request) => {
+              const full = request.role === "referee" ? Boolean(referee) : spectators.length >= 2;
+              return <li key={request.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <div className="min-w-0">
+                  <p className="break-words font-medium">{request.name}</p>
+                  <p className="text-sm text-slate-300">{request.role === "referee" ? "Trọng tài" : "Người xem"}{full ? " · Hết chỗ" : ""}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className="rk-primary disabled:opacity-50" disabled={busy || full}
+                    aria-label={`Cho ${request.name} vào`} onClick={() => void action({ action: "review-access", requestId: request.id, allow: true })}>Cho vào</button>
+                  <button type="button" className="rk-control" disabled={busy}
+                    aria-label={`Từ chối ${request.name}`} onClick={() => void action({ action: "review-access", requestId: request.id, allow: false })}>Từ chối</button>
+                </div>
+              </li>;
+            })}
+          </ul>}
+          {started && inviteControls}
+        </section>}
+        {accessAvailable && ((member && match?.winner === null) || (initialInvite && !access && (selectedSeat === "player1" || selectedSeat === "player2"))) &&
+          <DuelCamera key={room} room={room} player={member ? mySeat !== null : true} canJoin={Boolean(member)} />}
       </main>
     </div>
   );

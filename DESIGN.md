@@ -66,6 +66,8 @@ Use the Tailwind 8–16px corner scale for controls and panels. Primary touch co
 - **Practice progress** — Place the date range and period filter above a single grid of metrics. Compare with the preceding period of the same length. Use one cyan series for daily solve counts and provide the same values in a disclosure table and weekly calendar. Keep the empty state explicit and label achievements as lifetime.
 - **Footer** — Group documentation and feedback as two equal-width links on mobile. Reserve room below the links for the navigation bar and device safe area. Keep the footer out of the focus order during a solve.
 - **Đấu 1v1** — Give it a dedicated desktop and mobile navigation item. Put invitation entry before room creation on narrow screens. Let invited guests choose an open seat before entering their name. Once play starts, prioritise score and status, then the Scramble and timer. Put the two times and confirmation together. Keep confirmed round details available in match history.
+- **Cuộc gọi 1v1** — Place optional live video and audio below the timing and result controls. Use separate camera and mic controls, show which devices are active, and keep the leave action beside them.
+- **Quyền vào phòng 1v1** — Give the referee a separate seat. Show pending or denied status on the invitation page. Keep the host and referee’s admission controls below the live match controls.
 
 ## Do's and Don'ts
 

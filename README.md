@@ -57,16 +57,24 @@ Mở `http://localhost:3000` để trải nghiệm.
 
 ### Phòng Đấu 1v1 (web/PWA)
 
-Chạy migration [`20261120_duel_rooms.sql`](./supabase/migrations/20261120_duel_rooms.sql)
-và [`20261121_duel_review_history.sql`](./supabase/migrations/20261121_duel_review_history.sql)
+Chạy migration [`20261120_duel_rooms.sql`](./supabase/migrations/20261120_duel_rooms.sql),
+[`20261121_duel_review_history.sql`](./supabase/migrations/20261121_duel_review_history.sql),
+[`20261122_duel_camera_signaling.sql`](./supabase/migrations/20261122_duel_camera_signaling.sql)
+và [`20261123_duel_room_roles.sql`](./supabase/migrations/20261123_duel_room_roles.sql)
 trên cùng dự án Supabase và cấu hình `SUPABASE_SERVICE_ROLE_KEY` ở máy chủ Next.js
 (ví dụ trong môi trường Production của Vercel). Trình duyệt không cần khóa này.
 Tab **Đấu 1v1** nằm trên thanh điều hướng. Có thể mở link mời trực tiếp hoặc dán
-link/mã phòng trong mục **Vào phòng**. Phòng có hai người chơi và tối đa hai người xem,
-dùng link mời. Phòng chưa kết thúc hết hạn sau 24 giờ. Lịch sử hiển thị tối đa 50 trận
-gần nhất để xem từ cùng hồ sơ trình duyệt. Chủ phòng có thể chọn một người xem
-làm trọng tài. Trọng tài bắt đầu trận và xác nhận kết quả; nếu không có trọng
-tài, chủ phòng bắt đầu và cả hai người chơi xác nhận.
+link/mã phòng trong mục **Vào phòng**. Phòng chưa kết thúc hết hạn sau 24 giờ.
+Lịch sử hiển thị tối đa 50 trận gần nhất từ cùng hồ sơ trình duyệt.
+
+Ở chế độ luân phiên, người đến lượt xác nhận **Đã xáo xong** trước khi mở đồng hồ.
+Phòng có hai ghế đấu, một ghế trọng tài và hai ghế người xem. Chủ phòng và trọng tài
+đều có thể bắt đầu trận và duyệt người vào xem trong lúc thi đấu. Trọng tài chốt kết quả, hoặc chủ phòng
+chốt khi không thi đấu và ghế trọng tài trống. Các trận còn lại cần cả hai người chơi xác nhận.
+Người chơi có thể chuẩn bị camera và mic riêng trước khi vào phòng. Chỉ khi chọn
+**Vào cuộc gọi**, thành viên mới bắt đầu phát hoặc nhận hình và tiếng.
+WebRTC truyền hình và tiếng trực tiếp, không ghi lại. Với mạng chặn kết nối trực tiếp,
+cấu hình TURN (coturn TURN REST API) qua `DUEL_TURN_URLS` và `DUEL_TURN_SHARED_SECRET`.
 
 ---
 

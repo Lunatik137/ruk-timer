@@ -3,29 +3,20 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { isDuelRoomId } from "@/lib/duel/invite";
 import {
-  approveResult, awaitingApproval, canSolve, createMatch, DUEL_EVENTS, isDuelPuzzle, markReady, recordResult, resultFor, viewFor,
-  type DuelHistoryItem, type DuelMatch, type DuelPuzzle, type Pair, type Role, type Seat,
+  approveResult, awaitingApproval, canMarkReady, canSolve, createMatch, DUEL_EVENTS, isDuelPuzzle, markReady, recordResult, resultFor, viewFor,
+  type DuelHistoryItem, type DuelMatch, type DuelPuzzle, type Role,
 } from "@/lib/duel/match";
+import { canModerate, nameFor, place, resultOfficial, seatFor, type Room } from "@/lib/duel/room";
 
 const table = "duel_rooms";
 const cookie = "ruk-duel";
 const credential = /^[a-f0-9]{64}$/;
 
-type Room = {
-  id: string;
-  host_key: string;
-  host_name: string;
-  seats: Pair<string | null>;
-  spectators: { key: string; name: string }[];
-  referee_key?: string | null;
-  completed_at?: string | null;
-  revision: number;
-  state: DuelMatch;
-};
 type Body = Record<string, unknown>;
 const headers = { "Cache-Control": "private, no-store" };
 const fail = (error: string, status: number) => NextResponse.json({ error }, { status, headers });
 const retry = () => NextResponse.json({ retry: true, error: "Phòng vừa thay đổi. Hãy thử lại." }, { status: 409, headers });
+const admissionUnavailable = () => fail("Tính năng duyệt vào phòng đang được cập nhật.", 503);
 
 function database() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -38,26 +29,25 @@ function playerKey(token: string | undefined) {
   return token && credential.test(token) ? createHash("sha256").update(token).digest("hex") : null;
 }
 
-function seatFor(room: Room, key: string | null): Seat | null {
-  if (key && key === room.seats[0]) return 0;
-  if (key && key === room.seats[1]) return 1;
-  return null;
-}
-
-function nameFor(room: Room, key: string | null) {
-  const seat = seatFor(room, key);
-  return seat === null ? room.spectators.find((viewer) => viewer.key === key)?.name : room.state.players[seat];
-}
-
 function response(room: Room, key: string | null, token?: string) {
   const spectators = room.spectators.map((viewer) => viewer.name);
   const name = nameFor(room, key);
-  const refereeIndex = room.spectators.findIndex((viewer) => viewer.key === room.referee_key);
-  const referee = room.spectators[refereeIndex];
-  const view = name ? viewFor(room.state, seatFor(room, key), name, key === room.host_key, spectators,
-    referee?.name ?? null, Boolean(key && referee?.key === key), refereeIndex) : {
+  const official = resultOfficial(room);
+  const requests = room.access_requests ?? [];
+  const ownRequest = requests.find((request) => request.key === key);
+  const pending = canModerate(room, key) ? requests.flatMap(({ id, name, role, status }) =>
+    status === "pending" ? [{ id, name, role }] : []) : [];
+  const referee = room.referee_key ? nameFor(room, room.referee_key) ?? null : null;
+  const accessAvailable = Array.isArray(room.access_requests);
+  const view = name ? {
+    ...viewFor(room.state, seatFor(room, key), name, key === room.host_key, spectators,
+      official?.name ?? null, official?.key === key, pending),
+    referee, isReferee: room.referee_key === key, accessAvailable,
+  } : {
     kind: "invite", settings: room.state.settings, host: room.host_name, spectators,
     slots: room.state.players.map(Boolean), started: room.state.started,
+    referee, accessAvailable,
+    access: ownRequest ? { role: ownRequest.role, status: ownRequest.status } : null,
   };
   const res = NextResponse.json({ id: room.id, revision: room.revision, view }, { headers });
   if (token) res.cookies.set(cookie, token, {
@@ -68,14 +58,19 @@ function response(room: Room, key: string | null, token?: string) {
 }
 
 async function fetchRoom(db: ReturnType<typeof database>, id: string): Promise<Room | null> {
-  const { data, error } = await db.from(table).select("id,host_key,host_name,seats,spectators,revision,state,referee_key,completed_at")
+  const { data, error } = await db.from(table).select()
     .eq("id", id).or(`expires_at.gt.${new Date().toISOString()},completed_at.not.is.null`).maybeSingle<Room>();
   if (error) throw error;
   return data;
 }
 
 async function updateRoom(db: ReturnType<typeof database>, room: Room, changes: Partial<Room>) {
-  const { data, error } = await db.from(table).update({ ...changes, revision: room.revision + 1 })
+  const update = { ...changes, revision: room.revision + 1 };
+  if (!Array.isArray(room.access_requests)) {
+    delete update.referee_name;
+    delete update.access_requests;
+  }
+  const { data, error } = await db.from(table).update(update)
     .eq("id", room.id).eq("revision", room.revision).gt("expires_at", new Date().toISOString())
     .select().maybeSingle<Room>();
   if (error) throw error;
@@ -83,25 +78,7 @@ async function updateRoom(db: ReturnType<typeof database>, room: Room, changes: 
 }
 
 function asRole(value: unknown): Role | null {
-  return value === "player1" || value === "player2" || value === "spectator" ? value : null;
-}
-
-function place(room: Room, key: string, name: string, role: Role) {
-  const seats: Room["seats"] = [...room.seats];
-  const players: DuelMatch["players"] = [...room.state.players];
-  const spectators = room.spectators.filter((viewer) => viewer.key !== key);
-  const previous = seatFor(room, key);
-  if (previous !== null) { seats[previous] = null; players[previous] = null; }
-  if (role === "spectator") {
-    if (spectators.length >= 2) return null;
-    spectators.push({ key, name });
-  } else {
-    const seat = role === "player1" ? 0 : 1;
-    if (seats[seat]) return null;
-    seats[seat] = key;
-    players[seat] = name;
-  }
-  return { seats, spectators, state: { ...room.state, players } };
+  return value === "player1" || value === "player2" || value === "spectator" || value === "referee" ? value : null;
 }
 
 async function scrambleFor(puzzle: DuelPuzzle) {
@@ -172,10 +149,13 @@ export async function POST(req: NextRequest) {
         id, host_key: key, host_name: name, seats: [null, null], spectators: [], revision: 0,
         state: createMatch({ puzzle, setsToWin, pointsToWin, mode, inspection }),
       };
-      const room = { ...empty, ...place(empty, key, name, role) };
-      const { error } = await db.from(table).insert(room);
+      const placement = place(empty, key, name, role)!;
+      const room = { ...empty, seats: placement.seats, spectators: placement.spectators, state: placement.state,
+        ...(role === "referee" ? { referee_key: placement.referee_key, referee_name: placement.referee_name } : {}) };
+      const { data, error } = await db.from(table).insert(room).select().single<Room>();
+      if (error?.code === "PGRST204" && role === "referee") return admissionUnavailable();
       if (error) throw error;
-      return response(room, key, token);
+      return response(data, key, token);
     }
 
     if (typeof body.room !== "string" || !isDuelRoomId(body.room)) return fail("Link phòng không hợp lệ.", 400);
@@ -183,34 +163,86 @@ export async function POST(req: NextRequest) {
     if (!room) return fail("Phòng không tồn tại hoặc đã hết hạn.", 404);
     const seat = seatFor(room, key);
     const isReferee = room.referee_key === key;
+    const name = nameFor(room, key);
+    const requests = room.access_requests ?? [];
 
-    if (body.action === "referee") {
+    if (!Array.isArray(room.access_requests) &&
+      (["promote-referee", "release-referee", "review-access", "cancel-access"].includes(String(body.action))
+        || (body.action === "seat" && (body.role === "referee" || (!name && body.role === "spectator"))))) {
+      return admissionUnavailable();
+    }
+
+    if (body.action === "promote-referee") {
       if (key !== room.host_key || room.state.started) return fail("Chỉ chủ phòng được chọn trọng tài trong phòng chờ.", 403);
       if (body.revision !== room.revision) return fail("Danh sách người xem đã đổi. Hãy chọn lại.", 409);
       const index = body.index;
       const viewer = typeof index === "number" && Number.isInteger(index) ? room.spectators[index] : null;
-      if (index !== null && !viewer) return fail("Người xem này không còn trong phòng.", 409);
-      const data = await updateRoom(db, room, { referee_key: viewer?.key ?? null });
+      if (!viewer) return fail("Người xem này không còn trong phòng.", 409);
+      const changes = place(room, viewer.key, viewer.name, "referee");
+      if (!changes) return fail("Ghế trọng tài đã có người.", 409);
+      const data = await updateRoom(db, room, changes);
       return data ? response(data, key) : fail("Danh sách người xem đã đổi. Hãy chọn lại.", 409);
+    }
+
+    if (body.action === "release-referee") {
+      if (key !== room.host_key || room.state.started) return fail("Chỉ chủ phòng được đổi trọng tài trong phòng chờ.", 403);
+      if (!room.referee_key || !room.referee_name) return response(room, key);
+      if (body.revision !== room.revision) return fail("Vai trò trong phòng đã đổi. Hãy chọn lại.", 409);
+      const changes = place(room, room.referee_key, room.referee_name, "spectator");
+      if (!changes) return fail("Cần một ghế người xem trống để đổi vai trò.", 409);
+      const data = await updateRoom(db, room, changes);
+      return data ? response(data, key) : fail("Vai trò trong phòng đã đổi. Hãy chọn lại.", 409);
+    }
+
+    if (body.action === "review-access") {
+      if (!canModerate(room, key)) return fail("Chỉ chủ phòng và trọng tài được duyệt yêu cầu.", 403);
+      if (room.state.winner !== null) return fail("Trận đã kết thúc.", 409);
+      if (typeof body.allow !== "boolean") return fail("Chọn cho vào hoặc từ chối.", 400);
+      const request = requests.find((item) => item.id === body.requestId && item.status === "pending");
+      if (!request) return response(room, key);
+      const changes = body.allow ? place(room, request.key, request.name, request.role) : {};
+      if (!changes) return fail(request.role === "referee" ? "Ghế trọng tài đã có người." : "Phòng đã đủ hai người xem.", 409);
+      const access_requests = requests.flatMap((item) => item.id !== request.id ? [item] :
+        body.allow ? [] : [{ ...item, status: "denied" as const }]);
+      const data = await updateRoom(db, room, { ...changes, access_requests });
+      return data ? response(data, key) : retry();
+    }
+
+    if (body.action === "cancel-access") {
+      const access_requests = requests.filter((item) => item.key !== key || item.status !== "pending");
+      if (access_requests.length === requests.length) return response(room, key);
+      const data = await updateRoom(db, room, { access_requests });
+      return data ? response(data, key) : retry();
     }
 
     if (body.action === "seat") {
       if (room.state.winner !== null) return fail("Trận đã kết thúc.", 409);
       const role = asRole(body.role);
-      const name = nameFor(room, key) || readName(body.name);
-      if (!name || !role) return fail("Nhập tên và chọn chỗ trong phòng.", 400);
-      if (room.state.started && (seat !== null || role !== "spectator")) {
+      const displayName = name || readName(body.name);
+      if (!displayName || !role) return fail("Nhập tên và chọn chỗ trong phòng.", 400);
+      const ownRequest = requests.find((item) => item.key === key);
+      if (ownRequest) return response(room, key);
+      if (room.state.started && (name || role === "player1" || role === "player2")) {
         return fail("Trận đã bắt đầu. Chỗ của hai người chơi đã khóa.", 409);
       }
-      const changes = place(room, key, name, role);
+      if (!name && (role === "spectator" || role === "referee")) {
+        if (role === "referee" && room.referee_key) return fail("Ghế trọng tài đã có người.", 409);
+        if (requests.length >= 32) return fail("Phòng đã nhận tối đa số yêu cầu.", 429);
+        const data = await updateRoom(db, room, { access_requests: [...requests, {
+          id: randomUUID(), key, name: displayName, role, status: "pending",
+        }] });
+        return data ? response(data, key, token) : retry();
+      }
+      if (role === "referee" && key !== room.host_key) return fail("Chủ phòng cần duyệt vai trò trọng tài.", 403);
+      const changes = place(room, key, displayName, role);
       if (!changes) return fail("Chỗ này đã có người. Hãy chọn chỗ khác.", 409);
-      const data = await updateRoom(db, room, { ...changes, ...(isReferee && role !== "spectator" ? { referee_key: null } : {}) });
+      const data = await updateRoom(db, room, changes);
       if (!data) return retry();
       return response(data, key, token);
     }
 
     if (body.action === "leave") {
-      if (!nameFor(room, key)) return response(room, key);
+      if (!name) return response(room, key);
       if (key === room.host_key) return fail("Chủ phòng có thể đổi chỗ trước khi bắt đầu.", 409);
       if (isReferee && room.state.started && room.state.winner === null) return fail("Trọng tài cần ở lại cho đến khi trận kết thúc.", 409);
       if (room.state.started && seat !== null) return fail("Chỗ của người chơi đã khóa.", 409);
@@ -218,12 +250,12 @@ export async function POST(req: NextRequest) {
       const players: DuelMatch["players"] = [...room.state.players];
       if (seat !== null) { seats[seat] = null; players[seat] = null; }
       const spectators = room.spectators.filter((viewer) => viewer.key !== key);
-      const data = await updateRoom(db, room, { seats, spectators, state: { ...room.state, players }, ...(isReferee ? { referee_key: null } : {}) });
+      const data = await updateRoom(db, room, { seats, spectators, state: { ...room.state, players }, ...(isReferee ? { referee_key: null, referee_name: null } : {}) });
       return data ? response(data, key) : retry();
     }
 
     if (body.action === "start") {
-      if (room.referee_key ? !isReferee : key !== room.host_key) return fail("Chỉ người phụ trách phòng mới bắt đầu được trận.", 403);
+      if (!canModerate(room, key)) return fail("Chỉ chủ phòng và trọng tài được bắt đầu trận.", 403);
       if (room.state.started) return response(room, key);
       if (!room.seats[0] || !room.seats[1]) return fail("Cần đủ hai người chơi.", 409);
       const scramble = await scrambleFor(room.state.settings.puzzle);
@@ -233,21 +265,23 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.action === "ready") {
-      if (seat === null || room.state.settings.mode !== "simultaneous") return fail("Chỉ người chơi ở chế độ đồng thời mới xác nhận xáo.", 403);
+      if (seat === null) return fail("Chỉ người chơi mới xác nhận xáo.", 403);
       if (!room.state.started || room.state.winner !== null || body.round !== room.state.round.number) return fail("Lượt này đã thay đổi.", 409);
       if (room.state.round.ready?.[seat]) return response(room, key);
+      if (!canMarkReady(room.state, seat)) return fail("Chưa đến lượt bạn xáo Scramble.", 409);
       const data = await updateRoom(db, room, { state: markReady(room.state, seat) });
       return data ? response(data, key) : retry();
     }
 
     if (body.action === "approve") {
-      if (room.referee_key ? !isReferee : seat === null) return fail("Bạn không có quyền xác nhận kết quả.", 403);
+      const official = resultOfficial(room);
+      if (official ? official.key !== key : seat === null) return fail("Bạn không có quyền xác nhận kết quả.", 403);
       if (room.state.history.some((item) => item.number === body.round)) return response(room, key);
       if (body.round !== room.state.round.number || !awaitingApproval(room.state)) return fail("Chưa đủ hai kết quả để xác nhận.", 409);
       if (seat !== null && room.state.round.approvals?.[seat]) return response(room, key);
-      const state = approveResult(room.state, isReferee ? null : seat);
+      const state = approveResult(room.state, official ? null : seat);
       if (state.round.number !== room.state.round.number) state.round.scramble = await scrambleFor(state.settings.puzzle);
-      const data = await updateRoom(db, room, { state, ...(state.winner !== null ? { completed_at: new Date().toISOString() } : {}) });
+      const data = await updateRoom(db, room, { state, ...(state.winner !== null ? { completed_at: new Date().toISOString(), access_requests: [] } : {}) });
       return data ? response(data, key) : retry();
     }
 
