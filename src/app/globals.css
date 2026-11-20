@@ -55,3 +55,60 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(34, 211, 238, 0.45);
 }
+
+@layer components {
+  .rk-shell {
+    --rk-canvas: #101214;
+    --rk-surface: #181b1e;
+    --rk-dialog: #202428;
+    --rk-border: rgb(255 255 255 / 12%);
+    background-color: var(--rk-canvas);
+  }
+
+  .rk-shell[data-theme="cyber"] {
+    --rk-canvas: #171422;
+    --rk-surface: #201c2c;
+    --rk-dialog: #282337;
+  }
+
+  .rk-shell[data-theme="emerald"] {
+    --rk-canvas: #101a18;
+    --rk-surface: #172420;
+    --rk-dialog: #1e2d28;
+  }
+
+  .rk-shell[data-theme="light"] {
+    --rk-canvas: #18202a;
+    --rk-surface: #212c3a;
+    --rk-dialog: #293647;
+  }
+
+  .rk-view {
+    @apply mx-auto w-full max-w-[1600px] px-3 py-4 pb-24 sm:px-6 lg:pb-6;
+  }
+
+  .rk-panel {
+    @apply min-w-0 rounded-2xl border;
+    border-color: var(--rk-border);
+    background-color: var(--rk-surface);
+  }
+
+  .rk-dialog {
+    @apply rounded-2xl border shadow-xl;
+    border-color: var(--rk-border);
+    background-color: var(--rk-dialog);
+  }
+
+  .rk-control,
+  .rk-primary {
+    @apply inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors;
+  }
+
+  .rk-control {
+    @apply border-white/15 bg-white/5 text-slate-200 hover:bg-white/10;
+  }
+
+  .rk-primary {
+    @apply border-cyan-300 bg-cyan-300 text-slate-950 hover:bg-cyan-200;
+  }
+}

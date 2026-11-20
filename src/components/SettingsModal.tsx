@@ -39,22 +39,22 @@ const THEMES: { id: ThemeId; label: string; preview: string }[] = [
   {
     id: "midnight",
     label: "Midnight Slate",
-    preview: "from-slate-950 via-slate-900 to-indigo-950",
+    preview: "bg-[#181b1e]",
   },
   {
     id: "cyber",
     label: "Cyber Neon",
-    preview: "from-zinc-950 via-purple-950 to-cyan-950",
+    preview: "bg-[#201c2c]",
   },
   {
     id: "emerald",
     label: "Forest Matrix",
-    preview: "from-neutral-950 via-emerald-950 to-teal-950",
+    preview: "bg-[#172420]",
   },
   {
     id: "light",
     label: "Clean Dark Frost",
-    preview: "from-slate-900 via-sky-950 to-slate-900",
+    preview: "bg-[#212c3a]",
   },
 ];
 
@@ -94,7 +94,7 @@ export default function SettingsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
-        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 text-white p-6 relative"
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rk-dialog text-white p-6 relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -352,15 +352,16 @@ export default function SettingsModal({
                 <button
                   key={t.id}
                   type="button"
+                  aria-pressed={settings.theme === t.id}
                   onClick={() => onUpdateSettings({ theme: t.id })}
-                  className={`flex items-center gap-2 p-2 rounded-lg border text-xs font-medium transition ${
+                  className={`flex min-h-11 items-center gap-2 rounded-lg border p-2 text-xs font-medium transition-colors ${
                     settings.theme === t.id
                       ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
                       : "border-white/10 bg-black/25 hover:bg-white/5"
                   }`}
                 >
                   <span
-                    className={`w-5 h-5 rounded-md bg-gradient-to-br ${t.preview} border border-white/20`}
+                    className={`size-5 rounded-md ${t.preview} border border-white/20`}
                   />
                   <span>{t.label}</span>
                 </button>

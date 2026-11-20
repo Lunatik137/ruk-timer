@@ -139,7 +139,8 @@ it("reports an HTTP error when the server returns a non-JSON init response", asy
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
-it("identifies a browser-to-R2 request failure without calling complete", async () => {
+it("reports the page origin for a browser-to-R2 request failure without calling complete", async () => {
+  vi.stubGlobal("location", { origin: "https://preview.example.com" });
   vi.stubGlobal("fetch", vi.fn()
     .mockResolvedValueOnce(Response.json({
       fileId: "test-file",
@@ -152,6 +153,8 @@ it("identifies a browser-to-R2 request failure without calling complete", async 
   const message = await uploadPrivateFile(new Blob(["video"], { type: "video/webm" }), "solve.webm", "video");
 
   expect(message).toContain("CORS");
+  expect(message).toContain("https://preview.example.com");
+  expect(message).not.toContain("r2.cloudflarestorage.com");
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 

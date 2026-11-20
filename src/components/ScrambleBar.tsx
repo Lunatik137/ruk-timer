@@ -87,7 +87,7 @@ export default function ScrambleBar({
 
   return (
     <div className="w-full max-w-4xl mx-auto pt-1 sm:pt-3">
-      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 sm:px-5 sm:py-4">
+      <div className="rk-panel p-3 sm:px-5 sm:py-4">
         {!isEditing ? (
           <div className="space-y-2">
             <p

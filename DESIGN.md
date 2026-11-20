@@ -2,8 +2,9 @@
 name: RukTimer
 description: Vietnamese-first practice timer and Rubik's Cube training workspace.
 colors:
-  canvas: "#020617"
-  surface: "#0f172a"
+  canvas: "#101214"
+  surface: "#181b1e"
+  dialog: "#202428"
   foreground: "#f8fafc"
   secondary-text: "#cbd5e1"
   accent: "#67e8f9"
@@ -12,10 +13,10 @@ colors:
   error: "#fda4af"
 typography:
   body:
-    fontFamily: "ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
     fontSize: "0.875rem"
   timing:
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    fontFamily: "Geist Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
     fontWeight: 700
     lineHeight: 1
 spacing:
@@ -34,11 +35,11 @@ RukTimer serves speedcubers and learners using keyboard or touch. Its primary jo
 
 ## Colors
 
-Apply the existing dark slate palette through Tailwind. Cyan marks actionable controls and the selected destination. Amber signals a hold or inspection. Green signals readiness. Rose marks errors and destructive actions. Include text or a recognizable control state alongside color.
+Use flat canvas, panel and dialog surfaces from the shared theme. Keep color differences between themes subtle so the clock and scramble remain prominent. Cyan marks actionable controls and the selected destination. Amber signals a hold or inspection. Green signals readiness. Rose marks errors and destructive actions. Include text or a recognizable control state alongside color.
 
 ## Typography
 
-Use the existing sans stack for Vietnamese UI and monospaced tabular digits for timing, splits and scramble notation. Keep minutes and hours legible at narrow widths.
+Web and PWA use locally bundled Geist and Geist Mono. Expo uses system sans and platform monospace with the same palette. Use tabular digits for timing, splits and scramble notation. Keep minutes and hours legible at narrow widths.
 
 ## Layout
 
@@ -59,6 +60,7 @@ Use the Tailwind 8–16px corner scale for controls and panels. Primary touch co
 - **Header** — Brand, account and settings lead on mobile. The puzzle and session are adjacent. Session actions rise from the session control.
 - **Scramble** — The move sequence is the strongest line. Keep new scramble near the training selector. Put previous, copy, edit and Cross help together.
 - **Timer** — Mode changes sit below the timing surface. A concise live status communicates hold, ready, inspection, running and saved-time states without announcing every clock tick.
+- **Video Analyzer** — “Phân tích clip” opens a new recording and starts the on-device scan in one step. Opening a video file also starts its first scan. Keep retry, manual marks, device download and explicit cloud upload distinct.
 - **Bottom navigation** — Expose the current destination with an accessible state, color and a surface. Include the solve count where the user opens History.
 
 ## Do's and Don'ts

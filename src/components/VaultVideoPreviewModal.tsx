@@ -133,7 +133,7 @@ export default function VaultVideoPreviewModal({
         if (event.target === event.currentTarget) handleClose();
       }}
     >
-      <div className="w-full max-w-3xl rounded-2xl border border-white/15 bg-slate-900 shadow-2xl overflow-hidden flex flex-col max-h-[92dvh]">
+      <div className="w-full max-w-3xl rk-dialog shadow-2xl overflow-hidden flex flex-col max-h-[92dvh]">
         {/* Header */}
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10">
           <div className="min-w-0 flex items-center gap-2">

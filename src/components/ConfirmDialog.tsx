@@ -63,7 +63,7 @@ export default function ConfirmDialog({
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
         aria-describedby="confirm-dialog-desc"
-        className="w-full max-w-md rounded-2xl border border-white/15 bg-slate-900 text-white p-5 sm:p-6 relative space-y-4"
+        className="w-full max-w-md rk-dialog text-white p-5 sm:p-6 relative space-y-4"
         onClick={(e) => e.stopPropagation()}
       >
         <button

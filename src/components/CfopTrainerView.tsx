@@ -21,7 +21,6 @@ import {
   Eye,
   EyeOff,
   Flame,
-  GraduationCap,
   HelpCircle,
   ListChecks,
   Play,
@@ -745,23 +744,15 @@ export default function CfopTrainerView({
   }, [lastDrillSolve, activeDrillCaseInfo]);
 
   return (
-    <div className="w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-4 pb-24 lg:pb-8 space-y-4">
+    <main className="rk-view space-y-4">
       {/* Top Banner & Stage Selector */}
-      <div className="rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md p-4 sm:p-5 space-y-4">
+      <div className="rk-panel p-4 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-300">
-              <GraduationCap className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-lg sm:text-xl font-bold tracking-tight">
-                Học viện CFOP 2.0 • Spaced Repetition & Adaptive Drill
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-300">
-                Mỗi công thức lưu thành <strong>1 Session Timer riêng</strong>{" "}
-                (đồng bộ Cloud DB, lịch ôn tập ngắt quãng SM-2, trộn ngẫu nhiên & đo TPS)
-              </p>
-            </div>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Học CFOP</h1>
+            <p className="mt-1 text-sm text-slate-300">
+              Tìm công thức, ôn bài đến hạn hoặc luyện từng case có bấm giờ.
+            </p>
           </div>
 
           {/* Interactive Practice Launchers + Overall Progress */}
@@ -769,19 +760,19 @@ export default function CfopTrainerView({
             <button
               type="button"
               onClick={() => handleStartAdaptiveDrill()}
-              className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition"
+              className="rk-primary"
             >
               <Shuffle className="w-3.5 h-3.5" />
-              <span>Luyện Trộn Ngẫu Nhiên (Adaptive)</span>
+              <span>Luyện theo tiến độ</span>
             </button>
 
             <button
               type="button"
               onClick={generateNextQuizQuestion}
-              className="px-3.5 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/40 text-indigo-200 font-semibold text-xs inline-flex items-center gap-1.5 transition"
+              className="rk-control"
             >
               <HelpCircle className="w-3.5 h-3.5 text-indigo-300" />
-              <span>Quiz Nhận Diện Nhanh</span>
+              <span>Quiz nhận diện</span>
             </button>
 
             <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-black/30 border border-white/10">
@@ -1919,6 +1910,6 @@ export default function CfopTrainerView({
           </div>
         </div>
       )}
-    </div>
+    </main>
   );
 }

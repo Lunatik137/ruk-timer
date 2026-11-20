@@ -1544,7 +1544,9 @@ export default function App() {
               <TouchableOpacity
                 key={item.id}
                 onPress={() => setTab(item.id)}
-                style={styles.bottomTabBtn}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                style={[styles.bottomTabBtn, active && styles.bottomTabBtnActive]}
               >
                 <Text
                   style={[
@@ -1808,20 +1810,30 @@ export default function App() {
   );
 }
 
+const colors = {
+  canvas: "#101214",
+  surface: "#181b1e",
+  dialog: "#202428",
+  muted: "#a5b4c4",
+  accent: "#67e8f9",
+  border: "rgba(255,255,255,0.12)",
+};
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#020617",
+    backgroundColor: colors.canvas,
     paddingTop: Platform.OS === "android" ? RNStatusBar.currentHeight || 0 : 0,
   },
   flex1: { flex: 1 },
   loadingScreen: {
     flex: 1,
-    backgroundColor: "#020617",
+    backgroundColor: colors.canvas,
     alignItems: "center",
     justifyContent: "center",
   },
   header: {
+    backgroundColor: colors.surface,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -1870,7 +1882,7 @@ const styles = StyleSheet.create({
     borderRadius: 99,
     backgroundColor: "rgba(255,255,255,0.05)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: colors.border,
   },
   puzzleChipActive: {
     backgroundColor: "#22d3ee",
@@ -1890,9 +1902,9 @@ const styles = StyleSheet.create({
     marginTop: 6,
     padding: 12,
     borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: colors.border,
   },
   scrambleText: {
     color: "#f1f5f9",
@@ -1903,7 +1915,7 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   scrambleHint: {
-    color: "#64748b",
+    color: colors.muted,
     fontSize: 10,
     textAlign: "center",
     marginTop: 5,
@@ -1938,7 +1950,7 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   padHint: {
-    color: "#64748b",
+    color: colors.muted,
     fontSize: 12,
     marginTop: 10,
     textAlign: "center",
@@ -2006,6 +2018,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   primaryBtn: {
+    minHeight: 44,
     backgroundColor: "#22d3ee",
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -2025,7 +2038,7 @@ const styles = StyleSheet.create({
     borderBottomColor: "rgba(255,255,255,0.08)",
   },
   emptyText: {
-    color: "#64748b",
+    color: colors.muted,
     textAlign: "center",
     marginTop: 48,
     fontSize: 13,
@@ -2040,7 +2053,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   historyIndex: {
-    color: "#64748b",
+    color: colors.muted,
     width: 36,
     fontSize: 12,
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
@@ -2078,9 +2091,9 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 12,
     borderRadius: 12,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: colors.border,
     alignItems: "center",
   },
   kpiLabel: {
@@ -2097,9 +2110,9 @@ const styles = StyleSheet.create({
   card: {
     padding: 14,
     borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: colors.border,
   },
   statLine: {
     flexDirection: "row",
@@ -2148,21 +2161,29 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     borderTopWidth: 1,
     borderTopColor: "rgba(255,255,255,0.08)",
-    backgroundColor: "#020617",
-    paddingVertical: 10,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 4,
   },
   bottomTabBtn: {
     flex: 1,
+    minHeight: 44,
     alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+  },
+  bottomTabBtnActive: {
+    backgroundColor: "rgba(103,232,249,0.12)",
   },
   bottomTabText: {
-    color: "#64748b",
+    color: colors.muted,
     fontSize: 11,
     fontWeight: "600",
   },
   bottomTabTextActive: {
-    color: "#22d3ee",
-    fontWeight: "800",
+    color: colors.accent,
+    fontWeight: "700",
   },
   modalBackdrop: {
     flex: 1,
@@ -2171,7 +2192,7 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   modalBox: {
-    backgroundColor: "#0f172a",
+    backgroundColor: colors.dialog,
     borderRadius: 18,
     padding: 18,
     borderWidth: 1,
@@ -2181,7 +2202,7 @@ const styles = StyleSheet.create({
     padding: 11,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: colors.border,
     marginBottom: 6,
   },
 });

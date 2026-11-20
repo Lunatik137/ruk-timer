@@ -27,9 +27,11 @@ export async function uploadPrivateFile(blob: Blob, fileName: string, fileKind: 
     body: blob,
   }).catch(() => null);
   if (!put) {
-    return signed.storageMode === "r2"
-      ? "Trình duyệt không gửi được tệp tới R2. Hãy kiểm tra kết nối và cấu hình CORS của bucket cho tên miền này."
-      : "Không kết nối được kho tệp để tải lên. Hãy kiểm tra mạng rồi thử lại.";
+    if (signed.storageMode === "r2") {
+      const origin = globalThis.location?.origin ?? "địa chỉ trang đang mở";
+      return `Trình duyệt không gửi được tệp tới R2. Hãy kiểm tra kết nối và CORS của bucket: cho phép PUT và Content-Type từ ${origin}.`;
+    }
+    return "Không kết nối được kho tệp để tải lên. Hãy kiểm tra mạng rồi thử lại.";
   }
   if (!put.ok) {
     return `Kho tệp từ chối tải lên (HTTP ${put.status}). Vui lòng thử lại.`;

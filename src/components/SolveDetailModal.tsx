@@ -232,7 +232,7 @@ export default function SolveDetailModal({
           role="dialog"
           aria-modal="true"
           aria-label={`Chi tiết lượt giải ${solve.puzzle.toUpperCase()}`}
-          className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-900 text-white p-5 sm:p-6 relative space-y-4"
+          className="w-full max-w-xl max-h-[90vh] overflow-y-auto rk-dialog text-white p-5 sm:p-6 relative space-y-4"
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -570,7 +570,7 @@ export default function SolveDetailModal({
         role="dialog"
         aria-modal="true"
         aria-label={`Bảng thành tích ${target.label}`}
-        className="w-full max-w-xl max-h-[85vh] flex flex-col rounded-2xl border border-white/15 bg-slate-900 text-white p-6 relative"
+        className="w-full max-w-xl max-h-[85vh] flex flex-col rk-dialog text-white p-6 relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button

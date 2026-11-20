@@ -97,21 +97,9 @@ import {
   PuzzleType,
   ScrambleSource,
   Solve,
-  ThemeId,
   TimerSettings,
   TrainingSubset,
 } from "@/types/cubing";
-
-const THEME_BG_CLASSES: Record<ThemeId, string> = {
-  midnight:
-    "bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-[#050814] text-slate-100",
-  cyber:
-    "bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-fuchsia-950/60 via-zinc-950 to-[#06040d] text-slate-100",
-  emerald:
-    "bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-emerald-950/65 via-neutral-950 to-[#040a08] text-slate-100",
-  light:
-    "bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-sky-950/70 via-slate-900 to-slate-950 text-slate-100",
-};
 
 export default function RukTimerApp() {
   const [mounted, setMounted] = useState(false);
@@ -1309,9 +1297,8 @@ export default function RukTimerApp() {
 
   return (
     <div
-      className={`min-h-screen flex flex-col transition-colors duration-300 ${
-        THEME_BG_CLASSES[settings.theme]
-      }`}
+      className="rk-shell flex min-h-dvh flex-col text-slate-100"
+      data-theme={settings.theme}
     >
       {/* Top Navigation Header */}
       <div
@@ -1386,7 +1373,7 @@ export default function RukTimerApp() {
           onOpenInMainTimer={handleOpenInMainTimer}
         />
       ) : mainView === "timer" ? (
-        <main className="flex-1 w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-3 pb-20 lg:pb-5 grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+        <main className="rk-view grid flex-1 grid-cols-1 items-stretch gap-4 lg:grid-cols-12">
           {/* Left Sidebar: Statistics & Chart */}
           <aside
             inert={focusDimActive}
@@ -1636,7 +1623,7 @@ export default function RukTimerApp() {
       {!focusDimActive && (
         <nav
           aria-label="Điều hướng chính"
-          className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-slate-950/90 backdrop-blur-md grid grid-cols-5 gap-1 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] px-1.5 text-[10px]"
+          className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-[var(--rk-surface)] grid grid-cols-5 gap-1 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] px-1.5 text-[10px]"
         >
           <button
             type="button"

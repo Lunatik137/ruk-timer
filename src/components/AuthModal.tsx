@@ -129,7 +129,7 @@ export default function AuthModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="auth-modal-title"
-        className="w-full max-w-md rounded-2xl border border-white/15 bg-slate-900 text-white p-6 shadow-2xl relative"
+        className="w-full max-w-md rk-dialog text-white p-6 shadow-2xl relative"
         onClick={(e) => e.stopPropagation()}
       >
         <button

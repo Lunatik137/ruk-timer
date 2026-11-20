@@ -211,7 +211,7 @@ function StatsPanelInner({
       )}
 
       {/* WCA Stats Table */}
-      <div className="rounded-2xl border border-white/10 bg-white/[0.04] overflow-hidden">
+      <div className="rk-panel overflow-hidden">
         <div className="px-3.5 py-2.5 border-b border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
             <Trophy className="w-3.5 h-3.5 text-amber-400" />
@@ -303,7 +303,7 @@ function StatsPanelInner({
       </div>
 
       {/* Multi-Tab Analytics Box: Trend / Histogram / CFOP Splits */}
-      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3.5 space-y-2.5">
+      <div className="rk-panel p-3.5 space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-1.5">
           <div className="flex items-center gap-1 p-0.5 rounded-lg bg-black/35 border border-white/10 text-[11px]">
             <button
@@ -528,15 +528,10 @@ function StatsPanelInner({
         <button
           type="button"
           onClick={onOpenAiCoach}
-          className="w-full py-2.5 px-3.5 rounded-2xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/40 text-cyan-200 text-xs font-semibold flex items-center justify-between transition"
+          className="rk-control w-full justify-start text-left text-cyan-200"
         >
-          <span className="inline-flex items-center gap-2">
-            <BrainCircuit className="w-4 h-4 text-cyan-400" />
-            <span>AI Practice Coach & Chẩn đoán Điểm yếu</span>
-          </span>
-          <span className="px-2 py-0.5 rounded-md bg-cyan-400 text-slate-950 font-bold text-[10px]">
-            Phân tích
-          </span>
+          <BrainCircuit className="size-4 shrink-0" aria-hidden="true" />
+          Phân tích với AI Coach
         </button>
       )}
     </div>

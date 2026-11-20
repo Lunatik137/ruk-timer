@@ -101,7 +101,7 @@ export default function Header({
   ];
 
   return (
-    <header className="w-full border-b border-white/10 bg-slate-950/80 px-3 sm:px-6 py-2.5">
+    <header className="w-full border-b border-white/10 bg-[var(--rk-surface)] px-3 py-3 sm:px-6">
       <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-x-2 gap-y-2.5">
         {/* Brand + Selectors */}
         <div className="contents min-w-0 lg:flex lg:flex-wrap lg:items-center lg:gap-2.5">
@@ -114,7 +114,7 @@ export default function Header({
                 <span className="bg-sky-400 rounded-[1px]" />
               </div>
             </div>
-            <span className="font-bold tracking-tight text-base sm:text-lg">
+            <span className="text-base font-semibold tracking-tight sm:text-lg">
               Ruk<span className="text-cyan-400">Timer</span>
             </span>
           </div>

@@ -805,8 +805,17 @@ export default function AiCoachAndCommunityView({
     settings.holdDelayMs, clearHold, handleStartRecording, handleStopRecording, countdownDeadline,
   ]);
 
-  const handleSelectVideoFile = (file: File, context: VideoSolveContext | null = null) => {
+  const cancelVideoScan = useCallback(() => {
     scanRef.current?.abort();
+    scanRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (videoActive) return cancelVideoScan;
+  }, [videoActive, cancelVideoScan]);
+
+  const handleSelectVideoFile = (file: File, context: VideoSolveContext | null = null) => {
+    cancelVideoScan();
     setAnalyzingVideo(false);
     setVideoDuration(null);
     setVideoError(null);
@@ -833,6 +842,7 @@ export default function AiCoachAndCommunityView({
       pll: null,
     });
     setMotionWaveform([]);
+    return nextUrl;
   };
 
   const discardDraft = () => {
@@ -841,7 +851,7 @@ export default function AiCoachAndCommunityView({
       description: "Clip và các mốc đã lưu trên thiết bị này sẽ bị xóa khỏi Video Analyzer.",
       confirmLabel: "Xóa bản nháp",
       onConfirm: async () => {
-        scanRef.current?.abort();
+        cancelVideoScan();
         setAnalyzingVideo(false);
         try {
           await saveVideoDraft(null);
@@ -866,7 +876,7 @@ export default function AiCoachAndCommunityView({
     setMarkOrigins((prev) => ({ ...prev, [phase]: "user" }));
   };
 
-  const handleUseRecordedClip = () => {
+  const handleAnalyzeRecordedClip = () => {
     if (!recordedBlob) return;
     const ext = recordedBlob.type.includes("mp4") ? "mp4" : "webm";
     const file = new File(
@@ -878,29 +888,28 @@ export default function AiCoachAndCommunityView({
     setRecorderOpen(false);
     setRecordedPreviewUrl(null);
     setRecordedBlob(null);
-    handleSelectVideoFile(file, recordingContext.current);
+    void runClientCvMotionScan(handleSelectVideoFile(file, recordingContext.current));
   };
 
   useEffect(() => {
     const video = videoRef.current;
     if (!videoActive || !videoUrl || !video) return;
     const controller = new AbortController();
+    const scanning = scanRef.current !== null;
     void resolveVideoDuration(video, controller.signal).then((duration) => {
       if (controller.signal.aborted) return;
-      setVideoDuration(duration);
-      if (duration === null) {
-        setVideoError("Chưa xác định được thời lượng clip. Hãy bấm quét để thử lại.");
+      if (duration !== null) {
+        setVideoDuration(duration);
+      } else if (!scanning && !scanRef.current) {
+        setVideoError("Chưa xác định được thời lượng clip. Hãy bấm Phân tích để thử lại.");
       }
     });
-    return () => {
-      controller.abort();
-      scanRef.current?.abort();
-    };
+    return () => controller.abort();
   }, [videoActive, videoUrl]);
 
   // On-Device Computer Vision: Samples frames from video to detect hand/cube motion & lookahead pauses
-  const runClientCvMotionScan = async () => {
-    if (!videoUrl || analyzingVideo) return;
+  const runClientCvMotionScan = async (source: string) => {
+    if (scanRef.current) return;
     const controller = new AbortController();
     scanRef.current = controller;
     const { signal } = controller;
@@ -909,7 +918,7 @@ export default function AiCoachAndCommunityView({
 
     const vid = document.createElement("video");
     vid.preload = "auto";
-    vid.src = videoUrl;
+    vid.src = source;
     const canvas = document.createElement("canvas");
     canvas.width = 64;
     canvas.height = 64;
@@ -1126,52 +1135,26 @@ export default function AiCoachAndCommunityView({
   if (!active) return null;
 
   return (
-    <div className="w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-4 pb-24 lg:pb-8 space-y-4">
-      {/* Sub-navigation Banner */}
-      <div className="rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md p-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-300">
-            <BrainCircuit className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-lg sm:text-xl font-bold tracking-tight">
-              AI Practice Coach, Báo cáo Tuần, Phân tích Video & Kho tệp
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-300">
-              Chẩn đoán điểm yếu từ dữ liệu thật, theo dõi chuỗi ngày luyện tập, quay/phân tích video và lưu tệp riêng tư
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          {(
-            [
-              { id: "coach", label: "AI Practice Coach", icon: BrainCircuit },
-              { id: "weekly", label: "Báo cáo Tuần & Streak", icon: Flame },
-              { id: "video", label: "Video Analyzer", icon: Video },
-              { id: "files", label: "Kho tệp cá nhân", icon: FolderLock },
-            ] as const
-          ).map((item) => {
-            const Icon = item.icon;
-            const active = subTab === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setSubTab(item.id)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-semibold border inline-flex items-center gap-1.5 transition ${
-                  active
-                    ? "bg-cyan-500 text-slate-950 border-cyan-400 font-bold"
-                    : "bg-white/[0.05] hover:bg-white/[0.1] border-white/10 text-slate-200"
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+    <main className="rk-view space-y-4">
+      <nav aria-label="Phân tích và luyện tập" className="rk-panel grid grid-cols-2 gap-2 p-2 sm:grid-cols-4">
+        {([
+          { id: "coach", label: "AI Coach", icon: BrainCircuit },
+          { id: "weekly", label: "Báo cáo tuần", icon: Flame },
+          { id: "video", label: "Video Analyzer", icon: Video },
+          { id: "files", label: "Kho tệp cá nhân", icon: FolderLock },
+        ] as const).map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            aria-current={subTab === id ? "page" : undefined}
+            onClick={() => setSubTab(id)}
+            className="rk-control justify-start text-left aria-[current=page]:border-cyan-400/50 aria-[current=page]:bg-cyan-400/10 aria-[current=page]:text-cyan-200"
+          >
+            <Icon className="size-4 shrink-0" aria-hidden="true" />
+            {label}
+          </button>
+        ))}
+      </nav>
 
       {/* ==================================================================== */}
       {/* TAB 1: HYBRID AI PRACTICE COACH & GUIDED F2L WORKOUT                 */}
@@ -1180,11 +1163,11 @@ export default function AiCoachAndCommunityView({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           {/* Left Column: Diagnosis Summary & Actionable Practice Plan */}
           <div className="lg:col-span-7 space-y-4">
-            <div className="rounded-2xl border border-cyan-500/30 bg-white/[0.04] p-5 space-y-3">
+            <div className="rk-panel p-5 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-cyan-400" />
-                  <span>Chẩn đoán Phong độ & Điểm yếu Cốt lõi</span>
+                  <span>Phân tích phong độ</span>
                 </h2>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-1 rounded-lg bg-white/[0.06] border border-white/10 font-mono text-[11px] text-slate-200">
@@ -1339,7 +1322,7 @@ export default function AiCoachAndCommunityView({
             </div>
 
             {/* 3-Step Personalized Practice Plan */}
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-3">
+            <div className="rk-panel p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-bold flex items-center gap-2">
                   <Target className="w-5 h-5 text-emerald-400" />
@@ -1387,7 +1370,7 @@ export default function AiCoachAndCommunityView({
 
           {/* Right Column: Weakest Algorithms Table & Recommended Next Algs */}
           <div className="lg:col-span-5 space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-3">
+            <div className="rk-panel p-5 space-y-3">
               <h2 className="text-base font-bold flex items-center gap-2">
                 <Activity className="w-5 h-5 text-rose-400" />
                 <span>Phát hiện Thuật toán CFOP Chậm / TPS Thấp</span>
@@ -1444,7 +1427,7 @@ export default function AiCoachAndCommunityView({
               )}
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-3">
+            <div className="rk-panel p-5 space-y-3">
               <h2 className="text-base font-bold flex items-center gap-2">
                 <Layers className="w-5 h-5 text-indigo-400" />
                 <span>Công thức Hiệu quả Cao Nên Học Tiếp Theo</span>
@@ -1498,7 +1481,7 @@ export default function AiCoachAndCommunityView({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="rk-panel p-4">
               <div className="text-xs text-slate-400">Chuỗi ngày luyện tập</div>
               <div className="font-mono text-2xl font-bold text-amber-300 mt-1 flex items-center gap-1.5">
                 <Flame className="w-6 h-6 text-orange-400" />
@@ -1510,7 +1493,7 @@ export default function AiCoachAndCommunityView({
               </div>
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="rk-panel p-4">
               <div className="text-xs text-slate-400">
                 Tổng lượt luyện tuần này
               </div>
@@ -1522,7 +1505,7 @@ export default function AiCoachAndCommunityView({
               </div>
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="rk-panel p-4">
               <div className="text-xs text-slate-400">
                 Mean Phiên chính (Tuần này vs Cùng kỳ)
               </div>
@@ -1553,7 +1536,7 @@ export default function AiCoachAndCommunityView({
               </div>
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="rk-panel p-4">
               <div className="text-xs text-slate-400">
                 Kỷ lục Single Tuần Này
               </div>
@@ -1574,7 +1557,7 @@ export default function AiCoachAndCommunityView({
           </div>
 
           {/* 12-Week (84 Days) Activity Heatmap */}
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-3">
+          <div className="rk-panel p-5 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-base font-bold flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-emerald-400" />
@@ -1609,7 +1592,7 @@ export default function AiCoachAndCommunityView({
           </div>
 
           {/* Personal Achievements & Badges */}
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-3">
+          <div className="rk-panel p-5 space-y-3">
             <h2 className="text-base font-bold flex items-center gap-2">
               <Award className="w-5 h-5 text-amber-400" />
               <span>Huy hiệu Cột mốc & Thành tựu Cá nhân</span>
@@ -1653,7 +1636,7 @@ export default function AiCoachAndCommunityView({
       {/* ==================================================================== */}
       {subTab === "video" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <div className="lg:col-span-7 min-w-0 rounded-2xl border border-white/10 bg-white/[0.04] p-3 sm:p-5 space-y-3">
+          <div className="lg:col-span-7 min-w-0 rk-panel p-3 sm:p-5 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
                 <Video className="w-5 h-5 text-cyan-400 shrink-0" aria-hidden="true" />
@@ -1673,12 +1656,12 @@ export default function AiCoachAndCommunityView({
 
                 <label className="min-h-10 px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer transition">
                   <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Tải video lên</span>
+                  <span>Mở clip để phân tích</span>
                   <input
                     type="file"
                     accept="video/*"
                     disabled={isRecording || !draftReady}
-                    className="hidden"
+                    className="sr-only"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
                       if (f) {
@@ -1687,7 +1670,7 @@ export default function AiCoachAndCommunityView({
                         setRecordedPreviewUrl(null);
                         setRecordedBlob(null);
                         setVideoUploadMessage(null);
-                        handleSelectVideoFile(f);
+                        void runClientCvMotionScan(handleSelectVideoFile(f));
                       }
                       e.target.value = "";
                     }}
@@ -1876,11 +1859,11 @@ export default function AiCoachAndCommunityView({
                       </button>
                       <button
                         type="button"
-                        onClick={handleUseRecordedClip}
-                        className="min-h-10 px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
+                        onClick={handleAnalyzeRecordedClip}
+                        className="rk-primary"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>Đưa clip vào Analyzer</span>
+                        <span>Phân tích clip</span>
                       </button>
                     </div>
                   </div>
@@ -2037,6 +2020,10 @@ export default function AiCoachAndCommunityView({
                   </p>
                 )}
 
+                <span role="status" className="sr-only">
+                  {analyzingVideo ? "Đang phân tích clip." : motionWaveform.length > 0 ? "Đã phân tích clip. Có thể kiểm tra các mốc." : ""}
+                </span>
+
                 {/* Consolidated Clip Details & CV Scan */}
                 <div className="rounded-xl border border-white/10 bg-black/30 p-3 space-y-2.5 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2058,14 +2045,14 @@ export default function AiCoachAndCommunityView({
                     <button
                       type="button"
                       disabled={analyzingVideo}
-                      onClick={runClientCvMotionScan}
+                      onClick={() => void runClientCvMotionScan(videoUrl)}
                       className="min-h-10 px-3 py-1.5 rounded-xl bg-indigo-500/25 hover:bg-indigo-500/35 border border-indigo-400/50 text-indigo-200 font-semibold inline-flex items-center gap-1.5 transition disabled:opacity-50"
                     >
                       <BrainCircuit className="w-3.5 h-3.5 text-cyan-400 shrink-0" aria-hidden="true" />
                       <span>
                         {analyzingVideo
-                          ? "Đang quét CV..."
-                          : "Quét chuyển động & gợi ý mốc"}
+                          ? "Đang phân tích…"
+                          : motionWaveform.length ? "Phân tích lại" : "Phân tích"}
                       </span>
                     </button>
                   </div>
@@ -2127,7 +2114,7 @@ export default function AiCoachAndCommunityView({
           </div>
 
           {/* Right: CV Motion Waveform, Stage Breakdown & Clip Export/R2 Save */}
-          <div className="lg:col-span-5 min-w-0 rounded-2xl border border-white/10 bg-white/[0.04] p-4 sm:p-5 space-y-4">
+          <div className="lg:col-span-5 min-w-0 rk-panel p-4 sm:p-5 space-y-4">
             <h2 className="text-base font-bold flex items-center gap-2">
               <Activity className="w-5 h-5 text-emerald-400 shrink-0" aria-hidden="true" />
               <span>Kết quả bóc tách CFOP</span>
@@ -2317,18 +2304,18 @@ export default function AiCoachAndCommunityView({
       {/* TAB 4: PRIVATE PERSONAL FILE STORAGE (CLOUDFLARE R2)                 */}
       {/* ==================================================================== */}
       {subTab === "files" && (
-        <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 sm:p-5 space-y-4">
+        <div className="rk-panel p-4 sm:p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
                 <FolderLock className="w-5 h-5 text-cyan-400 shrink-0" aria-hidden="true" />
-                <span>Kho tệp cá nhân riêng tư (Cloudflare R2)</span>
+                <span>Kho tệp cá nhân</span>
               </h2>
               <p className="text-xs text-slate-400">
-                Lưu riêng tư video lượt giải và bản sao lưu JSON của riêng tài khoản bạn qua URL ký ngắn hạn
+                Video và bản sao lưu của tài khoản này.
                 {r2Mode && (
                   <span className="ml-2 px-2 py-0.5 rounded bg-white/10 text-cyan-300 font-mono text-[10px]">
-                    Chế độ: {r2Mode === "r2" ? "Cloudflare R2" : "Mock cục bộ (Dev)"}
+                    {r2Mode === "r2" ? "R2" : "Kho cục bộ"}
                   </span>
                 )}
               </p>
@@ -2452,6 +2439,6 @@ export default function AiCoachAndCommunityView({
         onClose={() => setPreviewVaultFile(null)}
         onDownload={handleDownloadR2File}
       />
-    </div>
+    </main>
   );
 }
