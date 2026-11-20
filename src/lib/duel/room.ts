@@ -14,6 +14,7 @@ export type Room = {
   referee_name?: string | null;
   access_requests?: StoredAccess[];
   completed_at?: string | null;
+  expires_at?: string;
   revision: number;
   state: DuelMatch;
 };

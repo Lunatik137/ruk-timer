@@ -127,8 +127,15 @@ export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("room") ?? "";
   if (!isDuelRoomId(id)) return fail("Link phòng không hợp lệ.", 400);
   try {
-    const room = await fetchRoom(database(), id);
+    const db = database();
+    const room = await fetchRoom(db, id);
     if (!room || (room.completed_at && !nameFor(room, key))) return fail("Phòng không tồn tại hoặc đã hết hạn.", 404);
+    const keepsRoomOpen = seatFor(room, key) !== null || (!room.state.started && canModerate(room, key));
+    if (key && keepsRoomOpen && !room.completed_at && room.expires_at &&
+        Date.parse(room.expires_at) <= Date.now() + 4 * 60_000) {
+      const { error } = await db.rpc("refresh_duel_presence", { p_room: room.id, p_participant: key });
+      if (error && error.code !== "PGRST202") console.error("Duel room presence update failed", error.code);
+    }
     return response(room, key);
   } catch (error) {
     return unavailable(error);
@@ -180,6 +187,13 @@ export async function POST(req: NextRequest) {
     const isReferee = room.referee_key === key;
     const name = nameFor(room, key);
     const requests = room.access_requests ?? [];
+
+    if (body.action === "close") {
+      if (!canModerate(room, key)) return fail("Chỉ chủ phòng và trọng tài được đóng phòng.", 403);
+      if (room.completed_at || room.state.winner !== null) return fail("Trận đã kết thúc.", 409);
+      const data = await updateRoom(db, room, { expires_at: new Date().toISOString(), access_requests: [] });
+      return data ? response(data, key) : retry();
+    }
 
     if (!Array.isArray(room.access_requests) &&
       (["promote-referee", "release-referee", "review-access", "cancel-access"].includes(String(body.action))

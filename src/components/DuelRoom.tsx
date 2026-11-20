@@ -91,6 +91,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [activeRoomConflict, setActiveRoomConflict] = useState<string | null>(null);
+  const [confirmClose, setConfirmClose] = useState(false);
   const [connection, setConnection] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const [invite, setInvite] = useState("");
@@ -115,6 +116,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
     if (room) return;
     const controller = new AbortController();
     let checkingRooms = false;
+    let roomsToWatch = false;
     async function refreshRooms() {
       if (checkingRooms) return;
       checkingRooms = true;
@@ -123,6 +125,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
         const { active } = await readResponse<{ active: DuelActiveRoom[] }>(response);
         if (!controller.signal.aborted) {
           setActiveRooms(active);
+          roomsToWatch = active.length > 0;
           setActiveError(false);
         }
       } catch {
@@ -134,12 +137,16 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
     void refreshRooms();
     window.addEventListener("focus", refreshRooms);
     window.addEventListener("online", refreshRooms);
+    const roomRefresh = setInterval(() => {
+      if (roomsToWatch && document.visibilityState === "visible") void refreshRooms();
+    }, 15_000);
     void fetch("/api/duel?history=1", { signal: controller.signal, cache: "no-store" })
       .then(readResponse<{ history: DuelHistoryItem[] }>)
       .then((data) => { if (!controller.signal.aborted) { setHistory(data.history); setHistoryError(""); } })
       .catch((err) => { if (!controller.signal.aborted) setHistoryError(err.message); });
     return () => {
       controller.abort();
+      clearInterval(roomRefresh);
       window.removeEventListener("focus", refreshRooms);
       window.removeEventListener("online", refreshRooms);
     };
@@ -248,6 +255,10 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
       receive(next);
       if (values.action === "seat") setSelectedSeat(null);
       setConnection("");
+      if (values.action === "close") {
+        router.replace("/duel");
+        return;
+      }
       if (!room) {
         window.history.replaceState(null, "", `/duel?room=${next.id}`);
         setRoom(next.id);
@@ -296,6 +307,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const sortedRooms = [...activeRooms].sort((a, b) => Number(b.started) - Number(a.started));
   const modeLabel = mode === "simultaneous" ? "Đồng thời" : "Luân phiên";
   const missingPlayers = match?.players.filter((player) => !player).length ?? 0;
+  const canClose = member?.canModerate && match?.winner === null;
   const playerLabel = (seat: 0 | 1) => match?.players[seat] ?? `Player ${seat + 1}`;
   const inviteControls = <div className="space-y-2">
     <label className={label}>Link mời<input ref={linkInput} readOnly value={invite} className={input} onFocus={(e) => e.target.select()} /></label>
@@ -593,6 +605,17 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
         </section>}
         {accessAvailable && ((member && match?.winner === null) || (initialInvite && !access && (selectedSeat === "player1" || selectedSeat === "player2"))) &&
           <DuelCamera key={room} room={room} player={member ? mySeat !== null : true} canJoin={Boolean(member)} />}
+        {canClose && <div className="space-y-2">
+          {confirmClose ? <>
+            <p className="text-sm text-slate-300">Đóng phòng sẽ kết thúc phiên của mọi người. Trận dở sẽ không tính thắng thua.</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="rk-control text-rose-200" disabled={busy}
+                onClick={() => void action({ action: "close" })}>Xác nhận đóng phòng</button>
+              <button type="button" className="rk-control" disabled={busy} onClick={() => setConfirmClose(false)}>Giữ phòng</button>
+            </div>
+          </> : <button type="button" className="rk-control text-rose-200" disabled={busy}
+            onClick={() => setConfirmClose(true)}>Đóng phòng</button>}
+        </div>}
       </main>
     </div>
   );

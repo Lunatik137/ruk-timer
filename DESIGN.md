@@ -69,6 +69,7 @@ Use the Tailwind 8–16px corner scale for controls and panels. Primary touch co
 - **Cuộc gọi 1v1** — Place optional live video and audio below the timing and result controls. Use separate camera and mic controls, show which devices are active, and keep the leave action beside them.
 - **Quyền vào phòng 1v1** — Give the referee a separate seat. Show pending or denied status on the invitation page. Keep the host and referee’s admission controls below the live match controls.
 - **Quay lại trận 1v1** — Place active rooms above the lobby forms. Use the same room link to restore the server snapshot and show reconnecting status without replacing the timer.
+- **Đóng phòng 1v1** — Keep the close action below the match controls. Explain that closing ends the room for everyone and leaves unfinished games unscored. Allow a short reconnection window before an empty room expires.
 - **Sảnh 1v1** — Put link entry before room creation on all widths. Keep name and puzzle visible for quick creation, with the current format summarized on the settings disclosure. List live matches before waiting rooms and keep older matches behind a disclosure. State whether the room still needs players beside the roster.
 
 ## Do's and Don'ts
