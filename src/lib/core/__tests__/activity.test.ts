@@ -8,20 +8,22 @@ import {
   type ActivitySolve,
 } from "../activity";
 
-it("groups the selected period by local dates, including days with no solves", () => {
+it("counts standard solves by local date, including DNF, and excludes CFOP practice", () => {
   const all = [
     makeSolve("old", "2026-05-03T17:01:00Z"),
     makeSolve("main", "2026-05-04T16:59:00Z", { time_ms: 15000 }),
     makeSolve("main", "2026-05-04T16:59:00Z", { time_ms: 15000 }),
     makeSolve("drill", "2026-05-04T17:01:00Z", { session_id: "drill", penalty: "DNF" }),
+    makeSolve("f2l", "2026-05-04T17:02:00Z", { scramble: "z2 R U R' U2", time_ms: 1000 }),
+    makeSolve("standard-dnf", "2026-05-05T16:59:00Z", { penalty: "DNF" }),
   ];
   const report = computePracticePeriod(all, {
     tz: "Asia/Ho_Chi_Minh", now: Date.parse("2026-05-06T04:00:00Z"),
     days: 2, drillSessionIds: new Set(["drill"]),
   });
   expect(report.days).toEqual([{ date: "2026-05-05", count: 1 }, { date: "2026-05-06", count: 0 }]);
-  expect(report.current).toMatchObject({ practiceCount: 1, meanMs: null });
-  expect(report.previous).toMatchObject({ practiceCount: 2, meanMs: 13500 });
+  expect(report.current).toMatchObject({ practiceCount: 3, mainCount: 1, dnfCount: 1, meanMs: null });
+  expect(report.previous).toMatchObject({ practiceCount: 2, mainCount: 2, meanMs: 13500 });
 });
 
 function makeSolve(
@@ -33,6 +35,7 @@ function makeSolve(
     id,
     session_id: opts?.session_id ?? "main-3x3",
     puzzle: opts?.puzzle ?? "3x3",
+    scramble: opts?.scramble,
     time_ms: opts?.time_ms ?? 12000,
     penalty: opts?.penalty ?? "OK",
     solved_at,

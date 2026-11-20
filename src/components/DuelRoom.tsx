@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ChevronDown, Eye, Link2, ShieldCheck, Swords } from "lucide-react";
 import DuelTimer from "@/components/DuelTimer";
 import DuelCamera from "@/components/DuelCamera";
-import { readDuelInvite } from "@/lib/duel/invite";
+import { isDuelRoomId, readDuelInvite } from "@/lib/duel/invite";
 import { isDuelPuzzle, officialCentiseconds, otherSeat, type DuelActiveRoom, type DuelHistoryItem, type DuelMode, type DuelView, type Result, type Role } from "@/lib/duel/match";
 import { formatTimeMs } from "@/lib/stats";
 import { PUZZLES } from "@/types/cubing";
@@ -25,7 +25,10 @@ type Snapshot = { id: string; revision: number; view: DuelView };
 
 async function readResponse<T = Snapshot>(response: Response): Promise<T> {
   const data = await response.json();
-  if (!response.ok) throw Object.assign(new Error(data.error ?? "Không kết nối được với phòng."), { retry: data.retry === true });
+  if (!response.ok) throw Object.assign(new Error(data.error ?? "Không kết nối được với phòng."), {
+    retry: data.retry === true,
+    activeRoom: typeof data.activeRoom === "string" && isDuelRoomId(data.activeRoom) ? data.activeRoom : null,
+  });
   return data;
 }
 
@@ -87,6 +90,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const [historyError, setHistoryError] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [activeRoomConflict, setActiveRoomConflict] = useState<string | null>(null);
   const [connection, setConnection] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const [invite, setInvite] = useState("");
@@ -213,6 +217,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
     pending.current = true;
     setBusy(true);
     setError("");
+    setActiveRoomConflict(null);
     try {
       const send = async (): Promise<Snapshot> => {
         const controller = new AbortController();
@@ -249,6 +254,9 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không gửi được. Hãy thử lại.");
+      if (err instanceof Error && "activeRoom" in err && typeof err.activeRoom === "string") {
+        setActiveRoomConflict(err.activeRoom);
+      }
     } finally {
       pending.current = false;
       setBusy(false);
@@ -270,6 +278,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
       void action({ action: "seat", role: nextRole });
     } else {
       setError("");
+      setActiveRoomConflict(null);
       setSelectedSeat(nextRole);
       guestNameInput.current?.focus();
     }
@@ -314,7 +323,12 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
           </p>}
         </header>
 
-        {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
+        {error && <div className="space-y-2">
+          <p role="alert" className="text-sm text-rose-300">{error}</p>
+          {activeRoomConflict && <Link href={`/duel?room=${activeRoomConflict}`} prefetch={false} className="rk-control">
+            Quay lại phòng đang giữ ghế
+          </Link>}
+        </div>}
         {connection && <p role="status" className="text-sm text-amber-200">{connection}</p>}
 
         {!room && (sortedRooms.length > 0 || activeError) && <section className="rk-panel space-y-2 p-4 sm:p-5" aria-labelledby="duel-active">

@@ -324,6 +324,15 @@ export async function POST(req: NextRequest) {
     }
     return response(data, key);
   } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "RUK01") {
+      const ownSeat = body.action === "create" || body.action === "seat";
+      const activeRoom = ownSeat && "details" in error && typeof error.details === "string" && isDuelRoomId(error.details)
+        ? error.details : undefined;
+      return NextResponse.json({
+        error: ownSeat ? "Bạn đang giữ ghế ở một phòng khác." : "Người này đang giữ ghế ở một phòng khác.",
+        activeRoom,
+      }, { status: 409, headers });
+    }
     return unavailable(error);
   }
 }

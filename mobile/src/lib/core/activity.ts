@@ -14,7 +14,7 @@ import type { SolveLike } from "./types";
 export type ActivitySolve = Pick<
   SolveLike,
   "id" | "session_id" | "puzzle" | "time_ms" | "penalty" | "solved_at"
->;
+> & Partial<Pick<SolveLike, "scramble">>;
 
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
 
@@ -173,15 +173,12 @@ export interface WeeklyReport {
   isCurrentWeekComplete: boolean; // false until Sunday ends
 }
 
-function statsFor(
-  solves: ActivitySolve[],
-  drillSessionIds: Set<string>
-): WeekStats {
+function statsFor(solves: ActivitySolve[], isDrill: (solve: ActivitySolve) => boolean): WeekStats {
   const mainValid: number[] = [];
   let main = 0;
   let dnf = 0;
   for (const s of solves) {
-    if (drillSessionIds.has(s.session_id)) continue;
+    if (isDrill(s)) continue;
     main++;
     const eff = getEffectiveMs(s);
     if (eff === "DNF") dnf++;
@@ -237,8 +234,9 @@ export function computeWeeklyReport(
     }
   }
 
-  const a = statsFor(thisWeek, drill);
-  const b = statsFor(lastToDate, drill);
+  const isDrill = (solve: ActivitySolve) => drill.has(solve.session_id);
+  const a = statsFor(thisWeek, isDrill);
+  const b = statsFor(lastToDate, isDrill);
   const meanDeltaPct =
     a.meanMs !== null && b.meanMs !== null && b.meanMs > 0
       ? Number((((a.meanMs - b.meanMs) / b.meanMs) * 100).toFixed(1))
@@ -250,7 +248,7 @@ export function computeWeeklyReport(
     elapsedDays: elapsed,
     thisWeek: a,
     lastWeekToDate: b,
-    lastWeekFull: statsFor(lastFull, drill),
+    lastWeekFull: statsFor(lastFull, isDrill),
     meanDeltaPct,
     isCurrentWeekComplete: false,
   };
@@ -267,6 +265,9 @@ export function computePracticePeriod(
   const current: ActivitySolve[] = [];
   const previous: ActivitySolve[] = [];
   const seen = new Set<string>();
+  // Built-in 3x3 training subsets prefix their setup with z2. Standard generated scrambles do not.
+  const isDrill = (solve: ActivitySolve) => opts.drillSessionIds.has(solve.session_id)
+    || (solve.puzzle === "3x3" && /^z2(?:\s|$)/i.test(solve.scramble?.trim() ?? ""));
   for (const solve of solves) {
     const at = Date.parse(solve.solved_at);
     if (seen.has(solve.id) || !Number.isFinite(at)) continue;
@@ -274,10 +275,10 @@ export function computePracticePeriod(
     const date = dayKey(at, opts.tz);
     if (date >= start && date <= end) {
       current.push(solve);
-      days[dayIndex(date) - dayIndex(start)].count++;
+      if (!isDrill(solve)) days[dayIndex(date) - dayIndex(start)].count++;
     } else if (date >= previousStart && date < start) {
       previous.push(solve);
     }
   }
-  return { start, end, days, current: statsFor(current, opts.drillSessionIds), previous: statsFor(previous, opts.drillSessionIds) };
+  return { start, end, days, current: statsFor(current, isDrill), previous: statsFor(previous, isDrill) };
 }

@@ -30,10 +30,10 @@ export default function PracticeProgress({ solves, sessions, achievements, decim
   const max = Math.max(1, ...report.days.map((day) => day.count));
   const activeDays = report.days.filter((day) => day.count > 0).length;
   const metrics = [
-    { title: "Lượt luyện tập", value: report.current.practiceCount, context: `Kỳ trước: ${report.previous.practiceCount} lượt` },
-    { title: "Ngày có luyện", value: `${activeDays}/${period}`, context: `Chuỗi: ${streak.currentStreak} ngày · Kỷ lục: ${streak.longestStreak}` },
-    { title: "Mean phiên chính", value: formatTimeMs(report.current.meanMs, decimals), context: `Kỳ trước: ${formatTimeMs(report.previous.meanMs, decimals)}` },
-    { title: "Single tốt nhất", value: formatTimeMs(report.current.bestSingleMs, decimals), context: `Độ lệch chuẩn: ${formatTimeMs(report.current.stdDevMs, decimals)}` },
+    { title: "Lượt giải tiêu chuẩn", value: report.current.mainCount, context: `Kỳ trước: ${report.previous.mainCount} lượt` },
+    { title: "Ngày có giải tiêu chuẩn", value: `${activeDays}/${period}`, context: `Chuỗi luyện tập (gồm CFOP): ${streak.currentStreak} ngày · Kỷ lục: ${streak.longestStreak}` },
+    { title: "Mean giải tiêu chuẩn", value: formatTimeMs(report.current.meanMs, decimals), context: `Kỳ trước: ${formatTimeMs(report.previous.meanMs, decimals)}` },
+    { title: "Single tiêu chuẩn tốt nhất", value: formatTimeMs(report.current.bestSingleMs, decimals), context: `Độ lệch chuẩn: ${formatTimeMs(report.current.stdDevMs, decimals)}` },
   ];
 
   return (
@@ -60,8 +60,11 @@ export default function PracticeProgress({ solves, sessions, achievements, decim
       </dl>
 
       <section className="rk-panel rk-report-section space-y-3 p-4 sm:p-5" aria-labelledby="solves-by-day">
-        <h2 id="solves-by-day" className="text-base font-semibold">Số lượt giải theo ngày</h2>
-        {report.current.practiceCount === 0 && <p role="status" className="text-sm text-slate-300">Chưa có lượt luyện trong khoảng này.</p>}
+        <div className="space-y-1">
+          <h2 id="solves-by-day" className="text-base font-semibold">Lượt giải tiêu chuẩn theo ngày</h2>
+          <p className="text-sm text-slate-300">Tính cả DNF. Các bài luyện CFOP được loại khỏi biểu đồ.</p>
+        </div>
+        {report.current.mainCount === 0 && <p role="status" className="text-sm text-slate-300">Chưa có lượt giải tiêu chuẩn trong khoảng này.</p>}
         <div className="flex gap-2" aria-hidden="true">
           <div className="flex h-36 shrink-0 flex-col justify-between text-right font-mono text-xs tabular-nums text-slate-400">
             <span>{max}</span><span>0</span>
@@ -81,14 +84,14 @@ export default function PracticeProgress({ solves, sessions, achievements, decim
         <details className="text-sm text-slate-300">
           <summary className="w-fit cursor-pointer rounded py-2 hover:underline">Xem số liệu từng ngày</summary>
           <table className="w-full max-w-sm text-left">
-            <thead className="border-b border-white/10"><tr><th scope="col" className="py-2">Ngày</th><th scope="col" className="py-2 text-right">Lượt giải</th></tr></thead>
+            <thead className="border-b border-white/10"><tr><th scope="col" className="py-2">Ngày</th><th scope="col" className="py-2 text-right">Lượt giải tiêu chuẩn</th></tr></thead>
             <tbody className="divide-y divide-white/10">
               {report.days.map((day) => <tr key={day.date}><th scope="row" className="py-1 font-normal">{day.date}</th><td className="py-1 text-right font-mono tabular-nums">{day.count}</td></tr>)}
             </tbody>
           </table>
         </details>
         <details className="text-sm text-slate-300">
-          <summary className="w-fit cursor-pointer rounded py-2 hover:underline">Lịch luyện theo tuần</summary>
+          <summary className="w-fit cursor-pointer rounded py-2 hover:underline">Lịch giải tiêu chuẩn theo tuần</summary>
           <div className="mt-2 flex max-w-xl gap-2" aria-hidden="true">
             <div className="grid grid-rows-7 gap-1 text-xs text-slate-400">
               {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((day) => (
@@ -107,7 +110,7 @@ export default function PracticeProgress({ solves, sessions, achievements, decim
           </div>
           <p className="mt-2 text-xs text-slate-400">Ô sáng hơn có nhiều lượt hơn. Xem số liệu từng ngày ở bảng phía trên.</p>
         </details>
-        <p className="text-xs text-slate-400">Biểu đồ tính mọi lượt luyện, kể cả CFOP và DNF. Mean và Single chỉ tính lượt hợp lệ ở phiên giải chính.</p>
+        <p className="text-xs text-slate-400">Mean và Single tính các lượt giải tiêu chuẩn hợp lệ.</p>
       </section>
 
       <section className="rk-panel p-4 sm:p-5" aria-labelledby="practice-achievements">
