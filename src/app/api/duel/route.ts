@@ -14,6 +14,7 @@ const credential = /^[a-f0-9]{64}$/;
 
 type Body = Record<string, unknown>;
 const headers = { "Cache-Control": "private, no-store" };
+const roomHeaders = { ...headers, Vary: "Cookie" };
 const fail = (error: string, status: number) => NextResponse.json({ error }, { status, headers });
 const retry = () => NextResponse.json({ retry: true, error: "Phòng vừa thay đổi. Hãy thử lại." }, { status: 409, headers });
 const admissionUnavailable = () => fail("Tính năng duyệt vào phòng đang được cập nhật.", 503);
@@ -29,7 +30,12 @@ function playerKey(token: string | undefined) {
   return token && credential.test(token) ? createHash("sha256").update(token).digest("hex") : null;
 }
 
-function response(room: Room, key: string | null, token?: string) {
+function roomTag(room: Pick<Room, "id" | "revision">, key: string | null) {
+  const version = process.env.VERCEL_GIT_COMMIT_SHA ?? "1";
+  return `W/"${createHash("sha256").update(`${version}:${room.id}:${room.revision}:${key ?? "invite"}`).digest("base64url")}"`;
+}
+
+function response(room: Room, key: string | null, token?: string, etag?: string) {
   const spectators = room.spectators.map((viewer) => viewer.name);
   const name = nameFor(room, key);
   const official = resultOfficial(room);
@@ -49,7 +55,9 @@ function response(room: Room, key: string | null, token?: string) {
     referee, accessAvailable,
     access: ownRequest ? { role: ownRequest.role, status: ownRequest.status } : null,
   };
-  const res = NextResponse.json({ id: room.id, revision: room.revision, view }, { headers });
+  const res = NextResponse.json({ id: room.id, revision: room.revision, view }, {
+    headers: etag ? { ...roomHeaders, ETag: etag } : headers,
+  });
   if (token) res.cookies.set(cookie, token, {
     httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production",
     path: "/api/duel", maxAge: 86_400 * 365,
@@ -62,6 +70,16 @@ async function fetchRoom(db: ReturnType<typeof database>, id: string): Promise<R
     .eq("id", id).or(`expires_at.gt.${new Date().toISOString()},completed_at.not.is.null`).maybeSingle<Room>();
   if (error) throw error;
   return data;
+}
+
+type RoomPresence = Pick<Room, "id" | "seats" | "referee_key" | "host_key" | "expires_at">;
+
+async function refreshPresence(db: ReturnType<typeof database>, room: RoomPresence, key: string | null, started: boolean) {
+  if (!key || !room.expires_at || Date.parse(room.expires_at) > Date.now() + 4 * 60_000) return;
+  if (!room.seats.includes(key) && (started || (room.host_key !== key && room.referee_key !== key))) return;
+
+  const { error } = await db.rpc("refresh_duel_presence", { p_room: room.id, p_participant: key });
+  if (error && error.code !== "PGRST202") console.error("Duel room presence update failed", error.code);
 }
 
 async function updateRoom(db: ReturnType<typeof database>, room: Room, changes: Partial<Room>) {
@@ -96,13 +114,13 @@ export async function GET(req: NextRequest) {
   if (req.nextUrl.searchParams.has("active")) {
     if (!key) return NextResponse.json({ active: [] }, { headers });
     try {
-      const { data, error } = await database().from(table).select("id,state")
+      const { data, error } = await database().from(table)
+        .select("id,puzzle:state->settings->>puzzle,started:state->started,players:state->players,winner:state->winner")
         .is("completed_at", null).gt("expires_at", new Date().toISOString())
         .or(`host_key.eq.${key},seats.cs.["${key}"],referee_key.eq.${key},spectators.cs.[{"key":"${key}"}]`)
-        .order("expires_at", { ascending: false }).limit(8).returns<Pick<Room, "id" | "state">[]>();
+        .order("expires_at", { ascending: false }).limit(8).returns<(DuelActiveRoom & Pick<DuelMatch, "winner">)[]>();
       if (error) throw error;
-      const active: DuelActiveRoom[] = (data ?? []).flatMap(({ id, state }) => state.winner === null
-        ? [{ id, puzzle: state.settings.puzzle, started: state.started, players: state.players }] : []);
+      const active: DuelActiveRoom[] = (data ?? []).flatMap(({ winner, ...room }) => winner === null ? [room] : []);
       return NextResponse.json({ active }, { headers });
     } catch (error) {
       return unavailable(error);
@@ -111,13 +129,14 @@ export async function GET(req: NextRequest) {
   if (req.nextUrl.searchParams.has("history")) {
     if (!key) return NextResponse.json({ history: [] }, { headers });
     try {
-      const { data, error } = await database().from(table).select("id,completed_at,state")
+      const { data, error } = await database().from(table)
+        .select("id,completed_at,settings:state->settings,players:state->players,sets:state->sets,winner:state->winner")
         .not("completed_at", "is", null).or(`host_key.eq.${key},seats.cs.["${key}"]`)
         .order("completed_at", { ascending: false }).limit(50)
-        .returns<{ id: string; completed_at: string; state: DuelMatch }[]>();
+        .returns<(Omit<DuelHistoryItem, "completedAt" | "winner"> & { completed_at: string; winner: DuelMatch["winner"] })[]>();
       if (error) throw error;
-      const history: DuelHistoryItem[] = (data ?? []).flatMap(({ id, completed_at, state }) => state.winner === null ? [] : [{
-        id, completedAt: completed_at, settings: state.settings, players: state.players, sets: state.sets, winner: state.winner,
+      const history: DuelHistoryItem[] = (data ?? []).flatMap(({ completed_at, winner, ...match }) => winner === null ? [] : [{
+        ...match, completedAt: completed_at, winner,
       }]);
       return NextResponse.json({ history }, { headers });
     } catch (error) {
@@ -128,15 +147,22 @@ export async function GET(req: NextRequest) {
   if (!isDuelRoomId(id)) return fail("Link phòng không hợp lệ.", 400);
   try {
     const db = database();
+    const validator = req.headers.get("if-none-match");
+    if (validator && /^W\/"[\w-]{43}"$/.test(validator)) {
+      const { data: room, error } = await db.from(table)
+        .select("id,revision,expires_at,seats,host_key,referee_key,started:state->>started")
+        .eq("id", id).is("completed_at", null).gt("expires_at", new Date().toISOString())
+        .maybeSingle<RoomPresence & Pick<Room, "revision"> & { started: "true" | "false" }>();
+      if (error) throw error;
+      if (room && roomTag(room, key) === validator) {
+        await refreshPresence(db, room, key, room.started === "true");
+        return new NextResponse(null, { status: 304, headers: { ...roomHeaders, ETag: validator } });
+      }
+    }
     const room = await fetchRoom(db, id);
     if (!room || (room.completed_at && !nameFor(room, key))) return fail("Phòng không tồn tại hoặc đã hết hạn.", 404);
-    const keepsRoomOpen = seatFor(room, key) !== null || (!room.state.started && canModerate(room, key));
-    if (key && keepsRoomOpen && !room.completed_at && room.expires_at &&
-        Date.parse(room.expires_at) <= Date.now() + 4 * 60_000) {
-      const { error } = await db.rpc("refresh_duel_presence", { p_room: room.id, p_participant: key });
-      if (error && error.code !== "PGRST202") console.error("Duel room presence update failed", error.code);
-    }
-    return response(room, key);
+    if (!room.completed_at) await refreshPresence(db, room, key, room.state.started);
+    return response(room, key, undefined, roomTag(room, key));
   } catch (error) {
     return unavailable(error);
   }
