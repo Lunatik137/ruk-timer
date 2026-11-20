@@ -61,10 +61,10 @@ Use the Tailwind 8–16px corner scale for controls and panels. Primary touch co
 - **Scramble** — The move sequence is the strongest line. Keep new scramble near the training selector. Put previous, copy, edit and Cross help together.
 - **Timer** — Mode changes sit below the timing surface. A concise live status communicates hold, ready, inspection, running and saved-time states without announcing every clock tick.
 - **Video Analyzer** — “Phân tích clip” opens a new recording and starts the on-device scan in one step. Opening a video file also starts its first scan. Keep retry, manual marks, device download and explicit cloud upload distinct.
-- **Navigation** — Desktop uses a segmented row and mobile uses an icon with a short label. Each marks the current destination. The History tab includes the solve count in its accessible name.
-- **Video intake** — Put the main file action next to the camera action and describe the outcome in one sentence. Keep the clip and timeline layout available after opening a file.
-- **Weekly report** — Show date range and main metrics before charts. Put calculation details behind a disclosure. Use explicit, quiet scroll-linked motion only for report panels. Reduced motion and unsupported browsers show the final layout.
-- **Footer** — Keep documentation and feedback outside the practice workspace. Keep it out of the focus order during a solve.
+- **Navigation** — Desktop uses a segmented row and mobile uses an icon with a short label. Underline the current destination and keep keyboard focus distinct. The mobile History count sits beside the icon, including at zero. Use 11px for the compact mobile labels and count, and expose the exact count in the accessible name.
+- **Video intake** — Use a filled file action and an outlined camera action. Stack them at narrow widths. Explain that selecting a clip starts analysis automatically. Keep the clip and timeline available after opening a file.
+- **Weekly report** — Place the date range above a single grid of metrics, with comparisons below each value. Show an explicit empty state. Put calculation details behind a disclosure. A small section marker fills as each chart section enters view. Reduced motion and unsupported browsers show a static marker.
+- **Footer** — Group documentation and feedback as two equal-width links on mobile. Reserve room below the links for the navigation bar and device safe area. Keep the footer out of the focus order during a solve.
 
 ## Do's and Don'ts
 

@@ -4,6 +4,7 @@
 
 :root {
   color-scheme: dark;
+  --rk-bottom-nav-height: calc(3.8125rem + env(safe-area-inset-bottom));
 }
 
 html,
@@ -13,6 +14,12 @@ body {
   overscroll-behavior-y: contain;
   scroll-padding-top: 4.5rem;
   -webkit-tap-highlight-color: transparent;
+}
+
+@media (width < 1024px) {
+  html {
+    scroll-padding-bottom: calc(var(--rk-bottom-nav-height) + 0.75rem);
+  }
 }
 
 ::selection {
@@ -113,24 +120,38 @@ body {
   }
 }
 
-/* Reports progressively sharpen as they enter view. Content remains readable throughout. */
-@keyframes rk-report-reveal {
+/* The section marker moves with entry; the report itself stays still. */
+@keyframes rk-report-marker {
   from {
-    opacity: 0.9;
-    transform: translateY(8px);
+    transform: scaleX(0);
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+}
+
+.rk-report-section {
+  position: relative;
+}
+
+.rk-report-section::before {
+  content: "";
+  position: absolute;
+  inset-block-start: -1px;
+  inset-inline-start: 1rem;
+  width: 3rem;
+  height: 2px;
+  background: theme("colors.cyan.300");
+  transform-origin: left;
 }
 
 @supports (animation-timeline: view()) {
   @media (prefers-reduced-motion: no-preference) {
-    .rk-report-reveal {
-      animation: rk-report-reveal linear both;
-      animation-timeline: view();
-      animation-range: entry 0% entry 45%;
+    .rk-report-section {
+      view-timeline-name: --rk-report-entry;
+    }
+
+    .rk-report-section::before {
+      animation: rk-report-marker 1ms ease-out both;
+      animation-timeline: --rk-report-entry;
+      animation-range: entry 5% entry 65%;
     }
   }
 }

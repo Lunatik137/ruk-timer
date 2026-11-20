@@ -133,7 +133,7 @@ export default function Header({
                   onChangeMainView(view);
                   if (view === "timer" && event.detail > 0) event.currentTarget.blur();
                 }}
-                className="inline-flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-transparent px-2.5 text-xs font-semibold text-slate-300 transition-colors hover:bg-white/10 hover:text-white aria-[current=page]:border-cyan-300/30 aria-[current=page]:bg-cyan-300/10 aria-[current=page]:text-cyan-200 2xl:px-3"
+                className="inline-flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-transparent px-2.5 text-xs font-medium text-slate-300 underline-offset-4 transition-colors hover:bg-white/10 hover:text-white focus-visible:z-10 aria-[current=page]:border-cyan-300/30 aria-[current=page]:bg-cyan-300/10 aria-[current=page]:font-semibold aria-[current=page]:text-cyan-200 aria-[current=page]:underline 2xl:px-3"
               >
                 <Icon aria-hidden="true" className="size-4" />
                 {label}

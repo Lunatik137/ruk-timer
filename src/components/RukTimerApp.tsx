@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ArrowUpRight,
   BarChart2,
   Box,
   BrainCircuit,
@@ -1624,24 +1625,26 @@ export default function RukTimerApp() {
         inert={focusDimActive}
         className={`border-t border-white/10 bg-[var(--rk-surface)] ${focusDimActive ? "invisible" : ""}`}
       >
-        <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center justify-between gap-x-4 px-3 pb-[calc(4rem+env(safe-area-inset-bottom))] pt-2 sm:px-6 lg:pb-2">
-          <span className="text-sm font-semibold text-slate-200">RukTimer</span>
-          <nav aria-label="Tài nguyên RukTimer" className="flex flex-wrap items-center gap-x-4">
+        <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center justify-between gap-3 px-3 pb-[calc(var(--rk-bottom-nav-height)+0.75rem)] pt-3 sm:px-6 lg:pb-3">
+          <span className="hidden text-sm font-semibold text-slate-200 lg:block">RukTimer</span>
+          <nav aria-label="Tài nguyên RukTimer" className="grid w-full grid-cols-2 gap-2 lg:flex lg:w-auto">
             <a
               href="https://github.com/Lunatik137/ruk-timer#readme"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex min-h-11 items-center text-sm text-slate-300 hover:text-cyan-200 hover:underline"
+              className="rk-control justify-between font-medium hover:underline"
             >
               Tài liệu
+              <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-slate-400" />
             </a>
             <a
               href="https://github.com/Lunatik137/ruk-timer/issues"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex min-h-11 items-center text-sm text-slate-300 hover:text-cyan-200 hover:underline"
+              className="rk-control justify-between font-medium hover:underline"
             >
               Báo lỗi và góp ý
+              <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-slate-400" />
             </a>
           </nav>
         </div>
@@ -1654,34 +1657,36 @@ export default function RukTimerApp() {
         >
           {([
             { view: "timer", tab: "timer", label: "Timer", Icon: Clock },
-            { view: "cfop", label: "Học CFOP", Icon: GraduationCap },
+            { view: "cfop", label: "CFOP", Icon: GraduationCap },
             { view: "coach", label: "AI & Video", Icon: BrainCircuit },
             { view: "timer", tab: "history", label: "Lịch sử", Icon: ListOrdered },
             { view: "timer", tab: "stats", label: "Thống kê", Icon: BarChart2 },
           ] as const).map((item) => {
             const current = mainView === item.view && (!("tab" in item) || mobileTab === item.tab);
             const { view, label, Icon } = item;
+            const isHistory = "tab" in item && item.tab === "history";
+            const solveCount = enrichedSolves.length;
             return (
               <button
                 key={label}
                 type="button"
                 aria-current={current ? "page" : undefined}
-                aria-label={"tab" in item && item.tab === "history" ? `Lịch sử (${enrichedSolves.length} lượt)` : undefined}
+                aria-label={isHistory ? `Lịch sử (${solveCount} lượt)` : undefined}
                 onClick={() => {
                   setMainView(view);
                   if ("tab" in item) setMobileTab(item.tab);
                 }}
-                className="group flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 text-slate-300 hover:bg-white/5 aria-[current=page]:font-semibold aria-[current=page]:text-cyan-200"
+                className="group flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 text-[11px] leading-tight text-slate-300 underline-offset-2 hover:bg-white/5 focus-visible:outline-offset-[-2px] aria-[current=page]:bg-cyan-300/10 aria-[current=page]:font-semibold aria-[current=page]:text-cyan-200"
               >
-                <span className="relative grid h-6 w-9 place-items-center rounded-full group-aria-[current=page]:bg-cyan-300/15">
+                <span className="flex h-6 items-center justify-center gap-0.5">
                   <Icon aria-hidden="true" className="size-4" />
-                  {"tab" in item && item.tab === "history" && enrichedSolves.length > 0 && (
-                    <span aria-hidden="true" className="absolute -right-1 -top-1 rounded-full bg-[var(--rk-surface)] px-1 text-[10px] tabular-nums text-cyan-200">
-                      {enrichedSolves.length > 99 ? "99+" : enrichedSolves.length}
+                  {isHistory && (
+                    <span aria-hidden="true" className="rounded bg-white/10 px-1 text-[11px] font-medium tabular-nums">
+                      {solveCount > 99 ? "99+" : solveCount}
                     </span>
                   )}
                 </span>
-                <span className="whitespace-nowrap">{label}</span>
+                <span className="whitespace-nowrap group-aria-[current=page]:underline">{label}</span>
               </button>
             );
           })}
