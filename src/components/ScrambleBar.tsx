@@ -30,11 +30,11 @@ interface ScrambleBarProps {
 }
 
 const SUBSET_OPTIONS: { id: TrainingSubset; label: string }[] = [
-  { id: "wca", label: "Scramble Chuẩn WCA" },
-  { id: "cross_easy", label: "Luyện Cross (3–5 nước)" },
-  { id: "cross_hard", label: "Luyện Cross (6–8 nước)" },
-  { id: "f2l_only", label: "Luyện F2L (Cross giải sẵn)" },
-  { id: "ll_only", label: "Tầng Cuối (OLL + PLL)" },
+  { id: "wca", label: "Chuẩn WCA" },
+  { id: "cross_easy", label: "Cross · 3–5 nước" },
+  { id: "cross_hard", label: "Cross · 6–8 nước" },
+  { id: "f2l_only", label: "F2L · Cross giải sẵn" },
+  { id: "ll_only", label: "OLL + PLL" },
 ];
 
 export default function ScrambleBar({
@@ -89,7 +89,7 @@ export default function ScrambleBar({
     <div className="w-full max-w-4xl mx-auto pt-1 sm:pt-3">
       <div className="rk-panel p-3 sm:px-5 sm:py-4">
         {!isEditing ? (
-          <div className="space-y-2">
+          <div className="space-y-3">
             <p
               aria-label="Công thức scramble"
               className="max-w-full select-all break-words text-center font-mono text-base font-semibold leading-relaxed text-slate-50 sm:text-xl"
@@ -97,13 +97,13 @@ export default function ScrambleBar({
               {scramble || "Đang chuẩn bị scramble…"}
             </p>
 
-            <div className="flex flex-wrap items-center justify-center gap-2">
+            <div className="flex flex-wrap items-center justify-center gap-2.5 max-[359px]:flex-col">
               {is3x3Family && (
                 <select
                   aria-label="Chế độ bài tập Scramble 3x3"
                   value={trainingSubset}
                   onChange={(event) => onChangeTrainingSubset(event.target.value as TrainingSubset)}
-                  className="h-11 min-w-0 max-w-48 flex-[1_1_0%] rounded-lg sm:flex-none border border-white/15 bg-slate-950 px-2 text-xs text-slate-200"
+                  className="h-11 min-w-0 max-w-56 flex-[1_1_9rem] rounded-lg max-[359px]:w-full max-[359px]:flex-none sm:flex-none border border-white/15 bg-slate-950 px-2 text-xs text-slate-200"
                 >
                   {SUBSET_OPTIONS.map((option) => (
                     <option key={option.id} value={option.id}>{option.label}</option>
@@ -119,7 +119,7 @@ export default function ScrambleBar({
                   onNextScramble();
                 }}
                 title="Tạo scramble mới (Alt+N)"
-                className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-cyan-400/40 bg-cyan-400/15 px-2.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/25 disabled:opacity-60"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-cyan-400/40 bg-cyan-400/15 px-3 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/25 disabled:opacity-60"
               >
                 <Shuffle aria-hidden="true" className="size-4" />
                 {isGeneratingScramble ? "Đang tạo…" : "Scramble mới"}

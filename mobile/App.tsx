@@ -21,6 +21,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import * as Haptics from "expo-haptics";
 import { useKeepAwake } from "expo-keep-awake";
+import { computePracticePeriod, getDeviceTimeZone } from "./src/lib/core/activity";
 import ConfirmModal from "./src/components/ConfirmModal";
 import CubeNetNative from "./src/components/CubeNetNative";
 import {
@@ -78,6 +79,8 @@ import {
   Solve,
   SolveWithRollingStats,
 } from "./src/types/cubing";
+
+const cfopSessionNames = new Set(CFOP_ALGORITHMS.map(getCfopSessionName));
 
 type TimerPhase =
   | "idle"
@@ -292,6 +295,13 @@ export default function App() {
         ),
     [solves, activeSession.id]
   );
+
+  const practice = useMemo(() => {
+    if (tab !== "stats") return null;
+    const drillSessionIds = new Set(sessions.filter(({ name }) => cfopSessionNames.has(name)).map(({ id }) => id));
+    const report = computePracticePeriod(solves, { now: Date.now(), tz: getDeviceTimeZone(), days: 7, drillSessionIds });
+    return { ...report, max: Math.max(1, ...report.days.map(({ count }) => count)) };
+  }, [tab, sessions, solves]);
 
   const { summary, enrichedSolves } = useMemo(
     () => calculateSessionStats(sessionSolves),
@@ -833,8 +843,9 @@ export default function App() {
             onPress={() => setSessionModalOpen(true)}
           >
             <Text style={styles.sessionBtnText} numberOfLines={1}>
-              {activeSession.name} ({activeSession.puzzle.toUpperCase()}) ▾
+              {activeSession.name} ({activeSession.puzzle.toUpperCase()})
             </Text>
+            <Text style={styles.sessionChevron} accessible={false}>▾</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1318,6 +1329,28 @@ export default function App() {
       {/* TAB 4: STATS, CLOUD AUTH & SETTINGS */}
       {tab === "stats" && (
         <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+          {practice && <View style={[styles.card, styles.activityCard]}>
+            <Text style={styles.sectionTitle}>Nhịp luyện tập</Text>
+            <Text style={styles.activityValue}>{practice.current.mainCount}<Text style={styles.activityLabel}> lượt giải tiêu chuẩn</Text></Text>
+            <Text style={styles.activityCaption}>
+              7 ngày gần nhất · Hôm nay {practice.days[6].count} lượt
+            </Text>
+            <View style={styles.activityChart}>
+              {practice.days.map((day) => {
+                const label = `${day.date.slice(8)}/${day.date.slice(5, 7)}`;
+                return (
+                  <View key={day.date} style={styles.activityColumn} accessible accessibilityLabel={`${label}, ${day.count} lượt giải tiêu chuẩn`}>
+                    <View style={styles.activityTrack}>
+                      <View style={[styles.activityBar, { height: day.count ? `${day.count / practice.max * 100}%` : 2 },
+                        day.date === practice.end && styles.activityBarToday]} />
+                    </View>
+                    <Text style={styles.activityDay}>{day.date.slice(8)}</Text>
+                  </View>
+                );
+              })}
+            </View>
+            <Text style={styles.activityCaption}>{practice.current.mainCount ? "Tính cả DNF. Lượt luyện CFOP được tính riêng." : "Một lượt giải là đủ để bắt đầu hôm nay."}</Text>
+          </View>}
           {/* Stats Summary Cards */}
           <View style={styles.kpiRow}>
             <View style={styles.kpiCard}>
@@ -1342,7 +1375,12 @@ export default function App() {
 
           {/* WCA Table */}
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Bảng thống kê chuẩn WCA</Text>
+            <Text style={styles.sectionTitle}>Thống kê phiên hiện tại</Text>
+            <View style={styles.statLine}>
+              <Text style={styles.statLineLabel}>Chỉ số</Text>
+              <Text style={styles.statColumnHeading}>Hiện tại</Text>
+              <Text style={styles.statColumnHeading}>Tốt nhất</Text>
+            </View>
             {[
               { l: "Single", c: summary.currentSingle, b: summary.bestSingle },
               { l: "Mo3", c: summary.currentMo3, b: summary.bestMo3 },
@@ -1351,7 +1389,7 @@ export default function App() {
               { l: "Ao50", c: summary.currentAo50, b: summary.bestAo50 },
               { l: "Ao100", c: summary.currentAo100, b: summary.bestAo100 },
             ].map((r) => (
-              <View key={r.l} style={styles.statLine}>
+              <View key={r.l} style={styles.statLine} accessible accessibilityLabel={`${r.l}, hiện tại ${formatTimeMs(r.c, settings.decimals)}, tốt nhất ${formatTimeMs(r.b, settings.decimals)}`}>
                 <Text style={styles.statLineLabel}>{r.l}</Text>
                 <Text style={styles.statLineCur}>
                   {formatTimeMs(r.c, settings.decimals)}
@@ -1873,6 +1911,9 @@ const styles = StyleSheet.create({
     borderRadius: 99,
   },
   sessionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     flexShrink: 1,
     maxWidth: "48%",
     minHeight: 44,
@@ -1884,7 +1925,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.1)",
   },
+  sessionChevron: { color: colors.muted, fontSize: 12 },
   sessionBtnText: {
+    flexShrink: 1,
+    minWidth: 0,
     color: "#e2e8f0",
     fontSize: 12,
     fontWeight: "600",
@@ -2114,13 +2158,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
+  activityCard: { gap: 6, padding: 16 },
+  activityValue: {
+    color: colors.accent,
+    fontSize: 28,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+  },
+  activityLabel: { color: "#e2e8f0", fontSize: 14, fontWeight: "500" },
+  activityCaption: { color: colors.muted, fontSize: 12 },
+  activityChart: { flexDirection: "row", gap: 6, marginVertical: 8 },
+  activityColumn: { flex: 1, minWidth: 0, gap: 5 },
+  activityTrack: {
+    height: 66,
+    justifyContent: "flex-end",
+    borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  activityBar: { borderRadius: 4, backgroundColor: "rgba(103,232,249,0.45)" },
+  activityBarToday: { backgroundColor: colors.accent },
+  activityDay: { color: colors.muted, fontSize: 11, textAlign: "center", fontVariant: ["tabular-nums"] },
   kpiRow: {
     flexDirection: "row",
     gap: 8,
   },
   kpiCard: {
     flex: 1,
-    padding: 12,
+    minWidth: 0,
+    paddingHorizontal: 6,
+    paddingVertical: 12,
     borderRadius: 12,
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -2132,6 +2198,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   kpiValue: {
+    textAlign: "center",
     color: "#f8fafc",
     fontSize: 15,
     fontWeight: "800",
@@ -2147,7 +2214,8 @@ const styles = StyleSheet.create({
   },
   statLine: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(255,255,255,0.05)",
@@ -2155,13 +2223,21 @@ const styles = StyleSheet.create({
   statLineLabel: {
     color: "#cbd5e1",
     fontWeight: "600",
-    width: 70,
+    flex: 1,
+    minWidth: 0,
   },
+  statColumnHeading: { flex: 1.25, minWidth: 0, color: colors.muted, fontSize: 12, textAlign: "right" },
   statLineCur: {
+    flex: 1.25,
+    minWidth: 0,
+    textAlign: "right",
     color: "#f8fafc",
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   statLineBest: {
+    flex: 1.25,
+    minWidth: 0,
+    textAlign: "right",
     color: "#34d399",
     fontWeight: "700",
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",

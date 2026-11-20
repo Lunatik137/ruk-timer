@@ -1290,6 +1290,11 @@ export default function RukTimerApp() {
       timerPhase === "holding" ||
       timerPhase === "ready");
 
+  function openPracticeProgress() {
+    setHubSubTab("weekly");
+    setMainView("coach");
+  }
+
   if (!mounted) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300 font-mono text-sm">
@@ -1330,10 +1335,7 @@ export default function RukTimerApp() {
           outboxPendingCount={outboxCount}
           currentStreakDays={streakSummary.currentStreak}
           onSyncGuestData={handleSyncGuestData}
-          onOpenStreakTab={() => {
-            setHubSubTab("weekly");
-            setMainView("coach");
-          }}
+          onOpenStreakTab={openPracticeProgress}
           onOpenAuth={() => setAuthModalOpen(true)}
           onSignOut={handleSignOut}
           onOpenSettings={() => setSettingsModalOpen(true)}
@@ -1388,6 +1390,7 @@ export default function RukTimerApp() {
               summary={summary}
               enrichedSolves={enrichedSolves}
               decimals={settings.decimals}
+              onOpenPracticeProgress={openPracticeProgress}
               targetGoalMs={settings.targetGoalMs}
               onInspectAverage={(label, avgVal, endIdx, winSize) => {
                 const slice = sessionSolves.slice(
@@ -1673,7 +1676,7 @@ export default function RukTimerApp() {
                 key={label}
                 type="button"
                 aria-current={current ? "page" : undefined}
-                aria-label={isHistory ? `Lịch sử (${solveCount} lượt)` : undefined}
+                aria-label={isHistory ? `Lịch sử (${solveCount} lượt)` : label}
                 onClick={() => {
                   setMainView(view);
                   if ("tab" in item) setMobileTab(item.tab);
@@ -1688,7 +1691,7 @@ export default function RukTimerApp() {
                     </span>
                   )}
                 </span>
-                <span className="max-w-full text-center group-aria-[current=page]:underline">{label === "AI & Video" ? <>AI <span className="inline-block">&amp; Video</span></> : label}</span>
+                <span className="max-w-full text-center group-aria-[current=page]:underline">{label === "AI & Video" ? "AI/Video" : label}</span>
               </button>
             );
           })}

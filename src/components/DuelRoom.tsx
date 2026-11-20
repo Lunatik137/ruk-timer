@@ -568,14 +568,14 @@ export default function DuelRoom({ initialRoom, lobbyFriends }: { initialRoom: s
                 <h2 id="duel-join" className="flex items-center gap-2 text-lg font-semibold">
                   <Link2 size={19} aria-hidden="true" className="text-cyan-300" /> Vào phòng
                 </h2>
-                <div className="mt-3 flex flex-wrap items-end gap-2">
-                  <label className={`${label} min-w-0 grow basis-48`}>Link mời hoặc mã phòng
+                <div className="mt-4 grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                  <label className={`${label} min-w-0`}>Link mời hoặc mã phòng
                     <input ref={joinInput} id="duel-invite-input" className={`${input} max-sm:text-base`} name="room-link" autoComplete="off" autoCapitalize="none" spellCheck={false}
                       aria-invalid={Boolean(roomLinkError)} aria-describedby={roomLinkError ? "duel-link-error" : undefined}
                       value={roomLink} onChange={(event) => { setRoomLink(event.target.value); setRoomLinkError(""); }}
                       placeholder="Dán link hoặc mã phòng" />
                   </label>
-                  <button type="submit" className="rk-control justify-center max-[380px]:w-full">Mở phòng <ArrowRight size={16} aria-hidden="true" /></button>
+                  <button type="submit" className="rk-control justify-center gap-2.5 px-4">Mở phòng <ArrowRight size={16} className="shrink-0" aria-hidden="true" /></button>
                 </div>
                 {roomLinkError && <p id="duel-link-error" role="alert" className="mt-2 text-sm text-rose-300">{roomLinkError}</p>}
               </form>

@@ -825,9 +825,9 @@ export default function TimerDisplay({
           {!isSolvingOrInspecting && lastSolve && (
             <div
               data-timer-action="true"
-              className="mt-4 flex flex-col items-center gap-2.5"
+              className="mt-4 flex w-full min-w-0 flex-col items-center gap-3"
             >
-              <div className="flex flex-wrap items-center justify-center gap-2">
+              <div className="grid w-full max-w-xs grid-cols-2 gap-2 sm:flex sm:max-w-none sm:flex-wrap sm:justify-center">
                 <button
                   type="button"
                   onClick={(e) => {
@@ -836,7 +836,7 @@ export default function TimerDisplay({
                     );
                     e.currentTarget.blur();
                   }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition ${
+                  className={`min-h-11 justify-center px-3 py-1.5 rounded-xl text-xs sm:min-h-9 font-bold border transition ${
                     lastSolve.penalty === "+2"
                       ? "bg-amber-400 text-slate-950 border-amber-400"
                       : "bg-white/[0.06] hover:bg-amber-400/20 text-amber-300 border-white/10"
@@ -853,7 +853,7 @@ export default function TimerDisplay({
                     );
                     e.currentTarget.blur();
                   }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition inline-flex items-center gap-1 ${
+                  className={`min-h-11 justify-center px-3 py-1.5 rounded-xl text-xs sm:min-h-9 font-bold border transition inline-flex items-center gap-1 ${
                     lastSolve.penalty === "DNF"
                       ? "bg-rose-500 text-white border-rose-500"
                       : "bg-white/[0.06] hover:bg-rose-500/20 text-rose-300 border-white/10"
@@ -870,7 +870,7 @@ export default function TimerDisplay({
                     setShowCommentBox((v) => !v);
                     e.currentTarget.blur();
                   }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition inline-flex items-center gap-1 ${
+                  className={`min-h-11 justify-center px-3 py-1.5 rounded-xl text-xs sm:min-h-9 font-medium border transition inline-flex items-center gap-1 ${
                     lastSolve.comment
                       ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
                       : "bg-white/[0.06] hover:bg-white/[0.12] border-white/10 opacity-85"
@@ -886,7 +886,7 @@ export default function TimerDisplay({
                     onDeleteLastSolve();
                     e.currentTarget.blur();
                   }}
-                  className="px-3 py-1.5 rounded-xl text-xs font-medium bg-white/[0.06] hover:bg-rose-500/20 hover:text-rose-300 border border-white/10 transition inline-flex items-center gap-1 opacity-85"
+                  className="min-h-11 justify-center px-3 py-1.5 rounded-xl text-xs sm:min-h-9 font-medium bg-white/[0.06] hover:bg-rose-500/20 hover:text-rose-300 border border-white/10 transition inline-flex items-center gap-1 opacity-85"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Xóa</span>
@@ -894,7 +894,7 @@ export default function TimerDisplay({
               </div>
 
               {lastSolve.comment && !showCommentBox && (
-                <p className="text-xs text-cyan-300/90 italic">
+                <p className="w-full max-w-lg rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-center text-xs italic leading-relaxed text-cyan-200 [overflow-wrap:anywhere]">
                   “{lastSolve.comment}”
                 </p>
               )}

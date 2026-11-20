@@ -2,6 +2,7 @@
 
 import React, { memo, useMemo, useState } from "react";
 import {
+  ArrowRight,
   BarChart3,
   BrainCircuit,
   Layers,
@@ -29,6 +30,7 @@ interface StatsPanelProps {
   ) => void;
   onInspectSolveById: (id: string) => void;
   onOpenAiCoach?: () => void;
+  onOpenPracticeProgress?: () => void;
 }
 
 function StatsPanelInner({
@@ -39,6 +41,7 @@ function StatsPanelInner({
   onInspectAverage,
   onInspectSolveById,
   onOpenAiCoach,
+  onOpenPracticeProgress,
 }: StatsPanelProps) {
   const [chartTab, setChartTab] = useState<"trend" | "histogram" | "splits">(
     "trend"
@@ -161,9 +164,12 @@ function StatsPanelInner({
   );
 
   return (
-    <div className="flex flex-col gap-3 h-full">
+    <div className="flex min-w-0 flex-col gap-3 h-full">
+      {onOpenPracticeProgress && <button type="button" onClick={onOpenPracticeProgress} className="rk-control justify-between text-left">
+        Tiến độ luyện tập <ArrowRight size={16} className="shrink-0" aria-hidden="true" />
+      </button>}
       {/* Summary Header Cards */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-2 [&>div]:min-w-0 [&>div]:[overflow-wrap:anywhere]">
         <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2.5 text-center">
           <div className="text-[11px] text-slate-400">Số lượt</div>
           <div className="font-mono font-bold text-sm sm:text-base mt-0.5 tabular-nums">

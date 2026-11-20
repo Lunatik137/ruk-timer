@@ -180,6 +180,7 @@ export interface PersonalAchievement {
   description: string;
   unlocked: boolean;
   progressText: string;
+  progress?: { current: number; target: number };
   category: "volume" | "speed" | "cfop" | "consistency";
 }
 
