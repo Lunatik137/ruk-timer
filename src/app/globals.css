@@ -257,3 +257,28 @@ body {
     }
   }
 }
+
+.rk-settings-body {
+  container: settings / inline-size;
+}
+
+@container settings (min-width: 30rem) {
+  .rk-setting-select {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 13rem);
+    column-gap: 1rem;
+  }
+}
+
+.rk-settings-overlay {
+  --rk-settings-gutter: 0.75rem;
+  padding: max(var(--rk-settings-gutter), env(safe-area-inset-top))
+    max(var(--rk-settings-gutter), env(safe-area-inset-right))
+    max(var(--rk-settings-gutter), env(safe-area-inset-bottom))
+    max(var(--rk-settings-gutter), env(safe-area-inset-left));
+}
+
+@media (width >= 640px) {
+  .rk-settings-overlay {
+    --rk-settings-gutter: 1.25rem;
+  }
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useId, useRef } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -58,6 +58,42 @@ const THEMES: { id: ThemeId; label: string; preview: string }[] = [
   },
 ];
 
+type SettingCopy = { title: string; description: string };
+
+function SettingDescription({ id, children }: { id: string; children: React.ReactNode }) {
+  return <span id={id} className="mt-1 block text-sm leading-snug text-slate-300">{children}</span>;
+}
+
+function ToggleSetting({ title, description, ...input }: SettingCopy & React.ComponentPropsWithoutRef<"input">) {
+  const id = useId();
+  const descriptionId = `${id}-description`;
+  return (
+    <label className="grid min-h-11 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-3">
+      <span className="min-w-0">
+        <span id={id} className="block font-medium">{title}</span>
+        <SettingDescription id={descriptionId}>{description}</SettingDescription>
+      </span>
+      <input {...input} type="checkbox" aria-labelledby={id} aria-describedby={descriptionId} className="size-5 shrink-0 cursor-pointer accent-cyan-300" />
+    </label>
+  );
+}
+
+function SelectSetting({ title, description, children, ...select }: SettingCopy & React.ComponentPropsWithoutRef<"select">) {
+  const id = useId();
+  return (
+    <div className="rk-setting-select grid min-w-0 items-center gap-2 py-3">
+      <div className="min-w-0">
+        <label htmlFor={id} className="block font-medium">{title}</label>
+        <SettingDescription id={`${id}-description`}>{description}</SettingDescription>
+      </div>
+      <select {...select} id={id} aria-describedby={`${id}-description`}
+        className="min-h-11 w-full min-w-0 max-w-full rounded-lg border border-white/15 bg-[var(--rk-canvas)] px-3 text-base">
+        {children}
+      </select>
+    </div>
+  );
+}
+
 export default function SettingsModal({
   isOpen,
   onClose,
@@ -87,295 +123,186 @@ export default function SettingsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+      className="rk-settings-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/75"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
-        className="w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto rk-dialog text-white p-6 relative"
+        className="rk-dialog flex max-h-full w-full min-w-0 max-w-2xl flex-col overflow-hidden text-slate-100"
         onClick={(e) => e.stopPropagation()}
       >
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Đóng"
-          className="absolute right-4 top-4 p-1.5 rounded-lg bg-white/5 hover:bg-white/15 transition"
-        >
-          <X className="w-4 h-4" />
-        </button>
-
-        <div className="flex items-center gap-2.5 mb-5">
-          <div className="p-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400">
-            <Sliders className="w-5 h-5" />
+        <header className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 border-b border-white/10 px-4 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-3 sm:px-6">
+          <Sliders size={21} aria-hidden="true" className="mt-1 hidden text-cyan-300 sm:block" />
+          <div className="min-w-0">
+            <h2 id="settings-modal-title" className="text-balance text-xl font-semibold leading-tight">Cài đặt Timer &amp; Dữ liệu</h2>
           </div>
-          <div>
-            <h2 id="settings-modal-title" className="font-bold text-lg">
-              Cài đặt Timer & Dữ liệu
-            </h2>
-            <p className="text-xs text-slate-400">
-              Tùy chỉnh chuẩn thi đấu WCA, Split Timer, giao diện và nhập dữ liệu csTimer
-            </p>
-          </div>
-        </div>
+          <button type="button" onClick={onClose} aria-label="Đóng"
+            className="grid size-11 shrink-0 place-items-center rounded-lg bg-white/5 hover:bg-white/10">
+            <X size={19} aria-hidden="true" />
+          </button>
+        </header>
 
-        <div className="space-y-3.5 text-sm">
-          {/* WCA Inspection */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
-            <div>
-              <div className="font-medium">WCA Inspection (15 giây)</div>
-              <div className="text-xs text-slate-400">
-                Đếm ngược 15s trước khi giải (+2s ở 15–17s, DNF sau 17s)
+        <div className="rk-settings-body min-h-0 min-w-0 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 text-sm sm:px-6">
+          <section aria-labelledby="settings-timing">
+            <h3 id="settings-timing" className="border-b border-white/10 pb-2 text-base font-semibold">Bấm giờ</h3>
+            <div className="divide-y divide-white/10">
+              <ToggleSetting
+                title="WCA Inspection (15 giây)"
+                description="Đếm ngược trước khi giải. +2 từ 15 giây, DNF từ 17 giây."
+                checked={settings.inspectionEnabled}
+                onChange={(e) =>
+                  onUpdateSettings({ inspectionEnabled: e.target.checked })
+                }
+              />
+              <ToggleSetting
+                title="Giọng trọng tài WCA"
+                description="Nhắc ở mốc 8 và 12 giây trong Inspection."
+                checked={Boolean(settings.voiceAlertsEnabled)}
+                onChange={(e) =>
+                  onUpdateSettings({ voiceAlertsEnabled: e.target.checked })
+                }
+              />
+              <SelectSetting
+                title="Split Timer"
+                description="Nhấn Space để ghi từng pha Cross, F2L, OLL và PLL."
+                value={settings.splitMode || "off"}
+                onChange={(e) =>
+                  onUpdateSettings({ splitMode: e.target.value as SplitMode })
+                }
+              >
+                <option value="off">Tắt</option>
+                <option value="cfop4">4 pha CFOP</option>
+              </SelectSetting>
+              <SelectSetting
+                title="Thời gian nhấn giữ"
+                description="Thời gian giữ Space hoặc chạm trước khi thả để bắt đầu."
+                value={settings.holdDelayMs}
+                onChange={(e) =>
+                  onUpdateSettings({ holdDelayMs: Number(e.target.value) })
+                }
+              >
+                <option value={0}>0.0s (Tức thì)</option>
+                <option value={300}>0.30s (Mặc định)</option>
+                <option value={550}>0.55s (Chuẩn WCA)</option>
+              </SelectSetting>
+              <SelectSetting
+                title="Mục tiêu cá nhân (Sub-X)"
+                description="Dùng để tính tỷ lệ đạt mục tiêu và thời gian cần trong vòng WCA."
+                value={settings.targetGoalMs || 15000}
+                onChange={(e) =>
+                  onUpdateSettings({ targetGoalMs: Number(e.target.value) })
+                }
+              >
+                <option value={8000}>Sub-8 giây</option>
+                <option value={10000}>Sub-10 giây</option>
+                <option value={12000}>Sub-12 giây</option>
+                <option value={15000}>Sub-15 giây</option>
+                <option value={20000}>Sub-20 giây</option>
+                <option value={30000}>Sub-30 giây</option>
+                <option value={45000}>Sub-45 giây</option>
+              </SelectSetting>
+              <ToggleSetting
+                title="Nhập thời gian bằng tay"
+                description="Nhập số từ bàn phím khi dùng đồng hồ ngoài."
+                checked={settings.manualInput}
+                onChange={(e) =>
+                  onUpdateSettings({ manualInput: e.target.checked })
+                }
+              />
+              <ToggleSetting
+                title="Âm báo Inspection và PB"
+                description="Phát tiếng bíp ở mốc 8 và 12 giây và khi có PB mới."
+                checked={settings.soundEnabled}
+                onChange={(e) =>
+                  onUpdateSettings({ soundEnabled: e.target.checked })
+                }
+              />
+            </div>
+          </section>
+
+          <section aria-labelledby="settings-display">
+            <h3 id="settings-display" className="border-b border-white/10 pb-2 text-base font-semibold">Hiển thị</h3>
+            <div className="divide-y divide-white/10">
+              <SelectSetting
+                title="Đồng hồ khi đang giải"
+                description="Hiện đầy đủ, chỉ hiện giây hoặc ẩn khi đang giải."
+                value={settings.timerUpdateMode || "live"}
+                onChange={(e) =>
+                  onUpdateSettings({
+                    timerUpdateMode: e.target.value as TimerUpdateMode,
+                  })
+                }
+              >
+                <option value="live">Cập nhật liên tục</option>
+                <option value="seconds">Chỉ hiện số giây (1s)</option>
+                <option value="hidden">Ẩn số (&ldquo;GIẢI...&rdquo;)</option>
+              </SelectSetting>
+              <SelectSetting
+                title="Chữ số thập phân"
+                description="Độ chi tiết của thời gian hiển thị."
+                value={settings.decimals}
+                onChange={(e) =>
+                  onUpdateSettings({
+                    decimals: Number(e.target.value) as 2 | 3,
+                  })
+                }
+              >
+                <option value={2}>2 chữ số (0.00)</option>
+                <option value={3}>3 chữ số (0.000)</option>
+              </SelectSetting>
+              <ToggleSetting
+                title="Ẩn bảng phụ khi đang giải"
+                description="Giữ đồng hồ ở trung tâm khi đang bấm giờ."
+                checked={settings.hideUiWhileSolving}
+                onChange={(e) =>
+                  onUpdateSettings({ hideUiWhileSolving: e.target.checked })
+                }
+              />
+              <ToggleSetting
+                title="Hình trải 2D Scramble"
+                description="Xem trạng thái màu sau khi xáo."
+                checked={settings.showCubePreview}
+                onChange={(e) =>
+                  onUpdateSettings({ showCubePreview: e.target.checked })
+                }
+              />
+            </div>
+            {/* Theme Selector */}
+            <div className="space-y-2 border-t border-white/10 pt-3">
+              <div className="font-medium">Màu giao diện</div>
+              <div className="grid grid-cols-2 gap-2">
+                {THEMES.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    aria-pressed={settings.theme === t.id}
+                    onClick={() => onUpdateSettings({ theme: t.id })}
+                    className={`flex min-h-11 items-center gap-2 rounded-lg border p-2 text-xs font-medium transition-colors ${
+                      settings.theme === t.id
+                        ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                        : "border-white/10 bg-black/25 hover:bg-white/5"
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`size-5 shrink-0 rounded-md ${t.preview} border border-white/20`}
+                    />
+                    <span className="min-w-0 text-left [overflow-wrap:anywhere]">{t.label}</span>
+                  </button>
+                ))}
               </div>
             </div>
-            <input
-              type="checkbox"
-              checked={settings.inspectionEnabled}
-              onChange={(e) =>
-                onUpdateSettings({ inspectionEnabled: e.target.checked })
-              }
-              className="w-5 h-5 accent-cyan-400 cursor-pointer"
-            />
-          </div>
+          </section>
 
-          {/* WCA Voice Referee */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
+          {/* Sao lưu và nhập dữ liệu */}
+          <section aria-labelledby="settings-data" className="min-w-0 space-y-3 border-t border-white/10 pt-4">
             <div>
-              <div className="font-medium">
-                Giọng đọc Trọng tài WCA (8s / 12s)
-              </div>
-              <div className="text-xs text-slate-400">
-                Đọc to &ldquo;Eight seconds&rdquo; và &ldquo;Twelve seconds&rdquo; khi đang Inspection
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={Boolean(settings.voiceAlertsEnabled)}
-              onChange={(e) =>
-                onUpdateSettings({ voiceAlertsEnabled: e.target.checked })
-              }
-              className="w-5 h-5 accent-cyan-400 cursor-pointer"
-            />
-          </div>
-
-          {/* Multi-Phase Split Timer */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
-            <div>
-              <div className="font-medium">
-                Chế độ Split Timer (Tách giai đoạn)
-              </div>
-              <div className="text-xs text-slate-400">
-                Nhấn Space sau mỗi bước để đo riêng Cross, F2L, OLL, PLL
-              </div>
-            </div>
-            <select
-              value={settings.splitMode || "off"}
-              onChange={(e) =>
-                onUpdateSettings({ splitMode: e.target.value as SplitMode })
-              }
-              className="h-9 rounded-lg bg-slate-950 border border-white/15 px-2.5 text-xs"
-            >
-              <option value="off">Tắt (1 pha tiêu chuẩn)</option>
-              <option value="cfop4">4 Pha CFOP (Cross/F2L/OLL/PLL)</option>
-            </select>
-          </div>
-
-          {/* Timer Display Update Mode */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
-            <div>
-              <div className="font-medium">Hiển thị đồng hồ khi đang chạy</div>
-              <div className="text-xs text-slate-400">
-                Ẩn số nhảy liên tục giúp mắt tập trung tối đa vào Lookahead
-              </div>
-            </div>
-            <select
-              value={settings.timerUpdateMode || "live"}
-              onChange={(e) =>
-                onUpdateSettings({
-                  timerUpdateMode: e.target.value as TimerUpdateMode,
-                })
-              }
-              className="h-9 rounded-lg bg-slate-950 border border-white/15 px-2.5 text-xs"
-            >
-              <option value="live">Cập nhật liên tục (0.01s)</option>
-              <option value="seconds">Chỉ hiện số giây (1s)</option>
-              <option value="hidden">Ẩn số (&ldquo;GIẢI...&rdquo;)</option>
-            </select>
-          </div>
-
-          {/* Hold Delay */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
-            <div>
-              <div className="font-medium">Thời gian nhấn giữ Space</div>
-              <div className="text-xs text-slate-400">
-                0.55s là chuẩn Stackmat WCA; 0.3s phản hồi nhanh
-              </div>
-            </div>
-            <select
-              value={settings.holdDelayMs}
-              onChange={(e) =>
-                onUpdateSettings({ holdDelayMs: Number(e.target.value) })
-              }
-              className="h-9 rounded-lg bg-slate-950 border border-white/15 px-2.5 text-xs"
-            >
-              <option value={0}>0.0s (Tức thì)</option>
-              <option value={300}>0.30s (Mặc định)</option>
-              <option value={550}>0.55s (Chuẩn WCA)</option>
-            </select>
-          </div>
-
-          {/* Target Sub-X Goal */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
-            <div>
-              <div className="font-medium">Mục tiêu cá nhân (Sub-X Goal)</div>
-              <div className="text-xs text-slate-400">
-                Dùng để tính tỷ lệ đạt mục tiêu và thời gian cần ở vòng thi WCA
-              </div>
-            </div>
-            <select
-              value={settings.targetGoalMs || 15000}
-              onChange={(e) =>
-                onUpdateSettings({ targetGoalMs: Number(e.target.value) })
-              }
-              className="h-9 rounded-lg bg-slate-950 border border-white/15 px-2.5 text-xs"
-            >
-              <option value={8000}>Sub-8 giây</option>
-              <option value={10000}>Sub-10 giây</option>
-              <option value={12000}>Sub-12 giây</option>
-              <option value={15000}>Sub-15 giây</option>
-              <option value={20000}>Sub-20 giây</option>
-              <option value={30000}>Sub-30 giây</option>
-              <option value={45000}>Sub-45 giây</option>
-            </select>
-          </div>
-
-          {/* Decimals */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
-            <div>
-              <div className="font-medium">Chữ số thập phân</div>
-              <div className="text-xs text-slate-400">
-                Hiển thị 0.01s hoặc 0.001s
-              </div>
-            </div>
-            <select
-              value={settings.decimals}
-              onChange={(e) =>
-                onUpdateSettings({
-                  decimals: Number(e.target.value) as 2 | 3,
-                })
-              }
-              className="h-9 rounded-lg bg-slate-950 border border-white/15 px-2.5 text-xs"
-            >
-              <option value={2}>2 chữ số (0.00)</option>
-              <option value={3}>3 chữ số (0.000)</option>
-            </select>
-          </div>
-
-          {/* Manual Input */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
-            <div>
-              <div className="font-medium">Chế độ nhập tay (Stackmat ngoài)</div>
-              <div className="text-xs text-slate-400">
-                Nhập số trực tiếp từ bàn phím thay vì bấm giờ Space
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={settings.manualInput}
-              onChange={(e) =>
-                onUpdateSettings({ manualInput: e.target.checked })
-              }
-              className="w-5 h-5 accent-cyan-400 cursor-pointer"
-            />
-          </div>
-
-          {/* Focus Mode */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
-            <div>
-              <div className="font-medium">Ẩn bảng phụ khi đang giải</div>
-              <div className="text-xs text-slate-400">
-                Giúp tập trung tối đa vào đồng hồ khi đang bấm giờ
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={settings.hideUiWhileSolving}
-              onChange={(e) =>
-                onUpdateSettings({ hideUiWhileSolving: e.target.checked })
-              }
-              className="w-5 h-5 accent-cyan-400 cursor-pointer"
-            />
-          </div>
-
-          {/* Sound Alerts */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
-            <div>
-              <div className="font-medium">Âm báo (8s / 12s & Kỷ lục PB)</div>
-              <div className="text-xs text-slate-400">
-                Phát tiếng bíp cảnh báo Inspection và âm mừng PB mới
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={settings.soundEnabled}
-              onChange={(e) =>
-                onUpdateSettings({ soundEnabled: e.target.checked })
-              }
-              className="w-5 h-5 accent-cyan-400 cursor-pointer"
-            />
-          </div>
-
-          {/* Show Cube Preview */}
-          <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/[0.04] border border-white/10">
-            <div>
-              <div className="font-medium">Hiển thị hình trải 2D Scramble</div>
-              <div className="text-xs text-slate-400">
-                Kiểm tra trạng thái màu Rubik sau khi tráo (hỗ trợ đủ 13 bộ môn)
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              checked={settings.showCubePreview}
-              onChange={(e) =>
-                onUpdateSettings({ showCubePreview: e.target.checked })
-              }
-              className="w-5 h-5 accent-cyan-400 cursor-pointer"
-            />
-          </div>
-
-          {/* Theme Selector */}
-          <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-2">
-            <div className="font-medium">Giao diện màu nền</div>
-            <div className="grid grid-cols-2 gap-2">
-              {THEMES.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  aria-pressed={settings.theme === t.id}
-                  onClick={() => onUpdateSettings({ theme: t.id })}
-                  className={`flex min-h-11 items-center gap-2 rounded-lg border p-2 text-xs font-medium transition-colors ${
-                    settings.theme === t.id
-                      ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
-                      : "border-white/10 bg-black/25 hover:bg-white/5"
-                  }`}
-                >
-                  <span
-                    className={`size-5 rounded-md ${t.preview} border border-white/20`}
-                  />
-                  <span>{t.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Universal Backup Import / Export (RukTimer / csTimer / Twisty Timer) */}
-          <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-2.5">
-            <div>
-              <div className="font-medium flex items-center gap-1.5">
-                <Download className="w-4 h-4 text-cyan-400" />
-                <span>Sao lưu & Nhập dữ liệu Đa nền tảng</span>
-              </div>
+              <h3 id="settings-data" className="flex items-center gap-2 text-base font-semibold">
+                <Download aria-hidden="true" className="size-4 shrink-0 text-cyan-300" />
+                Sao lưu và nhập dữ liệu
+              </h3>
               <p className="text-xs text-slate-400 mt-0.5">
                 Hỗ trợ nhập trực tiếp file sao lưu từ <strong>RukTimer (.json)</strong>,{" "}
                 <strong>csTimer (.txt / .json)</strong> và{" "}
@@ -386,7 +313,7 @@ export default function SettingsModal({
               <button
                 type="button"
                 onClick={onExportJson}
-                className="px-3 py-2 rounded-lg bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-xs font-medium inline-flex items-center gap-1.5 transition"
+                className="min-h-11 px-3 py-2 rounded-lg bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-xs font-medium inline-flex items-center gap-1.5 transition"
               >
                 <FileJson className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Xuất JSON</span>
@@ -394,7 +321,7 @@ export default function SettingsModal({
               <button
                 type="button"
                 onClick={onExportCsv}
-                className="px-3 py-2 rounded-lg bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-xs font-medium inline-flex items-center gap-1.5 transition"
+                className="min-h-11 px-3 py-2 rounded-lg bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-xs font-medium inline-flex items-center gap-1.5 transition"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Xuất CSV (Excel)</span>
@@ -402,7 +329,7 @@ export default function SettingsModal({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="px-3 py-2 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 text-xs font-medium inline-flex items-center gap-1.5 transition"
+                className="min-h-11 px-3 py-2 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 text-xs font-medium inline-flex items-center gap-1.5 transition"
               >
                 <Upload className="w-3.5 h-3.5" />
                 <span>Nhập JSON / csTimer / CSV</span>
@@ -423,9 +350,9 @@ export default function SettingsModal({
             </div>
 
             {pendingImportPlan && (
-              <div className="rounded-xl bg-slate-950/90 border border-cyan-500/35 p-3.5 space-y-2.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
+              <div className="min-w-0 space-y-3 rounded-xl border border-cyan-300/30 bg-[var(--rk-canvas)] p-3">
+                <div className="min-w-0">
+                  <div className="min-w-0">
                     <div className="text-xs font-semibold text-cyan-300 flex items-center gap-1.5">
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       <span>
@@ -433,7 +360,7 @@ export default function SettingsModal({
                       </span>
                     </div>
                     {importFileName && (
-                      <div className="text-[11px] text-slate-400 mt-0.5 truncate max-w-[320px]">
+                      <div className="mt-1 text-xs text-slate-300 [overflow-wrap:anywhere]">
                         Tệp: {importFileName}
                       </div>
                     )}
@@ -480,7 +407,7 @@ export default function SettingsModal({
                 {pendingImportPlan.warnings.length > 0 && (
                   <div className="rounded-lg bg-amber-500/10 border border-amber-500/25 p-2 text-[11px] text-amber-200 flex items-start gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span>{pendingImportPlan.warnings.join(" • ")}</span>
+                    <span className="min-w-0 [overflow-wrap:anywhere]">{pendingImportPlan.warnings.join(" • ")}</span>
                   </div>
                 )}
 
@@ -488,12 +415,12 @@ export default function SettingsModal({
                   Chế độ nhập gộp an toàn (không xóa dữ liệu hiện có). Các lượt trùng ID hoặc trùng dấu vân tay sẽ tự động bỏ qua.
                 </p>
 
-                <div className="flex items-center justify-end gap-2 pt-1">
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
                   <button
                     type="button"
                     disabled={isImporting}
                     onClick={onCancelImport}
-                    className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-medium transition disabled:opacity-50"
+                    className="min-h-11 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-medium transition disabled:opacity-50"
                   >
                     Hủy
                   </button>
@@ -501,7 +428,7 @@ export default function SettingsModal({
                     type="button"
                     disabled={isImporting}
                     onClick={onConfirmImport}
-                    className="px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-semibold inline-flex items-center gap-1.5 transition disabled:opacity-60"
+                    className="min-h-11 px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-semibold inline-flex items-center gap-1.5 transition disabled:opacity-60"
                   >
                     {isImporting && (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -511,12 +438,11 @@ export default function SettingsModal({
                 </div>
               </div>
             )}
-          </div>
+          </section>
 
-          {/* Keyboard Shortcuts Cheatsheet */}
-          <div className="p-3 rounded-xl bg-black/30 border border-white/10 text-xs text-slate-300 space-y-1">
-            <div className="font-semibold text-white mb-1">Phím tắt nhanh:</div>
-            <div className="grid grid-cols-2 gap-1">
+          <details className="border-t border-white/10 text-sm text-slate-300">
+            <summary className="min-h-11 cursor-pointer py-3 font-medium text-white">Phím tắt bàn phím</summary>
+            <div className="grid gap-2 sm:grid-cols-2">
               <span>
                 <kbd className="px-1.5 py-0.5 rounded bg-white/10">Space</kbd>{" "}
                 Bắt đầu / Chốt Split / Dừng
@@ -542,7 +468,7 @@ export default function SettingsModal({
                 đang giải
               </span>
             </div>
-          </div>
+          </details>
         </div>
       </div>
     </div>

@@ -470,9 +470,9 @@ export default function DuelRoom({ initialRoom, lobbyFriends }: { initialRoom: s
   }
 
   return (
-    <div className="rk-shell min-h-dvh text-slate-100" data-theme={theme}>
+    <div className="rk-shell flex min-h-dvh flex-col text-slate-100" data-theme={theme}>
       {!room && <a href="#duel-main" className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-2 focus:z-10 focus:rounded-lg focus:bg-cyan-300 focus:px-3 focus:py-2 focus:text-slate-950">Đến nội dung chính</a>}
-      <main id="duel-main" tabIndex={-1} className={`mx-auto px-3 pb-3 pt-3 sm:px-6 ${room ? "max-w-6xl space-y-5 sm:py-8" : "max-w-6xl space-y-4 sm:pt-5"}`}>
+      <main id="duel-main" tabIndex={-1} className={`mx-auto w-full flex-1 px-3 pb-3 pt-3 sm:px-6 ${room ? "max-w-6xl space-y-5 sm:py-8" : "max-w-6xl space-y-4 sm:pt-5"}`}>
         <header className="space-y-2">
           <nav aria-label="Điều hướng khu đấu" className={`flex flex-wrap items-center gap-x-2 border-b border-white/10 ${room ? "mb-3" : "sm:gap-x-5"}`}>
             <Link href="/" prefetch={false} className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-1 text-sm text-slate-300 hover:text-white sm:px-2">
@@ -708,16 +708,6 @@ export default function DuelRoom({ initialRoom, lobbyFriends }: { initialRoom: s
           </div>
 
         </>}
-
-        {!room && <footer className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-white/10 pt-1 text-sm text-slate-300">
-            <span className="font-semibold text-slate-200">RukTimer</span>
-            <nav aria-label="Tài nguyên RukTimer" className="flex flex-wrap gap-x-3">
-              <a href="https://github.com/Lunatik137/ruk-timer#readme" target="_blank" rel="noreferrer"
-                className="inline-flex min-h-11 items-center gap-1 rounded-lg hover:text-white">Tài liệu <ArrowUpRight size={14} aria-hidden="true" /></a>
-              <a href="https://github.com/Lunatik137/ruk-timer/issues" target="_blank" rel="noreferrer"
-                className="inline-flex min-h-11 items-center gap-1 rounded-lg hover:text-white">Báo lỗi và góp ý <ArrowUpRight size={14} aria-hidden="true" /></a>
-            </nav>
-          </footer>}
 
         {room && !view && !connection && <p role="status">Đang tải phòng…</p>}
 
@@ -956,6 +946,17 @@ export default function DuelRoom({ initialRoom, lobbyFriends }: { initialRoom: s
           </aside>
         </div>}
       </main>
+      {!room && <footer className="mx-auto w-full max-w-6xl shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-white/10 pt-1 text-sm text-slate-300">
+          <span className="font-semibold text-slate-200">RukTimer</span>
+          <nav aria-label="Tài nguyên RukTimer" className="flex flex-wrap gap-x-3">
+            <a href="https://github.com/Lunatik137/ruk-timer#readme" target="_blank" rel="noreferrer"
+              className="inline-flex min-h-11 items-center gap-1 rounded-lg hover:text-white">Tài liệu <ArrowUpRight size={14} aria-hidden="true" /></a>
+            <a href="https://github.com/Lunatik137/ruk-timer/issues" target="_blank" rel="noreferrer"
+              className="inline-flex min-h-11 items-center gap-1 rounded-lg hover:text-white">Báo lỗi và góp ý <ArrowUpRight size={14} aria-hidden="true" /></a>
+          </nav>
+        </div>
+      </footer>}
     </div>
   );
 }
