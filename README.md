@@ -62,14 +62,16 @@ Chạy migration [`20261120_duel_rooms.sql`](./supabase/migrations/20261120_duel
 [`20261122_duel_camera_signaling.sql`](./supabase/migrations/20261122_duel_camera_signaling.sql),
 [`20261123_duel_room_roles.sql`](./supabase/migrations/20261123_duel_room_roles.sql),
 [`20261124_duel_active_participants.sql`](./supabase/migrations/20261124_duel_active_participants.sql),
-[`20261125_duel_room_presence.sql`](./supabase/migrations/20261125_duel_room_presence.sql)
-và [`20261126_duel_realtime.sql`](./supabase/migrations/20261126_duel_realtime.sql)
+[`20261125_duel_room_presence.sql`](./supabase/migrations/20261125_duel_room_presence.sql),
+[`20261126_duel_realtime.sql`](./supabase/migrations/20261126_duel_realtime.sql)
+và [`20261127_duel_room_visibility.sql`](./supabase/migrations/20261127_duel_room_visibility.sql)
 trên cùng dự án Supabase và cấu hình `SUPABASE_SERVICE_ROLE_KEY` ở máy chủ Next.js
 (ví dụ trong môi trường Production của Vercel). Trình duyệt không cần khóa này.
 Tab **Đấu 1v1** nằm trên thanh điều hướng. Có thể mở link mời trực tiếp hoặc dán
 link/mã phòng trong mục **Vào phòng**. Phòng chờ hết hạn sau khoảng 5 phút
 vắng chủ phòng, trọng tài và người chơi. Sau khi bắt đầu, phòng chỉ được duy trì
 khi có ít nhất một Player kết nối. Chủ phòng và trọng tài có thể đóng phòng ngay.
+Phòng công khai hiện ở sảnh khi chưa bắt đầu và còn ghế Player. Phòng riêng là mặc định, truy cập bằng link hoặc mã. Người xem và trọng tài vẫn cần được duyệt ở cả hai loại phòng.
 Lịch sử hiển thị tối đa 50 trận gần nhất từ cùng hồ sơ trình duyệt.
 Mục **Quay lại trận** hiển thị phòng còn hoạt động của hồ sơ trình duyệt hiện tại.
 Mỗi hồ sơ trình duyệt giữ tối đa một ghế Player hoặc Trọng tài ở một phòng đang hoạt động.

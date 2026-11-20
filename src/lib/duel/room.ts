@@ -16,6 +16,7 @@ export type Room = {
   completed_at?: string | null;
   expires_at?: string;
   realtime_topic?: string;
+  is_public?: boolean;
   revision: number;
   state: DuelMatch;
 };

@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isDuelRoomId } from "@/lib/duel/invite";
 import {
   approveResult, awaitingApproval, canMarkReady, canSolve, createMatch, DUEL_EVENTS, isDuelPuzzle, markReady, recordResult, resultFor, viewFor,
-  type DuelActiveRoom, type DuelHistoryItem, type DuelMatch, type DuelPuzzle, type Role,
+  type DuelActiveRoom, type DuelHistoryItem, type DuelMatch, type DuelPublicRoom, type DuelPuzzle, type Role,
 } from "@/lib/duel/match";
 import { canModerate, nameFor, place, resultOfficial, seatFor, type Room } from "@/lib/duel/room";
 
@@ -60,7 +60,7 @@ function response(room: Room, key: string | null, token?: string, etag?: string)
     ? name ? room.realtime_topic
       : ownRequest?.status === "pending" ? `duel-wait:${room.id}:${ownRequest.id}` : undefined
     : undefined;
-  const res = NextResponse.json({ id: room.id, revision: room.revision, view, realtimeTopic }, {
+  const res = NextResponse.json({ id: room.id, revision: room.revision, view, realtimeTopic, isPublic: room.is_public === true }, {
     headers: etag ? { ...roomHeaders, ETag: etag } : headers,
   });
   if (token) res.cookies.set(cookie, token, {
@@ -116,6 +116,20 @@ function unavailable(error: unknown) {
 
 export async function GET(req: NextRequest) {
   const key = playerKey(req.cookies.get(cookie)?.value);
+  if (req.nextUrl.searchParams.has("public")) {
+    try {
+      const { data, error } = await database().from(table)
+        .select("id,host:host_name,settings:state->settings,players:state->players")
+        .eq("is_public", true).is("completed_at", null).gt("expires_at", new Date().toISOString())
+        .eq("state->>started", "false").or("seats->>0.is.null,seats->>1.is.null")
+        .order("expires_at", { ascending: false }).limit(20).returns<DuelPublicRoom[]>();
+      if (error?.code === "42703") return NextResponse.json({ publicRooms: null }, { headers });
+      if (error) throw error;
+      return NextResponse.json({ publicRooms: data ?? [] }, { headers });
+    } catch (error) {
+      return unavailable(error);
+    }
+  }
   if (req.nextUrl.searchParams.has("active")) {
     if (!key) return NextResponse.json({ active: [] }, { headers });
     try {
@@ -189,10 +203,10 @@ export async function POST(req: NextRequest) {
   try {
     const db = database();
     if (body.action === "create") {
-      const { puzzle, setsToWin, pointsToWin, mode = "alternating", inspection = true } = body;
+      const { puzzle, setsToWin, pointsToWin, mode = "alternating", inspection = true, isPublic = false } = body;
       const name = readName(body.name);
       const role = asRole(body.role);
-      if (!name || !role || !isDuelPuzzle(puzzle) || (mode !== "alternating" && mode !== "simultaneous") || typeof inspection !== "boolean" ||
+      if (!name || !role || !isDuelPuzzle(puzzle) || (mode !== "alternating" && mode !== "simultaneous") || typeof inspection !== "boolean" || typeof isPublic !== "boolean" ||
           typeof setsToWin !== "number" || !Number.isInteger(setsToWin) || setsToWin < 1 || setsToWin > 5 ||
           typeof pointsToWin !== "number" || !Number.isInteger(pointsToWin) || pointsToWin < 1 || pointsToWin > 7) {
         return fail("Hãy kiểm tra tên và thể thức phòng.", 400);
@@ -204,8 +218,10 @@ export async function POST(req: NextRequest) {
       };
       const placement = place(empty, key, name, role)!;
       const room = { ...empty, seats: placement.seats, spectators: placement.spectators, state: placement.state,
+        ...(isPublic ? { is_public: true } : {}),
         ...(role === "referee" ? { referee_key: placement.referee_key, referee_name: placement.referee_name } : {}) };
       const { data, error } = await db.from(table).insert(room).select().single<Room>();
+      if (error?.code === "PGRST204" && isPublic) return fail("Sảnh công khai chưa sẵn sàng. Bạn có thể tạo phòng riêng.", 503);
       if (error?.code === "PGRST204" && role === "referee") return admissionUnavailable();
       if (error) throw error;
       return response(data, key, token);

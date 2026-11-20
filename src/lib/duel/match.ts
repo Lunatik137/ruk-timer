@@ -67,6 +67,13 @@ export type DuelActiveRoom = Pick<DuelHistoryItem, "id" | "players"> & {
   started: boolean;
 };
 
+export type DuelPublicRoom = {
+  id: string;
+  host: string;
+  settings: DuelSettings;
+  players: DuelMatch["players"];
+};
+
 export function isDuelPuzzle(value: unknown): value is DuelPuzzle {
   return typeof value === "string" && Object.hasOwn(DUEL_EVENTS, value);
 }
