@@ -104,7 +104,8 @@ export default function DuelSocial({ room, lobby = false }: { room?: string; lob
       <button type="button" className="rk-primary" onClick={() => setAuthOpen(true)}>Đăng nhập</button>
     </div> : !data ? (!loadError && <p role="status" className="text-sm text-slate-300">Đang tải bạn bè…</p>) : !profile ? (
       <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); void action({ action: "profile", name: display, discoverable: true }, "Đã lưu tên hiển thị."); }}>
-        <label className="min-w-0 grow basis-44 space-y-1 text-sm">Tên hiển thị cho Bạn bè
+        <label className="grid min-w-0 grow basis-44 gap-3 text-sm">
+          <span>Tên hiển thị cho Bạn bè</span>
           <input className={control} value={display} maxLength={32} required onChange={(event) => setDisplay(event.target.value)} />
         </label>
         <button type="submit" className="rk-primary" disabled={busy}>Lưu tên</button>
@@ -123,7 +124,8 @@ export default function DuelSocial({ room, lobby = false }: { room?: string; lob
         </div>
       <div className="rk-duel-social-workspace grid items-start gap-4">
         <div className="min-w-0 space-y-2">
-          <label className="block space-y-1 text-sm">Tìm người chơi
+          <label className="grid min-w-0 gap-3 text-sm">
+            <span>Tìm người chơi</span>
             <span className="relative block">
               <Search size={16} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input type="search" className={`${control} pl-9`} value={query} maxLength={32}

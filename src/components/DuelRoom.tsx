@@ -14,7 +14,7 @@ import { loadLocalSettings } from "@/lib/storage";
 import { DEFAULT_SETTINGS, PUZZLES } from "@/types/cubing";
 
 const input = "w-full min-h-11 rounded-lg border border-white/15 bg-[var(--rk-canvas)] px-3 text-sm";
-const label = "block space-y-2 text-sm text-slate-200";
+const label = "grid min-w-0 gap-3 text-sm text-slate-200";
 const disclosure = "flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-lg py-2 text-sm font-medium [&::-webkit-details-marker]:hidden";
 const reconnecting = "Đang kết nối lại với phòng…";
 const DuelCamera = dynamic(() => import("@/components/DuelCamera"), {
@@ -452,7 +452,10 @@ export default function DuelRoom({ initialRoom, lobbyFriends }: { initialRoom: s
   const canClose = member?.canModerate && match?.winner === null;
   const playerLabel = (seat: 0 | 1) => match?.players[seat] ?? `Player ${seat + 1}`;
   const inviteControls = <div className="space-y-2">
-    <label className={label}>Link mời<input ref={linkInput} readOnly value={invite} className={input} onFocus={(e) => e.target.select()} /></label>
+    <label className={label}>
+      <span>Link mời</span>
+      <input ref={linkInput} readOnly value={invite} className={input} onFocus={(e) => e.target.select()} />
+    </label>
     <div className="flex flex-wrap items-center gap-2">
       <button type="button" onClick={copyInvite} disabled={!invite} className="rk-control"><Link2 aria-hidden="true" size={16} /> Sao chép link</button>
       {canShareInvite && <button type="button" onClick={shareInvite} disabled={!invite} className="rk-control">
@@ -569,7 +572,8 @@ export default function DuelRoom({ initialRoom, lobbyFriends }: { initialRoom: s
                   <Link2 size={19} aria-hidden="true" className="text-cyan-300" /> Vào phòng
                 </h2>
                 <div className="mt-4 grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-                  <label className={`${label} min-w-0`}>Link mời hoặc mã phòng
+                  <label className={label}>
+                    <span>Link mời hoặc mã phòng</span>
                     <input ref={joinInput} id="duel-invite-input" className={`${input} max-sm:text-base`} name="room-link" autoComplete="off" autoCapitalize="none" spellCheck={false}
                       aria-invalid={Boolean(roomLinkError)} aria-describedby={roomLinkError ? "duel-link-error" : undefined}
                       value={roomLink} onChange={(event) => { setRoomLink(event.target.value); setRoomLinkError(""); }}
@@ -665,10 +669,16 @@ export default function DuelRoom({ initialRoom, lobbyFriends }: { initialRoom: s
                 </div>
                 <p className="mt-2 text-xs text-slate-300">{isPublic ? "Hiện trong sảnh khi còn ghế đấu." : "Vào bằng link hoặc mã phòng."}</p>
               </fieldset>
-              <label className={label}>Tên hiển thị<input id="duel-create-name" ref={createName} className={`${input} max-sm:text-base`} autoComplete="nickname" required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} /></label>
-              <label className={label}>Loại Rubik<select className={input} value={puzzle} onChange={(e) => setPuzzle(e.target.value)}>
-                {PUZZLES.filter((item) => isDuelPuzzle(item.id)).map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
-              </select></label>
+              <label className={label}>
+                <span>Tên hiển thị</span>
+                <input id="duel-create-name" ref={createName} className={`${input} max-sm:text-base`} autoComplete="nickname" required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} />
+              </label>
+              <label className={label}>
+                <span>Loại Rubik</span>
+                <select className={input} value={puzzle} onChange={(e) => setPuzzle(e.target.value)}>
+                  {PUZZLES.filter((item) => isDuelPuzzle(item.id)).map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
+                </select>
+              </label>
               <details className="group border-y border-white/10">
                 <summary className={disclosure}>
                   <span>
@@ -678,21 +688,33 @@ export default function DuelRoom({ initialRoom, lobbyFriends }: { initialRoom: s
                   <ChevronDown className="size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
                 </summary>
                 <div className="space-y-3 pb-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <label className={label}>Set cần thắng<select className={input} value={setsToWin} onChange={(e) => setSets(Number(e.target.value))}>
-                      {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} set</option>)}
-                    </select></label>
-                    <label className={label}>Điểm để thắng set<select className={input} value={pointsToWin} onChange={(e) => setPoints(Number(e.target.value))}>
-                      {[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n} điểm</option>)}
-                    </select></label>
+                  <div className="grid grid-cols-2 items-end gap-3">
+                    <label className={label}>
+                      <span>Set cần thắng</span>
+                      <select className={input} value={setsToWin} onChange={(e) => setSets(Number(e.target.value))}>
+                        {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} set</option>)}
+                      </select>
+                    </label>
+                    <label className={label}>
+                      <span>Điểm để thắng set</span>
+                      <select className={input} value={pointsToWin} onChange={(e) => setPoints(Number(e.target.value))}>
+                        {[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n} điểm</option>)}
+                      </select>
+                    </label>
                   </div>
-                  <label className={label}>Chỗ của bạn<select className={input} value={role} onChange={(e) => setRole(e.target.value as Role)}>
-                    {roles.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}
-                  </select></label>
-                  <label className={label}>Thể thức<select className={input} value={mode} onChange={(e) => setMode(e.target.value as DuelMode)}>
-                    <option value="alternating">Luân phiên</option>
-                    <option value="simultaneous">Đồng thời</option>
-                  </select></label>
+                  <label className={label}>
+                    <span>Chỗ của bạn</span>
+                    <select className={input} value={role} onChange={(e) => setRole(e.target.value as Role)}>
+                      {roles.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}
+                    </select>
+                  </label>
+                  <label className={label}>
+                    <span>Thể thức</span>
+                    <select className={input} value={mode} onChange={(e) => setMode(e.target.value as DuelMode)}>
+                      <option value="alternating">Luân phiên</option>
+                      <option value="simultaneous">Đồng thời</option>
+                    </select>
+                  </label>
                   <p className="text-sm text-slate-300">{mode === "simultaneous"
                     ? "Cả hai cùng thấy Scramble. Đồng hồ mở khi cả hai đã xáo xong."
                     : "Mỗi lượt đổi người giải trước."}</p>
@@ -771,7 +793,10 @@ export default function DuelRoom({ initialRoom, lobbyFriends }: { initialRoom: s
                   disabled={busy} onClick={() => chooseSeat("referee")}>Chọn Trọng tài</button>}
               </div>
               {initialInvite && <div className="space-y-3 border-t border-white/10 pt-3">
-                <label className={label}>Tên hiển thị<input ref={guestNameInput} className={input} name="display-name" autoComplete="nickname" required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} /></label>
+                <label className={label}>
+                  <span>Tên hiển thị</span>
+                  <input ref={guestNameInput} className={input} name="display-name" autoComplete="nickname" required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} />
+                </label>
                 {selectedSeat ? <button className="rk-primary disabled:opacity-50" disabled={busy}>
                   {busy ? "Đang gửi…" : `${selectedSeat === "spectator" || selectedSeat === "referee" ? "Xin vào" : "Vào phòng"} · ${roles.find((entry) => entry.id === selectedSeat)?.title}`}
                 </button> : <p className="text-sm text-slate-300">Chọn ghế người chơi hoặc Người xem ở trên.</p>}
