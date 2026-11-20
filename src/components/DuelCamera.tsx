@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Video, VideoOff, Volume2 } from "lucide-react";
+import { Mic, MicOff, Phone, PhoneOff, RefreshCcw, SwitchCamera, Video, VideoOff, Volume2 } from "lucide-react";
 import type { CameraPeer, CameraSignals, CameraSnapshot } from "@/lib/duel/camera";
 
 type RemoteMedia = { id: string; name: string; stream: MediaStream };
@@ -39,14 +39,14 @@ function LiveMedia({ stream, label, preview = false }: { stream: MediaStream; la
     void media.play().then(() => { if (active) setBlocked(false); }, () => { if (active) setBlocked(true); });
     return () => { active = false; media.srcObject = null; };
   }, [stream, hasVideo, audioOnly]);
-  return <figure className="min-w-0 space-y-2">
+  return <figure className="relative min-w-0">
     {hasVideo && <video ref={videoRef} autoPlay playsInline muted={preview}
-      className="aspect-video w-full rounded-lg bg-black object-contain" aria-label={label} />}
+      className="block aspect-video w-full bg-black object-contain" aria-label={label} />}
     {audioOnly && <audio ref={audioRef} autoPlay aria-label={label} />}
-    <figcaption className="flex items-center gap-2 break-words text-sm text-slate-300">
+    <figcaption className={`flex min-w-0 items-center gap-1 px-2 py-1 text-xs text-white [overflow-wrap:anywhere] ${hasVideo ? "absolute inset-x-0 bottom-0 bg-black/70" : ""}`}>
       {!hasVideo && <Volume2 size={16} aria-hidden="true" />}{label}
     </figcaption>
-    {blocked && !preview && <button type="button" className="rk-control" onClick={() => {
+    {blocked && !preview && <button type="button" className="rk-control absolute left-2 top-2 z-10" onClick={() => {
       void (videoRef.current ?? audioRef.current)?.play().then(() => setBlocked(false), () => setBlocked(true));
     }}>Phát luồng của {label}</button>}
   </figure>;
@@ -58,6 +58,7 @@ export default function DuelCamera({ room, player, canJoin }: { room: string; pl
   const [media, setMedia] = useState<RemoteMedia[]>([]);
   const [error, setError] = useState("");
   const [canReconnect, setCanReconnect] = useState(false);
+  const [facing, setFacing] = useState<"user" | "environment">("user");
   const [pending, setPending] = useState<Device | null>(null);
   const request = useRef(0);
   const local = useRef<MediaStream | null>(null);
@@ -106,15 +107,29 @@ export default function DuelCamera({ room, player, canJoin }: { room: string; pl
     updateDevices(remaining.length ? new MediaStream(remaining) : null);
   }
 
-  async function share(device: Device) {
+  async function share(device: Device, nextFacing = facing, switching = false) {
     const expected = ++request.current;
     setPending(device);
     setError("");
+    const open = (direction: typeof facing, exact = false) => navigator.mediaDevices.getUserMedia({
+      audio: device === "audio" && { echoCancellation: true, noiseSuppression: true },
+      video: device === "video" && {
+        width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 24, max: 30 },
+        facingMode: exact ? { exact: direction } : { ideal: direction },
+      },
+    });
+    const oldCamera = switching ? local.current?.getVideoTracks()[0] : undefined;
+    oldCamera?.stop();
+    let restored = false;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: device === "audio" && { echoCancellation: true, noiseSuppression: true },
-        video: device === "video" && { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24, max: 30 } },
-      });
+      let stream: MediaStream;
+      try {
+        stream = await open(nextFacing, switching);
+      } catch (failure) {
+        if (!oldCamera || expected !== request.current) throw failure;
+        restored = true;
+        stream = await open(facing);
+      }
       if (expected !== request.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
@@ -127,11 +142,20 @@ export default function DuelCamera({ room, player, canJoin }: { room: string; pl
           setError(device === "video" ? "Camera đã ngắt. Bạn có thể bật lại." : "Mic đã ngắt. Bạn có thể bật lại.");
         }
       }, { once: true });
-      updateDevices(new MediaStream([...(local.current?.getTracks() ?? []), track]));
+      const previous = local.current?.getTracks() ?? [];
+      if (device === "video") {
+        setFacing(track.getSettings().facingMode === "environment" ? "environment" : track.getSettings().facingMode === "user" ? "user" : restored ? facing : nextFacing);
+        previous.filter((item) => item.kind === "video").forEach((item) => item.stop());
+      }
+      updateDevices(new MediaStream([...previous.filter((item) => item.kind !== track.kind), track]));
+      if (restored) setError("Không đổi được camera. Đang dùng lại camera trước đó.");
     } catch {
-      if (expected === request.current) setError(device === "video"
-        ? "Không mở được camera. Kiểm tra quyền camera trong trình duyệt rồi thử lại."
-        : "Không mở được mic. Kiểm tra quyền mic trong trình duyệt rồi thử lại.");
+      if (expected === request.current) {
+        if (oldCamera) disable(oldCamera);
+        setError(switching ? "Không đổi được camera. Bạn có thể bật lại camera."
+          : device === "video" ? "Không mở được camera. Hãy kiểm tra quyền camera rồi thử lại."
+            : "Không mở được mic. Hãy kiểm tra quyền mic rồi thử lại.");
+      }
     } finally {
       if (expected === request.current) setPending(null);
     }
@@ -291,40 +315,57 @@ export default function DuelCamera({ room, player, canJoin }: { room: string; pl
 
   const camera = player && devices?.getVideoTracks()[0];
   const mic = player && devices?.getAudioTracks()[0];
-  return <section className="rk-panel space-y-3 p-4 sm:p-5" aria-labelledby="duel-camera-heading">
-    <h2 id="duel-camera-heading" className="flex items-center gap-2 text-lg font-semibold">
-      <Video size={18} aria-hidden="true" /> {session ? "Hình và tiếng" : "Chuẩn bị cuộc gọi"}
-    </h2>
-    <p className="text-sm text-slate-300">{player && !session
-      ? "Kiểm tra camera và mic trước khi vào. Chỉ thành viên phòng mới xem và nghe được sau khi bạn vào cuộc gọi."
-      : player
-      ? "Thành viên trong phòng có thể xem hoặc nghe khi bạn bật camera hoặc mic."
-      : "Xem và nghe trực tiếp khi người chơi bật camera hoặc mic."}</p>
-    <div className="flex flex-wrap gap-2">
+  const toggles = "grid size-11 shrink-0 place-items-center rounded-full border border-white/15 bg-white/5 text-slate-200 hover:bg-white/10 disabled:opacity-50";
+  const hasRemoteVideo = media.some((item) => item.stream.getVideoTracks().length > 0);
+  const cameraLabel = camera ? "Tắt camera" : "Bật camera";
+  const micLabel = mic ? "Tắt mic" : "Bật mic";
+
+  return <section className="rk-panel space-y-3 p-3 sm:p-4" aria-labelledby="duel-camera-heading">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h2 id="duel-camera-heading" className="text-sm font-semibold">{session ? "Cuộc gọi" : "Camera và mic"}</h2>
+      {session && <span className="text-xs text-slate-300">Đã vào cuộc gọi</span>}
+    </div>
+    <div className="relative isolate grid overflow-hidden rounded-xl bg-[var(--rk-canvas)]">
+      {!hasRemoteVideo && <div className="grid aspect-video content-center justify-items-center gap-2 p-3 text-center text-sm text-slate-300">
+        <VideoOff aria-hidden="true" size={24} />
+        {session ? "Chưa có camera đối thủ" : "Camera chưa phát vào phòng"}
+      </div>}
+      {media.filter((item) => item.stream.getVideoTracks().length > 0).map((item) =>
+        <LiveMedia key={item.id} stream={item.stream} label={item.name} />)}
+      {camera && devices && <div className={session
+        ? "absolute bottom-8 right-2 z-20 w-[30%] min-w-[5rem] max-w-36 overflow-hidden rounded-lg border border-white/30 shadow-md"
+        : "absolute inset-0 overflow-hidden rounded-xl"}>
+        <LiveMedia stream={devices} label="Bạn" preview />
+      </div>}
+    </div>
+    {media.filter((item) => item.stream.getVideoTracks().length === 0).map((item) =>
+      <div className="min-h-8 rounded-lg bg-[var(--rk-canvas)]" key={item.id}><LiveMedia stream={item.stream} label={item.name} /></div>)}
+    <div className="flex flex-wrap items-center justify-center gap-2" role="group" aria-label="Điều khiển cuộc gọi">
       {player && <>
-        <button type="button" className="rk-control" disabled={pending !== null}
-          onClick={() => camera ? disable(camera) : void share("video")}>
-          {camera ? <VideoOff size={16} aria-hidden="true" /> : <Video size={16} aria-hidden="true" />}
-          {pending === "video" ? "Đang xin quyền camera…" : camera ? "Tắt camera" : "Bật camera"}
-        </button>
-        <button type="button" className="rk-control" disabled={pending !== null}
+        <button type="button" className={toggles} aria-pressed={Boolean(mic)} aria-label={micLabel} title={micLabel} disabled={pending !== null}
           onClick={() => mic ? disable(mic) : void share("audio")}>
-          {mic ? <MicOff size={16} aria-hidden="true" /> : <Mic size={16} aria-hidden="true" />}
-          {pending === "audio" ? "Đang xin quyền mic…" : mic ? "Tắt mic" : "Bật mic"}
+          {mic ? <Mic size={18} aria-hidden="true" /> : <MicOff size={18} aria-hidden="true" />}
+        </button>
+        <button type="button" className={toggles} aria-pressed={Boolean(camera)} aria-label={cameraLabel} title={cameraLabel} disabled={pending !== null}
+          onClick={() => camera ? disable(camera) : void share("video")}>
+          {camera ? <Video size={18} aria-hidden="true" /> : <VideoOff size={18} aria-hidden="true" />}
+        </button>
+        <button type="button" className={toggles} aria-label="Đổi camera" title="Đổi camera" disabled={pending !== null}
+          onClick={() => void share("video", facing === "user" ? "environment" : "user", true)}>
+          <SwitchCamera size={18} aria-hidden="true" />
         </button>
       </>}
-      {!session && canJoin && <button type="button" className="rk-control" disabled={pending !== null}
-        onClick={connectMedia}>Vào cuộc gọi</button>}
-      {session && canReconnect && <button type="button" className="rk-control" disabled={pending !== null}
-        onClick={connectMedia}>Kết nối lại hình và tiếng</button>}
-      {(session || pending) && <button type="button" className="rk-control" onClick={stop}>{session ? "Rời cuộc gọi" : "Hủy yêu cầu"}</button>}
+      {!session && canJoin && <button type="button" className="rk-control" disabled={pending !== null} onClick={connectMedia}>
+        <Phone size={16} aria-hidden="true" /> Vào cuộc gọi
+      </button>}
+      {session && canReconnect && <button type="button" className={toggles} aria-label="Kết nối lại cuộc gọi" title="Kết nối lại cuộc gọi" disabled={pending !== null} onClick={connectMedia}>
+        <RefreshCcw size={18} aria-hidden="true" />
+      </button>}
+      {(session || pending) && <button type="button" className={`${toggles} border-rose-400/40 bg-rose-500/15 text-rose-200`} aria-label={session ? "Rời cuộc gọi" : "Hủy yêu cầu"} title={session ? "Rời cuộc gọi" : "Hủy yêu cầu"} onClick={stop}>
+        <PhoneOff size={18} aria-hidden="true" />
+      </button>}
     </div>
+    {pending && <p role="status" className="text-center text-xs text-slate-300">Đang mở {pending === "video" ? "camera" : "mic"}…</p>}
     {error && <p role="status" className="text-sm text-amber-200">{error}</p>}
-    {mic && <p role="status" className="text-sm text-slate-300">{session ? "Mic của bạn đang phát." : "Mic đã bật để kiểm tra."}</p>}
-    {session && media.length === 0 && !error && <p role="status" className="text-sm text-slate-300">Đang chờ người chơi chia sẻ hình hoặc tiếng…</p>}
-    {(camera || media.length > 0) && <div className="grid gap-3 sm:grid-cols-2">
-      {camera && devices && <LiveMedia stream={devices} label={session ? "Camera của bạn · đang phát" : "Xem trước camera của bạn"} preview />}
-      {media.map((item) => <LiveMedia key={item.id} stream={item.stream} label={item.name} />)}
-    </div>}
   </section>;
 }

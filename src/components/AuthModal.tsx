@@ -19,12 +19,14 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAuthSuccess: () => void;
+  returnTo?: string;
 }
 
 export default function AuthModal({
   isOpen,
   onClose,
   onAuthSuccess,
+  returnTo,
 }: AuthModalProps) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
@@ -45,6 +47,12 @@ export default function AuthModal({
   if (!isOpen) return null;
 
   const configured = isSupabaseConfigured();
+
+  function callbackUrl() {
+    const callback = new URL("/auth/callback", window.location.origin);
+    if (returnTo) callback.searchParams.set("next", returnTo);
+    return callback.toString();
+  }
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,10 +81,7 @@ export default function AuthModal({
           onClose();
         }
       } else {
-        const redirectTo =
-          typeof window !== "undefined"
-            ? `${window.location.origin}/auth/callback`
-            : undefined;
+        const redirectTo = callbackUrl();
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -104,10 +109,7 @@ export default function AuthModal({
     if (!supabase) return;
 
     setLoading(true);
-    const redirectTo =
-      typeof window !== "undefined"
-        ? `${window.location.origin}/auth/callback`
-        : undefined;
+    const redirectTo = callbackUrl();
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",

@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, ChevronDown, Eye, Globe2, Link2, Lock, RefreshCw, Share2, ShieldCheck, Swords } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronDown, Eye, Globe2, Link2, Lock, MessageCircle, RefreshCw, Share2, ShieldCheck, Swords, Users } from "lucide-react";
 import DuelTimer from "@/components/DuelTimer";
 import { isDuelRoomId, readDuelInvite } from "@/lib/duel/invite";
 import { isDuelPuzzle, officialCentiseconds, otherSeat, type DuelActiveRoom, type DuelHistoryItem, type DuelMode, type DuelPublicRoom, type DuelView, type Result, type Role } from "@/lib/duel/match";
@@ -20,6 +20,8 @@ const DuelCamera = dynamic(() => import("@/components/DuelCamera"), {
   ssr: false,
   loading: () => <p role="status" className="text-sm text-slate-300">Đang tải phần camera và mic…</p>,
 });
+const DuelChat = dynamic(() => import("@/components/DuelChat"), { ssr: false });
+const DuelSocial = dynamic(() => import("@/components/DuelSocial"), { ssr: false });
 const roles = [
   { id: "player1", title: "Player 1" },
   { id: "player2", title: "Player 2" },
@@ -79,6 +81,11 @@ function DuelHistoryList({ matches }: { matches: DuelHistoryItem[] }) {
 export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const router = useRouter();
   const [room, setRoom] = useState(initialRoom);
+  const [socialOpen, setSocialOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("friends") === "1") setSocialOpen(true);
+  }, []);
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [name, setName] = useState("");
   const [puzzle, setPuzzle] = useState("3x3");
@@ -467,6 +474,11 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
             <Link href="/duel" aria-current={room ? undefined : "page"} prefetch={false} className="inline-flex min-h-11 items-center border-b-2 border-transparent px-2 text-sm text-slate-300 hover:text-white aria-[current=page]:border-cyan-300 aria-[current=page]:text-white">
               Sảnh đấu
             </Link>
+            {!room && <button type="button" aria-expanded={socialOpen} aria-controls="duel-social"
+              className="ml-auto inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm text-slate-300 hover:text-white"
+              onClick={() => setSocialOpen((open) => !open)}>
+              <Users size={16} aria-hidden="true" /> Bạn bè
+            </button>}
           </nav>
           <h1 className="flex items-center gap-2 text-2xl font-semibold text-white">
             <Swords aria-hidden="true" className="size-5 text-cyan-300" /> Đấu 1v1
@@ -491,6 +503,10 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
           {connection === reconnecting && <button type="button" className="rk-control"
             onClick={() => refreshRoom.current?.()}>Thử kết nối lại</button>}
         </div>}
+
+        {!room && <section id="duel-social" hidden={!socialOpen} className="rk-panel space-y-2 p-3 sm:p-4">
+          {socialOpen && <><h2 className="text-lg font-semibold">Bạn bè</h2><DuelSocial /></>}
+        </section>}
 
         {!room && (sortedRooms.length > 0 || activeError) && <section className="rk-panel space-y-2 p-4 sm:p-5" aria-labelledby="duel-active">
           <h2 id="duel-active" className="text-lg font-semibold">Quay lại trận</h2>
@@ -629,17 +645,16 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
 
         {room && !view && !connection && <p role="status">Đang tải phòng…</p>}
 
-        {view && <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,21rem)]">
+        {view && <div className="grid items-start gap-4 lg:grid-cols-2">
           <div className="min-w-0 space-y-4">
             {view && (!started || initialInvite) && <section className="rk-panel space-y-4 p-4 sm:p-5" aria-labelledby="duel-lobby">
               <div>
                 <h2 id="duel-lobby" className="text-lg font-semibold">{started ? "Trận đã bắt đầu" : "Phòng chờ"}</h2>
                 {initialInvite ? <p className="mt-1 text-sm text-slate-300">Phòng của {initialInvite.host}. Chọn chỗ để tham gia.</p>
-                  : <p className="mt-1 text-sm text-slate-300">Bạn là {member?.name}{member?.host ? " · Chủ phòng" : ""}{member?.isReferee ? " · Trọng tài" : ""}</p>}
+                  : <p className="mt-1 text-sm text-slate-300">Bạn là {member?.name}{member?.isReferee ? " · Trọng tài" : ""}</p>}
                 {member && !started && <p role="status" className="mt-2 text-sm text-cyan-200">
                   {missingPlayers > 0 ? `Đang chờ ${missingPlayers} người chơi.`
-                    : member.canStart ? "Đã đủ hai người chơi. Có thể bắt đầu trận."
-                      : member.referee ? `Chờ trọng tài ${member.referee} hoặc chủ phòng bắt đầu.` : "Chờ chủ phòng bắt đầu."}
+                    : "Đủ hai người chơi."}
                 </p>}
               </div>
 
@@ -676,11 +691,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
                 {spectators.length > 0 && <ul className="space-y-2 text-sm text-slate-300">
                   {spectators.map((viewer, index) => <li className="flex flex-wrap items-center justify-between gap-2" key={index}>
                     <span className="break-words">{viewer}</span>
-                    {accessAvailable && member?.host && !started && !referee && <button type="button" className="rk-control" disabled={busy}
-                      onClick={() => void action({ action: "promote-referee", index, revision: snapshot?.revision })}>
-                      Chọn làm trọng tài
-                    </button>}
-                  </li>)}
+</li>)}
                 </ul>}
                 {(!member || member.seat !== null || member.isReferee) && <button type="button" className="rk-control disabled:opacity-50"
                   aria-pressed={selectedSeat === "spectator"} disabled={busy || Boolean(member ? spectators.length >= 2 : !accessAvailable)}
@@ -692,8 +703,6 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
                 <p className="break-words text-sm text-slate-300">{referee ?? "Còn trống"}</p>
                 {canChooseReferee && <button type="button" className="rk-control" aria-pressed={selectedSeat === "referee"}
                   disabled={busy} onClick={() => chooseSeat("referee")}>Chọn Trọng tài</button>}
-                {accessAvailable && member?.host && referee && <button type="button" className="rk-control" disabled={busy || spectators.length >= 2}
-                  onClick={() => void action({ action: "release-referee", revision: snapshot?.revision })}>Chuyển trọng tài thành người xem</button>}
               </div>
               {initialInvite && <div className="space-y-3 border-t border-white/10 pt-3">
                 <label className={label}>Tên hiển thị<input ref={guestNameInput} className={input} name="display-name" autoComplete="nickname" required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} /></label>
@@ -704,15 +713,13 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
               </form>}
               {member && !started && <>
                 <div className="flex flex-wrap items-center gap-2">
-                  {member.canStart && <button type="button" disabled={busy || missingPlayers > 0} className="rk-primary disabled:opacity-50"
-                    onClick={() => void action({ action: "start" })}>{busy ? "Đang xử lý…" : "Bắt đầu trận"}</button>}
                   {!member.host && <button type="button" disabled={busy} className="rk-control" onClick={() => void action({ action: "leave" })}>Rời chỗ</button>}
                 </div>
               </>}
             </section>}
 
             {member && match?.started && <>
-              <section className="rk-panel space-y-4 p-3 sm:p-5" aria-labelledby="duel-score">
+              <section className="rk-panel space-y-2 p-3 sm:px-4" aria-labelledby="duel-score">
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                   <h2 id="duel-score" className="font-mono text-sm font-semibold tabular-nums text-slate-200">Set {match.round.set} · Lượt {match.round.number}</h2>
                   {member.reviewing && <span className="text-sm text-slate-300">Chờ chốt điểm</span>}
@@ -721,10 +728,10 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
                   {([0, 1] as const).map((seat) => {
                     const active = match.winner === null && !member.reviewing &&
                       (member.turn === seat || (simultaneous && (seat === mySeat ? myTurn : match.round.ready?.every(Boolean))));
-                    return <div key={seat} className={`min-w-0 rounded-xl border px-2.5 py-3 sm:px-4 ${seat === 0 ? "col-start-1 row-start-1" : "col-start-3 row-start-1 text-right"} ${active ? "border-cyan-300/50 bg-cyan-300/[.09]" : "border-white/10 bg-[var(--rk-canvas)]"}`}>
+                    return <div key={seat} className={`min-w-0 rounded-lg border px-2.5 py-2 ${seat === 0 ? "col-start-1 row-start-1" : "col-start-3 row-start-1 text-right"} ${active ? "border-cyan-300/50 bg-cyan-300/[.09]" : "border-white/10 bg-[var(--rk-canvas)]"}`}>
                       <p className="text-xs text-slate-300">Player {seat + 1}{seat === mySeat ? " · Bạn" : ""}</p>
                       <p className="mt-1 break-words text-sm font-semibold sm:text-lg">{playerLabel(seat)}</p>
-                      <p className="mt-2 font-mono text-4xl font-semibold leading-none tabular-nums sm:text-5xl">
+                      <p className="mt-1 font-mono text-2xl font-semibold leading-none tabular-nums">
                         {match.points[seat]}<span className="sr-only"> điểm</span>
                       </p>
                       <p className="mt-1 font-mono text-xs text-slate-300">{match.sets[seat]} set</p>
@@ -732,7 +739,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
                   })}
                   <span className="col-start-2 row-start-1 self-center text-xs font-semibold text-slate-400" aria-hidden="true">VS</span>
                 </div>
-                <p role="status" className="rounded-lg bg-[var(--rk-canvas)] px-3 py-2.5 text-sm font-semibold text-cyan-200 sm:text-base">
+                <p role="status" className="rounded-lg px-1 py-1 text-sm font-medium text-cyan-200">
                   {match.winner !== null ? `${playerLabel(match.winner)} thắng trận` :
                     member.reviewing ? (member.reviewOfficial ? `Chờ ${member.reviewOfficial} xác nhận` : "Chờ hai người chơi xác nhận") :
                     simultaneous ? (match.round.ready?.every(Boolean) ? (myTurn ? "Có thể bắt đầu giải" : "Đang chờ kết quả") : "Chờ cả hai xáo xong") :
@@ -786,6 +793,31 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
             </>}
           </div>
           <aside className="min-w-0 space-y-3" aria-label="Thông tin và điều khiển phòng">
+            {accessAvailable && ((member && match?.winner === null) || (initialInvite && !access && (selectedSeat === "player1" || selectedSeat === "player2"))) &&
+              <DuelCamera key={room} room={room} player={member ? mySeat !== null : true} canJoin={Boolean(member)} />}
+            {member && <details className="rk-panel group p-3 sm:px-4" onToggle={(event) => setChatOpen(event.currentTarget.open)}>
+              <summary className={disclosure}><span className="flex items-center gap-2"><MessageCircle size={16} aria-hidden="true" /> Chat phòng</span><ChevronDown size={16} className="group-open:rotate-180" aria-hidden="true" /></summary>
+              {chatOpen && <DuelChat key={room} title="Tin nhắn trong phòng" endpoint={`/api/duel?room=${room}&chat=1`}
+                messageContext={{ action: "chat", room }} canSend={match?.winner === null} />}
+            </details>}
+            {member && !started && <details className="rk-panel group p-3 sm:px-4" onToggle={(event) => setSocialOpen(event.currentTarget.open)}>
+              <summary className={disclosure}><span className="flex items-center gap-2"><Users size={16} aria-hidden="true" /> Mời bạn bè</span><ChevronDown size={16} className="group-open:rotate-180" aria-hidden="true" /></summary>
+              {socialOpen && <DuelSocial room={missingPlayers > 0 ? room : undefined} />}
+            </details>}
+            {member?.canModerate && !started && <section className="rk-panel space-y-2 p-3">
+              <h2 className="text-sm font-semibold">Điều hành trận</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                {member.canStart && <button type="button" disabled={busy || missingPlayers > 0} className="rk-primary disabled:opacity-50"
+                  onClick={() => void action({ action: "start" })}>{busy ? "Đang xử lý…" : "Bắt đầu trận"}</button>}
+                {accessAvailable && member.host && referee && <button type="button" className="rk-control" disabled={busy || spectators.length >= 2}
+                  onClick={() => void action({ action: "release-referee", revision: snapshot?.revision })}>Chuyển trọng tài thành người xem</button>}
+              </div>
+              {accessAvailable && member.host && !referee && spectators.map((viewer, index) => <button key={index}
+                type="button" className="rk-control max-w-full text-left [overflow-wrap:anywhere]" disabled={busy}
+                onClick={() => void action({ action: "promote-referee", index, revision: snapshot?.revision })}>
+                Chọn {viewer} làm trọng tài
+              </button>)}
+            </section>}
             {accessAvailable && member?.canModerate && <section className="rk-panel space-y-3 p-4 sm:p-5" aria-labelledby="duel-access">
               <h2 id="duel-access" className="flex items-center gap-2 text-lg font-semibold">
                 <ShieldCheck size={18} aria-hidden="true" /> Duyệt vào phòng
@@ -810,8 +842,6 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
                 })}
               </ul>}
             </section>}
-            {accessAvailable && ((member && match?.winner === null) || (initialInvite && !access && (selectedSeat === "player1" || selectedSeat === "player2"))) &&
-              <DuelCamera key={room} room={room} player={member ? mySeat !== null : true} canJoin={Boolean(member)} />}
             {member && match?.started && match.history.length > 0 && <details open={match.winner !== null} className="rk-panel group p-3 sm:px-4">
                 <summary className={disclosure}>Kết quả từng lượt ({match.history.length})<ChevronDown size={16} className="group-open:rotate-180" aria-hidden="true" /></summary>
                 <ul className="divide-y divide-white/10 text-sm">

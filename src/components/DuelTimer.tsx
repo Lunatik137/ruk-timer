@@ -176,7 +176,7 @@ export default function DuelTimer({ busy, inspection, submit }: { busy: boolean;
         onClick={(event) => { if (event.detail === 0 && phase.current === "running") down("keyboard"); }}
       >
         <span aria-hidden="true" className="text-sm font-medium text-slate-300">{running ? "Đang giải" : screen === "inspection" ? "Inspection" : "Đồng hồ"}</span>
-        <span aria-hidden="true" className={`font-mono text-5xl tabular-nums ${ready ? "text-green-300" : holding || !running ? "text-amber-300" : "text-white"}`}>
+        <span aria-hidden="true" className={`font-mono text-5xl tabular-nums sm:text-7xl ${ready ? "text-green-300" : holding || !running ? "text-amber-300" : "text-white"}`}>
           {running || screen === "armed" ? formatTimeMs(clock, 2) : clock || "+2"}
         </span>
       </button>

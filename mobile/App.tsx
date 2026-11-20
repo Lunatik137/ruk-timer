@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -1566,6 +1567,11 @@ export default function App() {
               </TouchableOpacity>
             );
           })}
+          <TouchableOpacity style={styles.bottomTabBtn} accessibilityRole="link" accessibilityLabel="Mở Đấu 1v1 trên web"
+            onPress={() => void Linking.openURL("https://ruk-timer.vercel.app/duel").catch(() =>
+              Alert.alert("Chưa mở được sảnh đấu", "Hãy thử lại khi có kết nối mạng."))}>
+            <Text style={styles.bottomTabText}>Đấu 1v1</Text>
+          </TouchableOpacity>
         </View>
       )}
 

@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { duelDatabase as database } from "@/lib/duel/database";
+import { chatBody } from "@/lib/duel/social";
 import { isDuelRoomId } from "@/lib/duel/invite";
 import {
   approveResult, awaitingApproval, canMarkReady, canSolve, createMatch, DUEL_EVENTS, isDuelPuzzle, markReady, recordResult, resultFor, viewFor,
@@ -18,13 +19,6 @@ const roomHeaders = { ...headers, Vary: "Cookie" };
 const fail = (error: string, status: number) => NextResponse.json({ error }, { status, headers });
 const retry = () => NextResponse.json({ retry: true, error: "Phòng vừa thay đổi. Hãy thử lại." }, { status: 409, headers });
 const admissionUnavailable = () => fail("Tính năng duyệt vào phòng đang được cập nhật.", 503);
-
-function database() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Missing duel database configuration");
-  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
-}
 
 function playerKey(token: string | undefined) {
   return token && credential.test(token) ? createHash("sha256").update(token).digest("hex") : null;
@@ -166,6 +160,17 @@ export async function GET(req: NextRequest) {
   if (!isDuelRoomId(id)) return fail("Link phòng không hợp lệ.", 400);
   try {
     const db = database();
+    if (req.nextUrl.searchParams.has("chat")) {
+      const room = await fetchRoom(db, id);
+      if (!room || !nameFor(room, key)) return fail("Chỉ người trong phòng mới đọc được tin nhắn.", 403);
+      const { data, error } = await db.from("duel_room_chat")
+        .select("id,sender_name,sender_key,body,sent_at").eq("room_id", id)
+        .order("sent_at", { ascending: false }).order("id", { ascending: false }).limit(50);
+      if (error) throw error;
+      return NextResponse.json({ messages: (data ?? []).reverse().map(({ sender_key, ...message }) => ({
+        ...message, mine: sender_key === key,
+      })) }, { headers });
+    }
     const validator = req.headers.get("if-none-match");
     if (validator && /^W\/"[\w-]{43}"$/.test(validator)) {
       const { data: room, error } = await db.from(table)
@@ -233,6 +238,18 @@ export async function POST(req: NextRequest) {
     const seat = seatFor(room, key);
     const isReferee = room.referee_key === key;
     const name = nameFor(room, key);
+    if (body.action === "chat") {
+      if (!name || room.completed_at) return fail("Bạn không thể gửi tin nhắn vào phòng này.", 403);
+      const message = chatBody(body.message);
+      if (!message) return fail("Tin nhắn cần từ 1 đến 400 ký tự.", 400);
+      const { error } = await db.from("duel_room_chat").insert({
+        room_id: room.id, sender_key: key, sender_name: name, body: message,
+      });
+      if (error?.code === "23505") return fail("Hãy đợi một chút rồi gửi lại.", 429);
+      if (error) throw error;
+      return new NextResponse(null, { status: 204, headers });
+    }
+
     const requests = room.access_requests ?? [];
 
     if (body.action === "close") {
