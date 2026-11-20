@@ -9,7 +9,14 @@ export type DuelPuzzle = keyof typeof DUEL_EVENTS;
 export type Seat = 0 | 1;
 export type Role = "player1" | "player2" | "spectator";
 export type Pair<T> = [T, T];
-export type DuelSettings = { puzzle: DuelPuzzle; setsToWin: number; pointsToWin: number };
+export type DuelMode = "alternating" | "simultaneous";
+export type DuelSettings = {
+  puzzle: DuelPuzzle;
+  setsToWin: number;
+  pointsToWin: number;
+  mode?: DuelMode;
+  inspection?: boolean;
+};
 export type Result = { ms: number; penalty: PenaltyType };
 export type DuelRound = {
   number: number;
@@ -17,6 +24,8 @@ export type DuelRound = {
   first: Seat;
   scramble: string;
   results: Pair<Result | null>;
+  ready?: Pair<boolean>;
+  approvals?: Pair<boolean>;
   winner: Seat | null;
 };
 export type DuelMatch = {
@@ -32,7 +41,21 @@ export type DuelMatch = {
 
 export type DuelView =
   | { kind: "invite"; settings: DuelSettings; host: string; slots: Pair<boolean>; spectators: string[]; started: boolean }
-  | { kind: "member"; seat: Seat | null; name: string; host: boolean; spectators: string[]; match: DuelMatch; turn: Seat | null };
+  | {
+      kind: "member"; seat: Seat | null; name: string; host: boolean; spectators: string[];
+      match: DuelMatch; turn: Seat | null; referee: string | null; canStart: boolean; canReferee: boolean;
+      canTime: boolean; reviewing: boolean;
+      refereeIndex: number;
+    };
+
+export type DuelHistoryItem = {
+  id: string;
+  completedAt: string;
+  settings: DuelSettings;
+  players: DuelMatch["players"];
+  sets: Pair<number>;
+  winner: Seat;
+};
 
 export function isDuelPuzzle(value: unknown): value is DuelPuzzle {
   return typeof value === "string" && Object.hasOwn(DUEL_EVENTS, value);
@@ -43,8 +66,23 @@ export function otherSeat(seat: Seat): Seat {
 }
 
 export function currentTurn(match: DuelMatch): Seat | null {
-  if (!match.started || match.winner !== null) return null;
+  if (!match.started || match.winner !== null || match.settings.mode === "simultaneous" || awaitingApproval(match)) return null;
   return match.round.results[match.round.first] ? otherSeat(match.round.first) : match.round.first;
+}
+
+export function awaitingApproval(match: DuelMatch): boolean {
+  return match.winner === null && match.round.results.every(Boolean);
+}
+
+export function canSolve(match: DuelMatch, seat: Seat): boolean {
+  if (!match.started || match.winner !== null || match.round.results[seat]) return false;
+  return match.settings.mode === "simultaneous" ? Boolean(match.round.ready?.every(Boolean)) : currentTurn(match) === seat;
+}
+
+export function markReady(match: DuelMatch, seat: Seat): DuelMatch {
+  const ready: Pair<boolean> = [...(match.round.ready ?? [false, false])];
+  ready[seat] = true;
+  return { ...match, round: { ...match.round, ready } };
 }
 
 export function createMatch(settings: DuelSettings): DuelMatch {
@@ -65,10 +103,20 @@ export function resultFor(match: DuelMatch, round: number, seat: Seat) {
 }
 
 export function recordResult(match: DuelMatch, seat: Seat, result: Result): DuelMatch {
-  if (currentTurn(match) !== seat) throw new Error("Chưa đến lượt bạn.");
+  if (!canSolve(match, seat)) throw new Error("Chưa đến lượt bạn.");
   const results: Pair<Result | null> = [...match.round.results];
   results[seat] = result;
-  if (!results[0] || !results[1]) return { ...match, round: { ...match.round, results } };
+  return { ...match, round: { ...match.round, results } };
+}
+
+export function approveResult(match: DuelMatch, seat: Seat | null): DuelMatch {
+  const results = match.round.results;
+  if (match.winner !== null || !results[0] || !results[1]) throw new Error("Chưa có đủ hai kết quả.");
+  if (seat !== null) {
+    const approvals: Pair<boolean> = [...(match.round.approvals ?? [false, false])];
+    approvals[seat] = true;
+    if (!approvals.every(Boolean)) return { ...match, round: { ...match.round, approvals } };
+  }
 
   const a = officialCentiseconds(results[0]);
   const b = officialCentiseconds(results[1]);
@@ -93,16 +141,24 @@ export function recordResult(match: DuelMatch, seat: Seat, result: Result): Duel
   };
 }
 
-export function viewFor(match: DuelMatch, seat: Seat | null, name: string, host: boolean, spectators: string[]): Extract<DuelView, { kind: "member" }> {
+export function viewFor(
+  match: DuelMatch, seat: Seat | null, name: string, host: boolean, spectators: string[],
+  referee: string | null = null, canReferee = false, refereeIndex = -1,
+): Extract<DuelView, { kind: "member" }> {
   const turn = currentTurn(match);
+  const exposeScramble = seat !== null && match.started && (match.settings.mode === "simultaneous" || turn === seat);
+  const exposeResults = match.winner !== null || (awaitingApproval(match) && (seat !== null || canReferee));
   return {
-    kind: "member", seat, name, host, spectators, turn,
+    kind: "member", seat, name, host, spectators, turn, referee, canReferee, refereeIndex,
+    canStart: !match.started && (referee ? canReferee : host),
+    canTime: seat !== null && canSolve(match, seat),
+    reviewing: awaitingApproval(match),
     match: {
       ...match,
       round: {
         ...match.round,
-        scramble: (seat !== null && turn === seat) || match.winner !== null ? match.round.scramble : "",
-        results: match.winner !== null ? match.round.results :
+        scramble: exposeScramble || match.winner !== null ? match.round.scramble : "",
+        results: exposeResults ? match.round.results :
           [seat === 0 ? match.round.results[0] : null, seat === 1 ? match.round.results[1] : null],
       },
     },

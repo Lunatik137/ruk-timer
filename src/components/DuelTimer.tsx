@@ -5,17 +5,18 @@ import { formatTimeMs } from "@/lib/stats";
 import type { Result } from "@/lib/duel/match";
 import type { PenaltyType } from "@/types/cubing";
 
-type Phase = "idle" | "inspection" | "running" | "review";
+type Phase = "idle" | "armed" | "inspection" | "running" | "review";
 
-export default function DuelTimer({ busy, submit }: { busy: boolean; submit: (result: Result) => void }) {
-  const phase = useRef<Phase>("idle");
+export default function DuelTimer({ busy, inspection, submit }: { busy: boolean; inspection: boolean; submit: (result: Result) => void }) {
+  const initialPhase = inspection ? "idle" : "armed";
+  const phase = useRef<Phase>(initialPhase);
   const inspectionAt = useRef(0);
   const startedAt = useRef(0);
   const heldAt = useRef<number | null>(null);
   const source = useRef<"keyboard" | "pointer" | null>(null);
   const automaticPenalty = useRef<PenaltyType>("OK");
   const surface = useRef<HTMLButtonElement>(null);
-  const [screen, setScreen] = useState<Phase>("idle");
+  const [screen, setScreen] = useState<Phase>(initialPhase);
   const [clock, setClock] = useState(0);
   const [holding, setHolding] = useState(false);
   const [ready, setReady] = useState(false);
@@ -44,7 +45,7 @@ export default function DuelTimer({ busy, submit }: { busy: boolean; submit: (re
       const elapsed = performance.now() - startedAt.current;
       review(elapsed >= 600_000 ? { ms: 0, penalty: "DNF" } :
         { ms: Math.max(10, Math.floor(elapsed)), penalty: automaticPenalty.current });
-    } else if (phase.current === "inspection" && heldAt.current === null) {
+    } else if ((phase.current === "inspection" || phase.current === "armed") && heldAt.current === null) {
       heldAt.current = performance.now();
       source.current = input;
       setHolding(true);
@@ -56,8 +57,8 @@ export default function DuelTimer({ busy, submit }: { busy: boolean; submit: (re
     const now = performance.now();
     const armed = now - heldAt.current >= 300;
     cancelHold();
-    if (!armed || phase.current !== "inspection") return;
-    const elapsed = now - inspectionAt.current;
+    if (!armed || (phase.current !== "inspection" && phase.current !== "armed")) return;
+    const elapsed = phase.current === "inspection" ? now - inspectionAt.current : 0;
     if (elapsed >= 17_000) return review({ ms: 0, penalty: "DNF" });
     automaticPenalty.current = elapsed >= 15_000 ? "+2" : "OK";
     startedAt.current = now;
@@ -66,15 +67,17 @@ export default function DuelTimer({ busy, submit }: { busy: boolean; submit: (re
   }
 
   useEffect(() => {
-    if (screen !== "inspection" && screen !== "running") return;
+    if (screen !== "inspection" && screen !== "running" && screen !== "armed") return;
     let frame: number;
     function tick(now: number) {
-      if (phase.current === "inspection") {
-        const elapsed = now - inspectionAt.current;
-        if (elapsed >= 17_000) return review({ ms: 0, penalty: "DNF" });
+      if (phase.current === "inspection" || phase.current === "armed") {
         const held = heldAt.current;
         setReady(held !== null && now - held >= 300);
-        setClock(Math.ceil(Math.max(0, 15_000 - elapsed) / 1000));
+        if (phase.current === "inspection") {
+          const elapsed = now - inspectionAt.current;
+          if (elapsed >= 17_000) return review({ ms: 0, penalty: "DNF" });
+          setClock(Math.ceil(Math.max(0, 15_000 - elapsed) / 1000));
+        }
       } else if (phase.current === "running") {
         const elapsed = now - startedAt.current;
         if (elapsed >= 600_000) return review({ ms: 0, penalty: "DNF" });
@@ -110,7 +113,7 @@ export default function DuelTimer({ busy, submit }: { busy: boolean; submit: (re
 
   if (screen === "idle") return (
     <div className="space-y-3">
-      <p className="text-sm text-slate-300">Xáo cube theo Scramble, rồi bắt đầu Inspection 15 giây.</p>
+      <p className="text-sm text-slate-300">Bắt đầu Inspection sau khi đã xáo cube.</p>
       <button type="button" className="rk-primary" onClick={() => {
         inspectionAt.current = performance.now();
         setClock(15);
@@ -135,7 +138,7 @@ export default function DuelTimer({ busy, submit }: { busy: boolean; submit: (re
           ))}
         </fieldset>
         <button type="button" className="rk-primary disabled:opacity-50" disabled={busy} onClick={() => submit(result)}>
-          {busy ? "Đang gửi…" : "Chốt kết quả"}
+          {busy ? "Đang gửi…" : "Gửi kết quả"}
         </button>
       </div>
     );
@@ -161,7 +164,7 @@ export default function DuelTimer({ busy, submit }: { busy: boolean; submit: (re
         onClick={(event) => { if (event.detail === 0 && phase.current === "running") down("keyboard"); }}
       >
         <span aria-hidden="true" className={`font-mono text-5xl tabular-nums ${ready ? "text-green-300" : holding || !running ? "text-amber-300" : "text-white"}`}>
-          {running ? formatTimeMs(clock, 2) : clock || "+2"}
+          {running || screen === "armed" ? formatTimeMs(clock, 2) : clock || "+2"}
         </span>
       </button>
       <p role="status" className="text-sm text-slate-300">

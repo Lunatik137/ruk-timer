@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
   computeActivity,
+  computePracticePeriod,
   computeWeeklyReport,
   dayKey,
   weekStartKey,
   type ActivitySolve,
 } from "../activity";
+
+it("groups the selected period by local dates, including days with no solves", () => {
+  const all = [
+    makeSolve("old", "2026-05-03T17:01:00Z"),
+    makeSolve("main", "2026-05-04T16:59:00Z", { time_ms: 15000 }),
+    makeSolve("main", "2026-05-04T16:59:00Z", { time_ms: 15000 }),
+    makeSolve("drill", "2026-05-04T17:01:00Z", { session_id: "drill", penalty: "DNF" }),
+  ];
+  const report = computePracticePeriod(all, {
+    tz: "Asia/Ho_Chi_Minh", now: Date.parse("2026-05-06T04:00:00Z"),
+    days: 2, drillSessionIds: new Set(["drill"]),
+  });
+  expect(report.days).toEqual([{ date: "2026-05-05", count: 1 }, { date: "2026-05-06", count: 0 }]);
+  expect(report.current).toMatchObject({ practiceCount: 1, meanMs: null });
+  expect(report.previous).toMatchObject({ practiceCount: 2, meanMs: 13500 });
+});
 
 function makeSolve(
   id: string,

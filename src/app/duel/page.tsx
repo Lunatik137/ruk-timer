@@ -9,5 +9,6 @@ export const metadata: Metadata = {
 
 export default async function DuelPage({ searchParams }: { searchParams: Promise<{ room?: string }> }) {
   const { room } = await searchParams;
-  return <DuelRoom initialRoom={typeof room === "string" ? room : ""} />;
+  const id = typeof room === "string" ? room : "";
+  return <DuelRoom key={id} initialRoom={id} />;
 }

@@ -255,3 +255,29 @@ export function computeWeeklyReport(
     isCurrentWeekComplete: false,
   };
 }
+
+export function computePracticePeriod(
+  solves: ActivitySolve[],
+  opts: { tz: string; now: number; days: number; drillSessionIds: Set<string> },
+) {
+  const end = dayKey(opts.now, opts.tz);
+  const start = addDays(end, 1 - opts.days);
+  const previousStart = addDays(start, -opts.days);
+  const days = Array.from({ length: opts.days }, (_, i) => ({ date: addDays(start, i), count: 0 }));
+  const current: ActivitySolve[] = [];
+  const previous: ActivitySolve[] = [];
+  const seen = new Set<string>();
+  for (const solve of solves) {
+    const at = Date.parse(solve.solved_at);
+    if (seen.has(solve.id) || !Number.isFinite(at)) continue;
+    seen.add(solve.id);
+    const date = dayKey(at, opts.tz);
+    if (date >= start && date <= end) {
+      current.push(solve);
+      days[dayIndex(date) - dayIndex(start)].count++;
+    } else if (date >= previousStart && date < start) {
+      previous.push(solve);
+    }
+  }
+  return { start, end, days, current: statsFor(current, opts.drillSessionIds), previous: statsFor(previous, opts.drillSessionIds) };
+}

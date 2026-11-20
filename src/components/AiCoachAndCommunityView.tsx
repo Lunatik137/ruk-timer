@@ -36,7 +36,6 @@ import {
 } from "@/lib/core/workout";
 import {
   computePersonalAchievements,
-  computeStreakAndHeatmap,
   formatTimeMs,
 } from "@/lib/stats";
 import {
@@ -48,6 +47,7 @@ import {
 } from "@/types/cubing";
 
 import VideoTimeline from "@/components/VideoTimeline";
+import PracticeProgress from "@/components/PracticeProgress";
 import VaultVideoPreviewModal from "@/components/VaultVideoPreviewModal";
 import { loadVideoDraft, saveVideoDraft } from "@/lib/videoDraft";
 import CubeNetPreview from "@/components/CubeNetPreview";
@@ -211,8 +211,6 @@ export default function AiCoachAndCommunityView({
   };
 
   // 2. Streak Heatmap & Personal Achievements
-  const streakData = useMemo(() => computeStreakAndHeatmap(solves), [solves]);
-
   const learnedAlgCount = useMemo(
     () =>
       Object.values(cfopProgress).filter(
@@ -1130,11 +1128,6 @@ export default function AiCoachAndCommunityView({
   };
 
   const isVideoIntake = !recorderOpen && !videoUrl;
-  const firstActivityDay = streakData.heatmapDays[0]?.date;
-  const visibleActiveDays = streakData.heatmapDays.filter((day) => day.count > 0).length;
-  const firstActivityRow = firstActivityDay
-    ? ((new Date(firstActivityDay).getUTCDay() + 6) % 7) + 1
-    : 1;
 
   if (!active) return null;
 
@@ -1143,7 +1136,7 @@ export default function AiCoachAndCommunityView({
       <nav aria-label="Phân tích và luyện tập" className="grid grid-cols-2 gap-x-2 border-b border-white/10 sm:flex">
         {([
           { id: "coach", label: "AI Coach", icon: BrainCircuit },
-          { id: "weekly", label: "Báo cáo tuần", icon: Flame },
+          { id: "weekly", label: "Tiến độ luyện tập", icon: Flame },
           { id: "video", label: "Video Analyzer", icon: Video },
           { id: "files", label: "Kho tệp cá nhân", icon: FolderLock },
         ] as const).map(({ id, label, icon: Icon }) => (
@@ -1464,164 +1457,8 @@ export default function AiCoachAndCommunityView({
         </div>
       )}
 
-      {/* ==================================================================== */}
-      {/* TAB 2: WEEKLY REPORT (MONDAY-START), 84-DAY STREAK & ACHIEVEMENTS    */}
-      {/* ==================================================================== */}
       {subTab === "weekly" && (
-        <section className="space-y-4" aria-labelledby="weekly-report-title">
-          <header className="space-y-2 px-1">
-            <h1 id="weekly-report-title" className="text-xl font-semibold text-white">Báo cáo tuần</h1>
-            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-300">
-              <span className="font-mono tabular-nums">
-                {coachReport.weeklyComparison.weekStart} → {coachReport.weeklyComparison.today}
-              </span>
-              <span>{coachReport.weeklyComparison.elapsedDays}/7 ngày</span>
-            </p>
-          </header>
-
-          <div className="rk-panel grid grid-cols-2 overflow-hidden [&>div]:min-w-0 [&>div]:p-3 sm:[&>div]:p-4 lg:grid-cols-4">
-            <div className="border-b border-r border-white/10 lg:border-b-0">
-              <div className="text-xs text-slate-400">Chuỗi ngày luyện tập</div>
-              <div className="mt-1 font-mono text-lg font-semibold text-white sm:text-2xl">
-                <span>{streakData.currentStreak} ngày</span>
-              </div>
-              <div className="text-[11px] text-slate-400 mt-1">
-                Kỷ lục chuỗi dài nhất: {streakData.longestStreak} ngày • Hôm nay:{" "}
-                {streakData.todayCount} lượt
-              </div>
-            </div>
-
-            <div className="border-b border-white/10 lg:border-b-0 lg:border-r">
-              <div className="text-xs text-slate-400">
-                Lượt luyện tuần này
-              </div>
-              <div className="mt-1 font-mono text-lg font-semibold tabular-nums text-white sm:text-2xl">
-                {coachReport.weeklyComparison.thisWeekPracticeCount} lượt
-              </div>
-              <div className="text-[11px] text-slate-400 mt-1">
-                Cùng kỳ tuần trước: {coachReport.weeklyComparison.lastWeekPracticeCount} lượt (cả tuần trước: {coachReport.weeklyComparison.lastWeekFullCount})
-              </div>
-            </div>
-
-            <div className="border-r border-white/10">
-              <div className="text-xs text-slate-400">
-                Mean phiên chính
-              </div>
-              <div className="mt-1 break-words font-mono text-lg font-semibold tabular-nums text-white sm:text-2xl">
-                {formatTimeMs(
-                  coachReport.weeklyComparison.thisWeekMeanMs,
-                  settings.decimals
-                )}
-              </div>
-              <div className="text-[11px] text-slate-400 mt-1">
-                Cùng kỳ tuần trước:{" "}
-                {formatTimeMs(
-                  coachReport.weeklyComparison.lastWeekMeanMs,
-                  settings.decimals
-                )}
-                {coachReport.weeklyComparison.meanDeltaPct !== null && (
-                  <span
-                    className={`ml-1 font-semibold ${
-                      coachReport.weeklyComparison.meanDeltaPct <= 0
-                        ? "text-emerald-300"
-                        : "text-amber-300"
-                    }`}
-                  >
-                    ({coachReport.weeklyComparison.meanDeltaPct > 0 ? "+" : ""}
-                    {coachReport.weeklyComparison.meanDeltaPct}%)
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-xs text-slate-400">
-                Single tốt nhất tuần
-              </div>
-              <div className="mt-1 break-words font-mono text-lg font-semibold tabular-nums text-white sm:text-2xl">
-                {formatTimeMs(
-                  coachReport.weeklyComparison.thisWeekBestSingleMs,
-                  settings.decimals
-                )}
-              </div>
-              <div className="text-[11px] text-slate-400 mt-1">
-                Độ lệch chuẩn tuần:{" "}
-                {formatTimeMs(
-                  coachReport.weeklyComparison.thisWeekStdDevMs,
-                  settings.decimals
-                )}
-              </div>
-            </div>
-          </div>
-
-          {coachReport.weeklyComparison.thisWeekPracticeCount === 0 && (
-            <p className="px-1 text-sm text-slate-300">Chưa có lượt luyện trong tuần này.</p>
-          )}
-          <details className="px-1 text-sm text-slate-300">
-            <summary className="w-fit cursor-pointer rounded py-2 underline-offset-4 hover:underline">Cách tính số liệu</summary>
-            <p className="max-w-prose text-pretty pb-2">
-              Tuần bắt đầu vào Thứ Hai và được so sánh cùng số ngày với tuần trước.
-              Hoạt động và chuỗi luyện tập tính mọi lượt. Mean chỉ tính phiên giải chính.
-            </p>
-          </details>
-
-          {/* 12-Week (84 Days) Activity Heatmap */}
-          <div className="rk-panel rk-report-section space-y-3 p-4 sm:p-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-base font-semibold">Lịch luyện tập 84 ngày</h2>
-              <span className="text-xs text-slate-400">{visibleActiveDays}/84 ngày có lượt luyện</span>
-            </div>
-
-            <div className="flex max-w-xl gap-2">
-              <div aria-hidden="true" className="grid grid-rows-7 gap-1 text-xs text-slate-400">
-                {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((day) => (
-                  <span key={day} className="self-center">{day}</span>
-                ))}
-              </div>
-              <ul role="list" aria-label="Số lượt luyện theo ngày" className="grid flex-1 auto-cols-fr grid-flow-col grid-rows-7 gap-1">
-                {streakData.heatmapDays.map((day, index) => (
-                  <li
-                    key={day.date}
-                    style={index === 0 ? { gridRowStart: firstActivityRow } : undefined}
-                    title={`${day.date}: ${day.count} lượt luyện`}
-                    className={`min-h-4 rounded-sm sm:min-h-5 ${[
-                      "bg-white/5",
-                      "bg-cyan-300/25",
-                      "bg-cyan-300/50",
-                      "bg-cyan-300/75",
-                      "bg-cyan-300",
-                    ][day.level]} ${index === streakData.heatmapDays.length - 1 ? "ring-1 ring-inset ring-white/70" : ""}`}
-                  >
-                    <span className="sr-only">{day.date}: {day.count} lượt luyện</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <p className="text-xs text-slate-400">Ô sáng hơn có nhiều lượt luyện hơn. Viền trắng đánh dấu hôm nay.</p>
-          </div>
-
-          {/* Personal Achievements & Badges */}
-          <div className="rk-panel p-4 sm:p-5">
-            <h2 className="text-base font-semibold">Thành tựu</h2>
-            <ul role="list" className="mt-2 divide-y divide-white/10">
-              {achievements.map((ach) => (
-                <li
-                  key={ach.id}
-                  className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-white">{ach.title}</p>
-                    <p className="mt-1 text-xs text-slate-400">{ach.description}</p>
-                  </div>
-                  <div className="flex items-center gap-2 font-mono text-xs tabular-nums text-slate-300">
-                    {ach.unlocked && <CheckCircle2 aria-label="Đã đạt" className="size-4 shrink-0 text-emerald-300" />}
-                    {ach.progressText}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
+        <PracticeProgress solves={solves} sessions={sessions} achievements={achievements} decimals={settings.decimals} />
       )}
 
       {/* ==================================================================== */}
