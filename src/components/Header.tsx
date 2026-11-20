@@ -119,50 +119,26 @@ export default function Header({
             </span>
           </div>
 
-          {/* Primary Mode Switcher: Timer vs CFOP Academy vs AI Coach & Daily Challenge */}
-          <nav aria-label="Chế độ luyện tập" className="hidden items-center rounded-xl border border-white/10 bg-white/[0.06] p-0.5 lg:flex">
-            <button
-              type="button"
-              aria-pressed={mainView === "timer"}
-              onClick={(event) => {
-                onChangeMainView("timer");
-                if (event.detail > 0) event.currentTarget.blur();
-              }}
-              className={`h-8 px-2.5 2xl:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                mainView === "timer"
-                  ? "bg-cyan-500 text-slate-950"
-                  : "text-slate-300 hover:text-white"
-              }`}
-            >
-              <Clock className="w-3.5 h-3.5" />
-              <span>Timer</span>
-            </button>
-            <button
-              type="button"
-              aria-pressed={mainView === "cfop"}
-              onClick={() => onChangeMainView("cfop")}
-              className={`h-8 px-2.5 2xl:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                mainView === "cfop"
-                  ? "bg-cyan-500 text-slate-950"
-                  : "text-slate-300 hover:text-white"
-              }`}
-            >
-              <GraduationCap className="w-3.5 h-3.5" />
-              <span>Học & Luyện CFOP</span>
-            </button>
-            <button
-              type="button"
-              aria-pressed={mainView === "coach"}
-              onClick={() => onChangeMainView("coach")}
-              className={`h-8 px-2.5 2xl:px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                mainView === "coach"
-                  ? "bg-cyan-500 text-slate-950"
-                  : "text-slate-300 hover:text-white"
-              }`}
-            >
-              <BrainCircuit className="w-3.5 h-3.5" />
-              <span>AI Coach & Video</span>
-            </button>
+          <nav aria-label="Chế độ luyện tập" className="hidden items-center gap-1 rounded-xl border border-white/10 bg-black/20 p-1 lg:flex">
+            {([
+              { view: "timer", label: "Timer", Icon: Clock },
+              { view: "cfop", label: "Học & Luyện CFOP", Icon: GraduationCap },
+              { view: "coach", label: "AI Coach & Video", Icon: BrainCircuit },
+            ] as const).map(({ view, label, Icon }) => (
+              <button
+                key={view}
+                type="button"
+                aria-current={mainView === view ? "page" : undefined}
+                onClick={(event) => {
+                  onChangeMainView(view);
+                  if (view === "timer" && event.detail > 0) event.currentTarget.blur();
+                }}
+                className="inline-flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-transparent px-2.5 text-xs font-semibold text-slate-300 transition-colors hover:bg-white/10 hover:text-white aria-[current=page]:border-cyan-300/30 aria-[current=page]:bg-cyan-300/10 aria-[current=page]:text-cyan-200 2xl:px-3"
+              >
+                <Icon aria-hidden="true" className="size-4" />
+                {label}
+              </button>
+            ))}
           </nav>
 
           <div className={`order-3 grid w-full gap-2 lg:contents ${

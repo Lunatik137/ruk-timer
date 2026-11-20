@@ -61,7 +61,10 @@ Use the Tailwind 8–16px corner scale for controls and panels. Primary touch co
 - **Scramble** — The move sequence is the strongest line. Keep new scramble near the training selector. Put previous, copy, edit and Cross help together.
 - **Timer** — Mode changes sit below the timing surface. A concise live status communicates hold, ready, inspection, running and saved-time states without announcing every clock tick.
 - **Video Analyzer** — “Phân tích clip” opens a new recording and starts the on-device scan in one step. Opening a video file also starts its first scan. Keep retry, manual marks, device download and explicit cloud upload distinct.
-- **Bottom navigation** — Expose the current destination with an accessible state, color and a surface. Include the solve count where the user opens History.
+- **Navigation** — Desktop uses a segmented row and mobile uses an icon with a short label. Each marks the current destination. The History tab includes the solve count in its accessible name.
+- **Video intake** — Put the main file action next to the camera action and describe the outcome in one sentence. Keep the clip and timeline layout available after opening a file.
+- **Weekly report** — Show date range and main metrics before charts. Put calculation details behind a disclosure. Use explicit, quiet scroll-linked motion only for report panels. Reduced motion and unsupported browsers show the final layout.
+- **Footer** — Keep documentation and feedback outside the practice workspace. Keep it out of the focus order during a solve.
 
 ## Do's and Don'ts
 

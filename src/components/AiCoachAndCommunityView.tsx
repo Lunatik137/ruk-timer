@@ -1132,6 +1132,8 @@ export default function AiCoachAndCommunityView({
     });
   };
 
+  const isVideoIntake = !recorderOpen && !videoUrl;
+
   if (!active) return null;
 
   return (
@@ -1465,22 +1467,26 @@ export default function AiCoachAndCommunityView({
       {/* TAB 2: WEEKLY REPORT (MONDAY-START), 84-DAY STREAK & ACHIEVEMENTS    */}
       {/* ==================================================================== */}
       {subTab === "weekly" && (
-        <div className="space-y-4">
-          <div className="rounded-xl bg-black/30 border border-white/10 px-4 py-2.5 text-xs text-slate-300 flex flex-wrap items-center justify-between gap-2">
-            <span>
-              Tuần hiện tại (bắt đầu Thứ Hai):{" "}
-              <strong className="text-cyan-300 font-mono">
-                {coachReport.weeklyComparison.weekStart} →{" "}
-                {coachReport.weeklyComparison.today}
-              </strong>{" "}
-              ({coachReport.weeklyComparison.elapsedDays}/7 ngày — so sánh cùng số ngày với tuần trước)
-            </span>
-            <span className="text-slate-400">
-              Hoạt động & Streak tính mọi lượt (gồm +2, DNF, CFOP Drill); Mean tuần chỉ tính phiên giải chính.
-            </span>
+        <section className="space-y-4" aria-labelledby="weekly-report-title">
+          <div className="rk-panel space-y-2 p-4 sm:p-5">
+            <h1 id="weekly-report-title" className="text-lg font-semibold text-white">Báo cáo tuần</h1>
+            <p className="text-sm text-slate-300">
+              <span className="font-mono text-cyan-200">
+                {coachReport.weeklyComparison.weekStart} → {coachReport.weeklyComparison.today}
+              </span>
+              {" · "}
+              {coachReport.weeklyComparison.elapsedDays}/7 ngày
+            </p>
+            <details className="text-xs text-slate-300">
+              <summary className="w-fit cursor-pointer rounded p-1 hover:text-white">Cách tính số liệu</summary>
+              <p className="mt-1 text-pretty">
+                Tuần bắt đầu vào Thứ Hai và được so sánh cùng số ngày với tuần trước.
+                Hoạt động và chuỗi luyện tập tính mọi lượt. Mean chỉ tính phiên giải chính.
+              </p>
+            </details>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div className="rk-panel p-4">
               <div className="text-xs text-slate-400">Chuỗi ngày luyện tập</div>
               <div className="font-mono text-2xl font-bold text-amber-300 mt-1 flex items-center gap-1.5">
@@ -1495,7 +1501,7 @@ export default function AiCoachAndCommunityView({
 
             <div className="rk-panel p-4">
               <div className="text-xs text-slate-400">
-                Tổng lượt luyện tuần này
+                Lượt luyện tuần này
               </div>
               <div className="font-mono text-2xl font-bold text-cyan-300 mt-1 tabular-nums">
                 {coachReport.weeklyComparison.thisWeekPracticeCount} lượt
@@ -1507,7 +1513,7 @@ export default function AiCoachAndCommunityView({
 
             <div className="rk-panel p-4">
               <div className="text-xs text-slate-400">
-                Mean Phiên chính (Tuần này vs Cùng kỳ)
+                Mean phiên chính
               </div>
               <div className="font-mono text-2xl font-bold text-emerald-400 mt-1 tabular-nums">
                 {formatTimeMs(
@@ -1538,7 +1544,7 @@ export default function AiCoachAndCommunityView({
 
             <div className="rk-panel p-4">
               <div className="text-xs text-slate-400">
-                Kỷ lục Single Tuần Này
+                Single tốt nhất tuần
               </div>
               <div className="font-mono text-2xl font-bold text-white mt-1 tabular-nums">
                 {formatTimeMs(
@@ -1557,11 +1563,11 @@ export default function AiCoachAndCommunityView({
           </div>
 
           {/* 12-Week (84 Days) Activity Heatmap */}
-          <div className="rk-panel p-5 space-y-3">
+          <div className="rk-panel rk-report-reveal space-y-3 p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-base font-bold flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-emerald-400" />
-                <span>Biểu đồ Nhiệt Tần suất Luyện tập (84 Ngày Gần Nhất)</span>
+                <span>Lịch luyện tập 84 ngày</span>
               </h2>
               <span className="text-xs text-slate-400">
                 Tổng cộng {streakData.activeDaysCount} ngày hoạt động
@@ -1592,10 +1598,10 @@ export default function AiCoachAndCommunityView({
           </div>
 
           {/* Personal Achievements & Badges */}
-          <div className="rk-panel p-5 space-y-3">
+          <div className="rk-panel rk-report-reveal space-y-3 p-4 sm:p-5">
             <h2 className="text-base font-bold flex items-center gap-2">
               <Award className="w-5 h-5 text-amber-400" />
-              <span>Huy hiệu Cột mốc & Thành tựu Cá nhân</span>
+              <span>Thành tựu</span>
             </h2>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1628,7 +1634,7 @@ export default function AiCoachAndCommunityView({
               ))}
             </div>
           </div>
-        </div>
+        </section>
       )}
 
       {/* ==================================================================== */}
@@ -1637,24 +1643,22 @@ export default function AiCoachAndCommunityView({
       {subTab === "video" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           <div className="lg:col-span-7 min-w-0 rk-panel p-3 sm:p-5 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
-                <Video className="w-5 h-5 text-cyan-400 shrink-0" aria-hidden="true" />
-                <span>Video Analyzer</span>
-              </h2>
+            <div className={isVideoIntake
+              ? "space-y-4 rounded-xl border border-cyan-300/15 bg-cyan-300/5 p-4 sm:p-6"
+              : "flex flex-wrap items-center justify-between gap-2"}>
+              <div className="min-w-0 space-y-1">
+                <h1 className={isVideoIntake ? "text-xl font-semibold text-white sm:text-2xl" : "text-lg font-semibold text-white"}>
+                  Video Analyzer
+                </h1>
+                {isVideoIntake && (
+                  <p className="max-w-prose text-pretty text-sm text-slate-300">
+                    Mở hoặc quay clip để ước lượng các mốc CFOP và xem lại từng pha.
+                  </p>
+                )}
+              </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={recorderOpen || !draftReady}
-                  onClick={handleOpenCameraRecorder}
-                  className="min-h-10 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 transition disabled:opacity-50"
-                >
-                  <Camera className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Quay video</span>
-                </button>
-
-                <label className="min-h-10 px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer transition">
+                <label className={`${isVideoIntake ? "rk-primary" : "rk-control"} cursor-pointer focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-cyan-300 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50`}>
                   <Upload className="w-3.5 h-3.5" aria-hidden="true" />
                   <span>Mở clip để phân tích</span>
                   <input
@@ -1676,6 +1680,15 @@ export default function AiCoachAndCommunityView({
                     }}
                   />
                 </label>
+                <button
+                  type="button"
+                  disabled={recorderOpen || !draftReady}
+                  onClick={handleOpenCameraRecorder}
+                  className="rk-control disabled:opacity-50"
+                >
+                  <Camera className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Quay video</span>
+                </button>
               </div>
             </div>
 
@@ -1957,19 +1970,7 @@ export default function AiCoachAndCommunityView({
                 {draftMessage}
               </p>
             )}
-            {!videoUrl ? (
-              !recorderOpen && (
-                <div className="rounded-2xl border border-dashed border-white/15 bg-black/30 py-12 px-4 text-center space-y-2">
-                  <Video className="w-8 h-8 text-cyan-400 mx-auto opacity-75" aria-hidden="true" />
-                  <p className="text-sm font-semibold text-slate-200">
-                    Chưa có video nào được nạp
-                  </p>
-                  <p className="text-xs text-slate-400 max-w-md mx-auto">
-                    Chọn <strong>Quay video</strong> hoặc <strong>Tải video lên</strong> để tua chậm, quét điểm khựng tay và chốt mốc CFOP.
-                  </p>
-                </div>
-              )
-            ) : (
+            {videoUrl && (
               <div hidden={recorderOpen} className="space-y-3">
                 {/* Unified Video Player + Timeline CFOP Cluster */}
                 <div className="rounded-xl overflow-hidden bg-black/45 border border-white/15">

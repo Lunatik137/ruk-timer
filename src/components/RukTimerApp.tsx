@@ -1619,94 +1619,72 @@ export default function RukTimerApp() {
         />
       )}
 
-      {/* Mobile Bottom Tab Bar */}
+      {/* Keep footer utilities outside the solve controls. */}
+      <footer
+        inert={focusDimActive}
+        className={`border-t border-white/10 bg-[var(--rk-surface)] ${focusDimActive ? "invisible" : ""}`}
+      >
+        <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center justify-between gap-x-4 px-3 pb-[calc(4rem+env(safe-area-inset-bottom))] pt-2 sm:px-6 lg:pb-2">
+          <span className="text-sm font-semibold text-slate-200">RukTimer</span>
+          <nav aria-label="Tài nguyên RukTimer" className="flex flex-wrap items-center gap-x-4">
+            <a
+              href="https://github.com/Lunatik137/ruk-timer#readme"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-11 items-center text-sm text-slate-300 hover:text-cyan-200 hover:underline"
+            >
+              Tài liệu
+            </a>
+            <a
+              href="https://github.com/Lunatik137/ruk-timer/issues"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-11 items-center text-sm text-slate-300 hover:text-cyan-200 hover:underline"
+            >
+              Báo lỗi và góp ý
+            </a>
+          </nav>
+        </div>
+      </footer>
+
       {!focusDimActive && (
         <nav
           aria-label="Điều hướng chính"
-          className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-[var(--rk-surface)] grid grid-cols-5 gap-1 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] px-1.5 text-[10px]"
+          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 gap-1 border-t border-white/10 bg-[var(--rk-surface)] px-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] pt-1.5 text-xs lg:hidden"
         >
-          <button
-            type="button"
-            aria-current={
-              mainView === "timer" && mobileTab === "timer" ? "page" : undefined
-            }
-            onClick={() => {
-              setMainView("timer");
-              setMobileTab("timer");
-            }}
-            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 ${
-              mainView === "timer" && mobileTab === "timer"
-                ? "bg-cyan-400/10 text-cyan-200 font-semibold"
-                : "text-slate-400"
-            }`}
-          >
-            <Clock className="w-4 h-4" />
-            <span>Timer</span>
-          </button>
-          <button
-            type="button"
-            aria-current={mainView === "cfop" ? "page" : undefined}
-            onClick={() => setMainView("cfop")}
-            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 ${
-              mainView === "cfop"
-                ? "bg-cyan-400/10 text-cyan-200 font-semibold"
-                : "text-slate-400"
-            }`}
-          >
-            <GraduationCap className="w-4 h-4" />
-            <span>Học CFOP</span>
-          </button>
-          <button
-            type="button"
-            aria-current={mainView === "coach" ? "page" : undefined}
-            onClick={() => setMainView("coach")}
-            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 ${
-              mainView === "coach"
-                ? "bg-cyan-400/10 text-cyan-200 font-semibold"
-                : "text-slate-400"
-            }`}
-          >
-            <BrainCircuit className="w-4 h-4" />
-            <span>AI & Video</span>
-          </button>
-          <button
-            type="button"
-            aria-current={
-              mainView === "timer" && mobileTab === "history"
-                ? "page"
-                : undefined
-            }
-            onClick={() => {
-              setMainView("timer");
-              setMobileTab("history");
-            }}
-            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 ${
-              mainView === "timer" && mobileTab === "history"
-                ? "bg-cyan-400/10 text-cyan-200 font-semibold"
-                : "text-slate-400"
-            }`}
-          >
-            <ListOrdered className="w-4 h-4" />
-            <span>Lịch sử ({enrichedSolves.length})</span>
-          </button>
-          <button
-            type="button"
-            aria-current={
-              mainView === "timer" && mobileTab === "stats" ? "page" : undefined
-            }
-            onClick={() => {
-              setMainView("timer");
-              setMobileTab("stats");
-            }}
-            className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 ${
-              mainView === "timer" && mobileTab === "stats"
-                ? "bg-cyan-400/10 text-cyan-200 font-semibold"
-                : "text-slate-400"
-            }`}
-          >
-            <BarChart2 className="w-4 h-4" />
-            <span>Thống kê</span>
-          </button>
+          {([
+            { view: "timer", tab: "timer", label: "Timer", Icon: Clock },
+            { view: "cfop", label: "Học CFOP", Icon: GraduationCap },
+            { view: "coach", label: "AI & Video", Icon: BrainCircuit },
+            { view: "timer", tab: "history", label: "Lịch sử", Icon: ListOrdered },
+            { view: "timer", tab: "stats", label: "Thống kê", Icon: BarChart2 },
+          ] as const).map((item) => {
+            const current = mainView === item.view && (!("tab" in item) || mobileTab === item.tab);
+            const { view, label, Icon } = item;
+            return (
+              <button
+                key={label}
+                type="button"
+                aria-current={current ? "page" : undefined}
+                aria-label={"tab" in item && item.tab === "history" ? `Lịch sử (${enrichedSolves.length} lượt)` : undefined}
+                onClick={() => {
+                  setMainView(view);
+                  if ("tab" in item) setMobileTab(item.tab);
+                }}
+                className="group flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 text-slate-300 hover:bg-white/5 aria-[current=page]:font-semibold aria-[current=page]:text-cyan-200"
+              >
+                <span className="relative grid h-6 w-9 place-items-center rounded-full group-aria-[current=page]:bg-cyan-300/15">
+                  <Icon aria-hidden="true" className="size-4" />
+                  {"tab" in item && item.tab === "history" && enrichedSolves.length > 0 && (
+                    <span aria-hidden="true" className="absolute -right-1 -top-1 rounded-full bg-[var(--rk-surface)] px-1 text-[10px] tabular-nums text-cyan-200">
+                      {enrichedSolves.length > 99 ? "99+" : enrichedSolves.length}
+                    </span>
+                  )}
+                </span>
+                <span className="whitespace-nowrap">{label}</span>
+              </button>
+            );
+          })}
         </nav>
       )}
 

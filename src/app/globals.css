@@ -84,7 +84,7 @@ body {
   }
 
   .rk-view {
-    @apply mx-auto w-full max-w-[1600px] px-3 py-4 pb-24 sm:px-6 lg:pb-6;
+    @apply mx-auto w-full max-w-[1600px] px-3 pb-5 pt-4 sm:px-6 lg:pb-6;
   }
 
   .rk-panel {
@@ -110,5 +110,27 @@ body {
 
   .rk-primary {
     @apply border-cyan-300 bg-cyan-300 text-slate-950 hover:bg-cyan-200;
+  }
+}
+
+/* Reports progressively sharpen as they enter view. Content remains readable throughout. */
+@keyframes rk-report-reveal {
+  from {
+    opacity: 0.9;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .rk-report-reveal {
+      animation: rk-report-reveal linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 45%;
+    }
   }
 }
