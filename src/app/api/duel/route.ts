@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isDuelRoomId } from "@/lib/duel/invite";
 import {
   approveResult, awaitingApproval, canMarkReady, canSolve, createMatch, DUEL_EVENTS, isDuelPuzzle, markReady, recordResult, resultFor, viewFor,
-  type DuelHistoryItem, type DuelMatch, type DuelPuzzle, type Role,
+  type DuelActiveRoom, type DuelHistoryItem, type DuelMatch, type DuelPuzzle, type Role,
 } from "@/lib/duel/match";
 import { canModerate, nameFor, place, resultOfficial, seatFor, type Room } from "@/lib/duel/room";
 
@@ -93,6 +93,21 @@ function unavailable(error: unknown) {
 
 export async function GET(req: NextRequest) {
   const key = playerKey(req.cookies.get(cookie)?.value);
+  if (req.nextUrl.searchParams.has("active")) {
+    if (!key) return NextResponse.json({ active: [] }, { headers });
+    try {
+      const { data, error } = await database().from(table).select("id,state")
+        .is("completed_at", null).gt("expires_at", new Date().toISOString())
+        .or(`host_key.eq.${key},seats.cs.["${key}"],referee_key.eq.${key},spectators.cs.[{"key":"${key}"}]`)
+        .order("expires_at", { ascending: false }).limit(8).returns<Pick<Room, "id" | "state">[]>();
+      if (error) throw error;
+      const active: DuelActiveRoom[] = (data ?? []).flatMap(({ id, state }) => state.winner === null
+        ? [{ id, puzzle: state.settings.puzzle, started: state.started, players: state.players }] : []);
+      return NextResponse.json({ active }, { headers });
+    } catch (error) {
+      return unavailable(error);
+    }
+  }
   if (req.nextUrl.searchParams.has("history")) {
     if (!key) return NextResponse.json({ history: [] }, { headers });
     try {

@@ -66,6 +66,9 @@ trên cùng dự án Supabase và cấu hình `SUPABASE_SERVICE_ROLE_KEY` ở m�
 Tab **Đấu 1v1** nằm trên thanh điều hướng. Có thể mở link mời trực tiếp hoặc dán
 link/mã phòng trong mục **Vào phòng**. Phòng chưa kết thúc hết hạn sau 24 giờ.
 Lịch sử hiển thị tối đa 50 trận gần nhất từ cùng hồ sơ trình duyệt.
+Mục **Quay lại trận** hiển thị phòng còn hoạt động của hồ sơ trình duyệt hiện tại.
+Khi mạng trở lại, phòng đồng bộ tỉ số, lượt và kết quả đã lưu. Mất mạng không tự
+tính DNF. Làm mới trang trong lúc đồng hồ đang chạy sẽ mất lần bấm giờ chưa gửi.
 
 Ở chế độ luân phiên, người đến lượt xác nhận **Đã xáo xong** trước khi mở đồng hồ.
 Phòng có hai ghế đấu, một ghế trọng tài và hai ghế người xem. Chủ phòng và trọng tài

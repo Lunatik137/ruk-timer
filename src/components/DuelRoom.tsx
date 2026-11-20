@@ -3,16 +3,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Eye, Link2, ShieldCheck, Swords } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronDown, Eye, Link2, ShieldCheck, Swords } from "lucide-react";
 import DuelTimer from "@/components/DuelTimer";
 import DuelCamera from "@/components/DuelCamera";
 import { readDuelInvite } from "@/lib/duel/invite";
-import { isDuelPuzzle, officialCentiseconds, otherSeat, type DuelHistoryItem, type DuelMode, type DuelView, type Result, type Role } from "@/lib/duel/match";
+import { isDuelPuzzle, officialCentiseconds, otherSeat, type DuelActiveRoom, type DuelHistoryItem, type DuelMode, type DuelView, type Result, type Role } from "@/lib/duel/match";
 import { formatTimeMs } from "@/lib/stats";
 import { PUZZLES } from "@/types/cubing";
 
 const input = "w-full min-h-11 rounded-lg border border-white/15 bg-[var(--rk-canvas)] px-3 text-sm";
 const label = "block space-y-2 text-sm text-slate-200";
+const disclosure = "flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-lg py-2 text-sm font-medium [&::-webkit-details-marker]:hidden";
 const roles = [
   { id: "player1", title: "Player 1" },
   { id: "player2", title: "Player 2" },
@@ -34,6 +35,38 @@ function textResult(result: Result | null) {
     formatTimeMs(officialCentiseconds(result) * 10, 2) + (result.penalty === "+2" ? " (+2)" : "");
 }
 
+function ActiveRoomList({ rooms }: { rooms: DuelActiveRoom[] }) {
+  return <ul className="divide-y divide-white/10">
+    {rooms.map((active) => <li key={active.id}>
+      <Link href={`/duel?room=${active.id}`} prefetch={false}
+        className="flex min-h-11 items-center gap-3 rounded-lg py-2 hover:text-cyan-200">
+        <span className="min-w-0 flex-1">
+          <span className="block break-words font-medium">{active.players[0] ?? "Player 1"} – {active.players[1] ?? "Player 2"}</span>
+          <span className="block text-sm text-slate-300">
+            {PUZZLES.find((p) => p.id === active.puzzle)?.shortLabel} · <span className={active.started ? "text-cyan-200" : undefined}>
+              {active.started ? "Đang đấu" : "Phòng chờ"}
+            </span>
+          </span>
+        </span>
+        <ArrowRight className="size-4 shrink-0" aria-hidden="true" />
+      </Link>
+    </li>)}
+  </ul>;
+}
+
+function DuelHistoryList({ matches }: { matches: DuelHistoryItem[] }) {
+  return <ul className="divide-y divide-white/10">{matches.map((item) => (
+    <li key={item.id}>
+      <Link href={`/duel?room=${item.id}`} prefetch={false} className="block min-h-11 rounded-lg py-2 hover:text-cyan-200">
+        <span className="block break-words font-medium">{item.players[0]} {item.sets[0]}–{item.sets[1]} {item.players[1]}</span>
+        <span className="block text-sm text-slate-300">
+          {PUZZLES.find((p) => p.id === item.settings.puzzle)?.shortLabel} · {new Date(item.completedAt).toLocaleDateString("vi-VN")}
+        </span>
+      </Link>
+    </li>
+  ))}</ul>;
+}
+
 export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const router = useRouter();
   const [room, setRoom] = useState(initialRoom);
@@ -48,6 +81,8 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const [roomLinkError, setRoomLinkError] = useState("");
   const [mode, setMode] = useState<DuelMode>("alternating");
   const [inspection, setInspection] = useState(true);
+  const [activeRooms, setActiveRooms] = useState<DuelActiveRoom[]>([]);
+  const [activeError, setActiveError] = useState(false);
   const [history, setHistory] = useState<DuelHistoryItem[]>();
   const [historyError, setHistoryError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -56,6 +91,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const [copyStatus, setCopyStatus] = useState("");
   const [invite, setInvite] = useState("");
   const linkInput = useRef<HTMLInputElement>(null);
+  const joinInput = useRef<HTMLInputElement>(null);
   const guestNameInput = useRef<HTMLInputElement>(null);
   const pending = useRef(false);
   const view = snapshot?.view;
@@ -74,11 +110,35 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   useEffect(() => {
     if (room) return;
     const controller = new AbortController();
+    let checkingRooms = false;
+    async function refreshRooms() {
+      if (checkingRooms) return;
+      checkingRooms = true;
+      try {
+        const response = await fetch("/api/duel?active=1", { signal: controller.signal, cache: "no-store" });
+        const { active } = await readResponse<{ active: DuelActiveRoom[] }>(response);
+        if (!controller.signal.aborted) {
+          setActiveRooms(active);
+          setActiveError(false);
+        }
+      } catch {
+        if (!controller.signal.aborted) setActiveError(true);
+      } finally {
+        checkingRooms = false;
+      }
+    }
+    void refreshRooms();
+    window.addEventListener("focus", refreshRooms);
+    window.addEventListener("online", refreshRooms);
     void fetch("/api/duel?history=1", { signal: controller.signal, cache: "no-store" })
       .then(readResponse<{ history: DuelHistoryItem[] }>)
       .then((data) => { if (!controller.signal.aborted) { setHistory(data.history); setHistoryError(""); } })
       .catch((err) => { if (!controller.signal.aborted) setHistoryError(err.message); });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", refreshRooms);
+      window.removeEventListener("online", refreshRooms);
+    };
   }, [room]);
 
   useEffect(() => {
@@ -88,24 +148,64 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
 
   useEffect(() => {
     if (!room) return;
-    const controller = new AbortController();
+    const reconnecting = "Đang kết nối lại với phòng…";
     let timer: ReturnType<typeof setTimeout>;
+    let request: AbortController | null = null;
+    let stopped = false;
+
     async function refresh() {
+      if (stopped || request) return;
+      clearTimeout(timer);
+      if (!navigator.onLine) {
+        setConnection(reconnecting);
+        return;
+      }
+      const current = new AbortController();
+      request = current;
+      const deadline = setTimeout(() => current.abort(), 5000);
       try {
-        const response = await fetch(`/api/duel?room=${encodeURIComponent(room)}`, { signal: controller.signal, cache: "no-store" });
+        const response = await fetch(`/api/duel?room=${encodeURIComponent(room)}`, { signal: current.signal, cache: "no-store" });
+        if (stopped) return;
+        if (response.status === 404 || response.status === 400) {
+          stopped = true;
+          setSnapshot(undefined);
+          setConnection(response.status === 404 ? "Phòng không tồn tại hoặc đã hết hạn." : "Link phòng không hợp lệ.");
+          return;
+        }
         const next = await readResponse(response);
-        if (!controller.signal.aborted) {
+        if (!stopped) {
           receive(next);
           setConnection("");
         }
-      } catch (err) {
-        if (!controller.signal.aborted) setConnection(err instanceof Error ? err.message : "Mất kết nối với phòng.");
+      } catch {
+        if (!stopped) setConnection(reconnecting);
       } finally {
-        if (!controller.signal.aborted) timer = setTimeout(refresh, 1200);
+        clearTimeout(deadline);
+        request = null;
+        if (!stopped && navigator.onLine) timer = setTimeout(refresh, 1200);
       }
     }
+    function onOffline() {
+      if (stopped) return;
+      clearTimeout(timer);
+      request?.abort();
+      setConnection(reconnecting);
+    }
+    function onVisible() {
+      if (document.visibilityState === "visible") void refresh();
+    }
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", onOffline);
+    document.addEventListener("visibilitychange", onVisible);
     void refresh();
-    return () => { controller.abort(); clearTimeout(timer); };
+    return () => {
+      stopped = true;
+      request?.abort();
+      clearTimeout(timer);
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("offline", onOffline);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [room]);
 
   async function action(values: Record<string, unknown>) {
@@ -114,10 +214,25 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
     setBusy(true);
     setError("");
     try {
-      const send = async (): Promise<Snapshot> => readResponse(await fetch("/api/duel", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ room, ...values }),
-      }));
+      const send = async (): Promise<Snapshot> => {
+        const controller = new AbortController();
+        const deadline = setTimeout(() => controller.abort(), 7000);
+        try {
+          return await readResponse(await fetch("/api/duel", {
+            method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+            body: JSON.stringify({ room, ...values }),
+          }));
+        } catch (error) {
+          if (controller.signal.aborted || error instanceof TypeError) {
+            throw new Error(values.action === "create"
+              ? "Chưa xác nhận được phòng mới. Tải lại sảnh đấu để kiểm tra trước khi tạo lại."
+              : "Chưa xác nhận được thao tác. Kiểm tra kết nối rồi thử lại.");
+          }
+          throw error;
+        } finally {
+          clearTimeout(deadline);
+        }
+      };
       let next: Snapshot;
       try {
         next = await send();
@@ -169,6 +284,9 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const accessAvailable = view?.accessAvailable === true;
   const referee = initialInvite?.referee ?? member?.referee ?? null;
   const canChooseReferee = accessAvailable && !referee && (Boolean(initialInvite) || member?.host);
+  const sortedRooms = [...activeRooms].sort((a, b) => Number(b.started) - Number(a.started));
+  const modeLabel = mode === "simultaneous" ? "Đồng thời" : "Luân phiên";
+  const missingPlayers = match?.players.filter((player) => !player).length ?? 0;
   const playerLabel = (seat: 0 | 1) => match?.players[seat] ?? `Player ${seat + 1}`;
   const inviteControls = <div className="space-y-2">
     <label className={label}>Link mời<input ref={linkInput} readOnly value={invite} className={input} onFocus={(e) => e.target.select()} /></label>
@@ -199,76 +317,98 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
         {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
         {connection && <p role="status" className="text-sm text-amber-200">{connection}</p>}
 
+        {!room && (sortedRooms.length > 0 || activeError) && <section className="rk-panel space-y-2 p-4 sm:p-5" aria-labelledby="duel-active">
+          <h2 id="duel-active" className="text-lg font-semibold">Quay lại trận</h2>
+          {activeError && <p role="status" className="text-sm text-amber-200">Chưa tải được các phòng của bạn. Bạn vẫn có thể mở bằng link mời.</p>}
+          <ActiveRoomList rooms={sortedRooms.slice(0, 2)} />
+          {sortedRooms.length > 2 && <details className="group border-t border-white/10">
+            <summary className={disclosure}>Xem {sortedRooms.length - 2} phòng khác
+              <ChevronDown className="size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
+            </summary>
+            <ActiveRoomList rooms={sortedRooms.slice(2)} />
+          </details>}
+        </section>}
+
         {!room && <div className="grid items-start gap-4 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <form className="rk-panel space-y-3 p-4 sm:p-5 md:col-start-2 md:row-start-1" onSubmit={(event) => {
+          <form className="rk-panel space-y-3 p-4 sm:p-5 md:col-start-1 md:row-start-1" aria-labelledby="duel-join" onSubmit={(event) => {
             event.preventDefault();
             const id = readDuelInvite(roomLink, window.location.origin);
             if (!id) {
               setRoomLinkError("Dán link mời RukTimer hoặc mã phòng hợp lệ.");
+              joinInput.current?.focus();
               return;
             }
             router.push(`/duel?room=${id}`);
           }}>
-            <h2 className="text-lg font-semibold">Vào phòng</h2>
+            <h2 id="duel-join" className="text-lg font-semibold">Vào phòng</h2>
             <label className={label}>Link mời hoặc mã phòng
-              <input className={input} name="room-link" autoComplete="off" autoCapitalize="none" spellCheck={false}
+              <input ref={joinInput} className={input} name="room-link" autoComplete="off" autoCapitalize="none" spellCheck={false}
                 aria-invalid={Boolean(roomLinkError)} aria-describedby={roomLinkError ? "duel-link-error" : undefined}
                 value={roomLink} onChange={(event) => { setRoomLink(event.target.value); setRoomLinkError(""); }}
-                placeholder="Dán link hoặc mã…" />
+                placeholder="Dán link hoặc mã phòng" />
             </label>
             {roomLinkError && <p id="duel-link-error" role="alert" className="text-sm text-rose-300">{roomLinkError}</p>}
             <button className="rk-primary">Mở phòng</button>
           </form>
-          <form className="rk-panel space-y-4 p-4 sm:p-5 md:col-start-1 md:row-span-2 md:row-start-1" onSubmit={(event) => {
-          event.preventDefault();
-          void action({ action: "create", name, puzzle, setsToWin, pointsToWin, role, mode, inspection });
-        }}>
-          <h2 className="text-lg font-semibold">Tạo phòng riêng</h2>
-          <p className="text-sm text-slate-300">Hai người dùng cùng Scramble và xác nhận kết quả trước khi tính điểm.</p>
-          <label className={label}>Tên hiển thị<input className={input} required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} /></label>
-          <label className={label}>Loại Rubik<select className={input} value={puzzle} onChange={(e) => setPuzzle(e.target.value)}>
-            {PUZZLES.filter((item) => isDuelPuzzle(item.id)).map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
-          </select></label>
-          <div className="grid grid-cols-2 gap-3">
-            <label className={label}>Set cần thắng<select className={input} value={setsToWin} onChange={(e) => setSets(Number(e.target.value))}>
-              {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} set</option>)}
+          <form className="rk-panel space-y-4 p-4 sm:p-5 md:col-start-2 md:row-span-2 md:row-start-1" aria-labelledby="duel-create" onSubmit={(event) => {
+            event.preventDefault();
+            void action({ action: "create", name, puzzle, setsToWin, pointsToWin, role, mode, inspection });
+          }}>
+            <h2 id="duel-create" className="text-lg font-semibold">Tạo phòng riêng</h2>
+            <label className={label}>Tên hiển thị<input className={input} required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} /></label>
+            <label className={label}>Loại Rubik<select className={input} value={puzzle} onChange={(e) => setPuzzle(e.target.value)}>
+              {PUZZLES.filter((item) => isDuelPuzzle(item.id)).map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
             </select></label>
-            <label className={label}>Điểm để thắng set<select className={input} value={pointsToWin} onChange={(e) => setPoints(Number(e.target.value))}>
-              {[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n} điểm</option>)}
-            </select></label>
-          </div>
-          <label className={label}>Chỗ của bạn<select className={input} value={role} onChange={(e) => setRole(e.target.value as Role)}>
-            {roles.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}
-          </select></label>
-          <label className={label}>Thể thức<select className={input} value={mode} onChange={(e) => setMode(e.target.value as DuelMode)}>
-            <option value="alternating">Luân phiên</option>
-            <option value="simultaneous">Đồng thời</option>
-          </select></label>
-          <p className="text-sm text-slate-300">{mode === "simultaneous"
-            ? "Cả hai cùng thấy Scramble. Đồng hồ mở khi cả hai đã xáo xong."
-            : "Mỗi lượt đổi người giải trước."}</p>
-          <label className="flex min-h-11 items-center gap-2 text-sm text-slate-200">
-            <input type="checkbox" checked={inspection} onChange={(e) => setInspection(e.target.checked)} /> WCA Inspection 15 giây
-          </label>
-          <button disabled={busy} className="rk-primary disabled:opacity-50">{busy ? "Đang tạo…" : "Tạo phòng"}</button>
+            <details className="group border-y border-white/10">
+              <summary className={disclosure}>
+                <span>
+                  <span className="block">Tùy chỉnh thể thức</span>
+                  <span className="mt-1 block font-normal text-slate-300">{modeLabel} · {setsToWin} set · {pointsToWin} điểm/set</span>
+                </span>
+                <ChevronDown className="size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
+              </summary>
+              <div className="space-y-3 pb-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <label className={label}>Set cần thắng<select className={input} value={setsToWin} onChange={(e) => setSets(Number(e.target.value))}>
+                    {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} set</option>)}
+                  </select></label>
+                  <label className={label}>Điểm để thắng set<select className={input} value={pointsToWin} onChange={(e) => setPoints(Number(e.target.value))}>
+                    {[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n} điểm</option>)}
+                  </select></label>
+                </div>
+                <label className={label}>Chỗ của bạn<select className={input} value={role} onChange={(e) => setRole(e.target.value as Role)}>
+                  {roles.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}
+                </select></label>
+                <label className={label}>Thể thức<select className={input} value={mode} onChange={(e) => setMode(e.target.value as DuelMode)}>
+                  <option value="alternating">Luân phiên</option>
+                  <option value="simultaneous">Đồng thời</option>
+                </select></label>
+                <p className="text-sm text-slate-300">{mode === "simultaneous"
+                  ? "Cả hai cùng thấy Scramble. Đồng hồ mở khi cả hai đã xáo xong."
+                  : "Mỗi lượt đổi người giải trước."}</p>
+                <label className="flex min-h-11 items-center gap-2 text-sm text-slate-200">
+                  <input type="checkbox" checked={inspection} onChange={(e) => setInspection(e.target.checked)} /> WCA Inspection 15 giây
+                </label>
+              </div>
+            </details>
+            <button disabled={busy} className="rk-primary w-full disabled:opacity-50 sm:w-auto">{busy ? "Đang tạo…" : "Tạo phòng"}</button>
           </form>
 
-        <section className="rk-panel space-y-3 p-4 sm:p-5 md:col-start-2 md:row-start-2" aria-labelledby="duel-history">
-          <h2 id="duel-history" className="text-lg font-semibold">Lịch sử đấu</h2>
-          {historyError ? <p role="status" className="text-sm text-rose-300">{historyError}</p> : !history
-            ? <p role="status" className="text-sm text-slate-300">Đang tải lịch sử…</p>
-            : history.length === 0 ? <p className="text-sm text-slate-300">Chưa có trận đã hoàn thành trên trình duyệt này.</p>
-            : <ul className="divide-y divide-white/10">{history.map((item) => (
-              <li key={item.id}>
-                <Link href={`/duel?room=${item.id}`} prefetch={false} className="block min-h-11 rounded py-3 hover:text-cyan-200">
-                  <span className="block break-words font-medium">{item.players[0]} {item.sets[0]}–{item.sets[1]} {item.players[1]}</span>
-                  <span className="mt-1 block text-xs text-slate-300">
-                    {PUZZLES.find((p) => p.id === item.settings.puzzle)?.shortLabel} · {new Date(item.completedAt).toLocaleDateString("vi-VN")} · Xem chi tiết
-                  </span>
-                </Link>
-              </li>
-            ))}</ul>}
-        </section>
+          <section className="rk-panel space-y-3 p-4 sm:p-5 md:col-start-1 md:row-start-2" aria-labelledby="duel-history">
+            <h2 id="duel-history" className="text-lg font-semibold">Lịch sử đấu</h2>
+            {historyError ? <p role="status" className="text-sm text-rose-300">{historyError}</p> : !history
+              ? <p role="status" className="text-sm text-slate-300">Đang tải lịch sử…</p>
+              : history.length === 0 ? <p className="text-sm text-slate-300">Chưa có trận đã hoàn thành trên trình duyệt này.</p>
+              : <>
+                <DuelHistoryList matches={history.slice(0, 3)} />
+                {history.length > 3 && <details className="group border-t border-white/10">
+                  <summary className={disclosure}>Xem {history.length - 3} trận cũ hơn
+                    <ChevronDown className="size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
+                  </summary>
+                  <DuelHistoryList matches={history.slice(3)} />
+                </details>}
+              </>}
+          </section>
         </div>}
 
         {room && !view && !connection && <p role="status">Đang tải phòng…</p>}
@@ -278,6 +418,11 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
             <h2 id="duel-lobby" className="text-lg font-semibold">{started ? "Trận đã bắt đầu" : "Phòng chờ"}</h2>
             {initialInvite ? <p className="mt-1 text-sm text-slate-300">Phòng của {initialInvite.host}. Chọn chỗ để tham gia.</p>
               : <p className="mt-1 text-sm text-slate-300">Bạn là {member?.name}{member?.host ? " · Chủ phòng" : ""}{member?.isReferee ? " · Trọng tài" : ""}</p>}
+            {member && !started && <p role="status" className="mt-2 text-sm text-cyan-200">
+              {missingPlayers > 0 ? `Đang chờ ${missingPlayers} người chơi.`
+                : member.canStart ? "Đã đủ hai người chơi. Có thể bắt đầu trận."
+                  : member.referee ? `Chờ trọng tài ${member.referee} hoặc chủ phòng bắt đầu.` : "Chờ chủ phòng bắt đầu."}
+            </p>}
           </div>
 
           {access ? <div className="space-y-3 border-t border-white/10 pt-3">
@@ -338,10 +483,9 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
           {member && !started && <>
             {inviteControls}
             <div className="flex flex-wrap items-center gap-2">
-              {member.canStart ? <button type="button" disabled={busy || !match?.players.every(Boolean)} className="rk-primary disabled:opacity-50"
-                onClick={() => void action({ action: "start" })}>{busy ? "Đang xử lý…" : "Bắt đầu trận"}</button>
-                : <><p className="text-sm text-slate-300">{member.referee ? `Chờ trọng tài ${member.referee} bắt đầu.` : "Chờ chủ phòng bắt đầu."}</p>
-                  {!member.host && <button type="button" disabled={busy} className="rk-control" onClick={() => void action({ action: "leave" })}>Rời chỗ</button>}</>}
+              {member.canStart && <button type="button" disabled={busy || missingPlayers > 0} className="rk-primary disabled:opacity-50"
+                onClick={() => void action({ action: "start" })}>{busy ? "Đang xử lý…" : "Bắt đầu trận"}</button>}
+              {!member.host && <button type="button" disabled={busy} className="rk-control" onClick={() => void action({ action: "leave" })}>Rời chỗ</button>}
             </div>
           </>}
         </section>}

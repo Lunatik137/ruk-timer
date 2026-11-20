@@ -62,6 +62,11 @@ export type DuelHistoryItem = {
   winner: Seat;
 };
 
+export type DuelActiveRoom = Pick<DuelHistoryItem, "id" | "players"> & {
+  puzzle: DuelPuzzle;
+  started: boolean;
+};
+
 export function isDuelPuzzle(value: unknown): value is DuelPuzzle {
   return typeof value === "string" && Object.hasOwn(DUEL_EVENTS, value);
 }
