@@ -70,20 +70,18 @@ export default function PwaInstallBanner() {
   };
 
   return (
-    <div className="w-full bg-gradient-to-r from-cyan-500/15 via-indigo-500/15 to-emerald-500/15 border-b border-cyan-400/25 px-3 sm:px-6 py-2">
+    <div className="w-full border-b border-white/10 bg-[var(--rk-surface)] px-3 sm:px-6">
       <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-2">
-          <Smartphone className="w-4 h-4 text-cyan-400 shrink-0" />
+          <Smartphone aria-hidden="true" className="size-4 shrink-0 text-slate-400" />
           {deferredPrompt ? (
             <span>
-              Cài đặt <strong>RukTimer</strong> lên màn hình chính điện thoại để
-              dùng toàn màn hình & offline!
+              Cài RukTimer để tập cả khi mất mạng
             </span>
           ) : (
             <span>
-              Trên iPhone/iPad: Nhấn nút <strong>Chia sẻ (Share)</strong> trên
-              Safari → chọn <strong>Thêm vào MH chính (Add to Home Screen)</strong>{" "}
-              để dùng như App gốc!
+              Trong Safari, mở <strong>Chia sẻ</strong> rồi chọn{" "}
+              <strong>Thêm vào màn hình chính</strong>.
             </span>
           )}
         </div>
@@ -93,17 +91,17 @@ export default function PwaInstallBanner() {
             <button
               type="button"
               onClick={handleInstallClick}
-              className="px-2.5 py-1 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold inline-flex items-center gap-1 transition"
+              className="inline-flex min-h-11 items-center gap-1 rounded-lg px-2 font-medium text-slate-100 transition-colors hover:bg-white/10"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Cài App</span>
+              <Download aria-hidden="true" className="size-4" />
+              <span>Cài app</span>
             </button>
           )}
           <button
             type="button"
             onClick={dismiss}
             aria-label="Đóng thông báo"
-            className="p-1 rounded hover:bg-white/10 opacity-70 hover:opacity-100"
+            className="grid min-h-11 w-8 place-items-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white"
           >
             <X className="w-3.5 h-3.5" />
           </button>

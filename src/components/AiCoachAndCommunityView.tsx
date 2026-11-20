@@ -5,9 +5,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowRight,
-  Award,
   BrainCircuit,
-  Calendar,
   Camera,
   CheckCircle2,
   CloudUpload,
@@ -20,7 +18,6 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
-  Sparkles,
   Square,
   SwitchCamera,
   Target,
@@ -1133,12 +1130,17 @@ export default function AiCoachAndCommunityView({
   };
 
   const isVideoIntake = !recorderOpen && !videoUrl;
+  const firstActivityDay = streakData.heatmapDays[0]?.date;
+  const visibleActiveDays = streakData.heatmapDays.filter((day) => day.count > 0).length;
+  const firstActivityRow = firstActivityDay
+    ? ((new Date(firstActivityDay).getUTCDay() + 6) % 7) + 1
+    : 1;
 
   if (!active) return null;
 
   return (
     <main className="rk-view space-y-4">
-      <nav aria-label="Phân tích và luyện tập" className="rk-panel grid grid-cols-2 gap-2 p-2 sm:grid-cols-4">
+      <nav aria-label="Phân tích và luyện tập" className="grid grid-cols-2 gap-x-2 border-b border-white/10 sm:flex">
         {([
           { id: "coach", label: "AI Coach", icon: BrainCircuit },
           { id: "weekly", label: "Báo cáo tuần", icon: Flame },
@@ -1150,7 +1152,7 @@ export default function AiCoachAndCommunityView({
             type="button"
             aria-current={subTab === id ? "page" : undefined}
             onClick={() => setSubTab(id)}
-            className="rk-control justify-start text-left aria-[current=page]:border-cyan-400/50 aria-[current=page]:bg-cyan-400/10 aria-[current=page]:text-cyan-200"
+            className="flex min-h-11 items-center gap-2 border-b-2 border-transparent px-2 py-2 text-left text-sm font-medium text-slate-300 hover:text-white focus-visible:outline-offset-[-2px] aria-[current=page]:border-cyan-300 aria-[current=page]:text-white sm:px-3"
           >
             <Icon className="size-4 shrink-0" aria-hidden="true" />
             {label}
@@ -1168,7 +1170,6 @@ export default function AiCoachAndCommunityView({
             <div className="rk-panel p-5 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-cyan-400" />
                   <span>Phân tích phong độ</span>
                 </h2>
                 <div className="flex items-center gap-2">
@@ -1567,74 +1568,58 @@ export default function AiCoachAndCommunityView({
           {/* 12-Week (84 Days) Activity Heatmap */}
           <div className="rk-panel rk-report-section space-y-3 p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-base font-bold flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-emerald-400" />
-                <span>Lịch luyện tập 84 ngày</span>
-              </h2>
-              <span className="text-xs text-slate-400">
-                Tổng cộng {streakData.activeDaysCount} ngày hoạt động
-              </span>
+              <h2 className="text-base font-semibold">Lịch luyện tập 84 ngày</h2>
+              <span className="text-xs text-slate-400">{visibleActiveDays}/84 ngày có lượt luyện</span>
             </div>
 
-            <div className="grid grid-cols-12 sm:grid-cols-21 md:grid-cols-28 gap-1.5 pt-1">
-              {streakData.heatmapDays.map((d) => {
-                const bg =
-                  d.level === 0
-                    ? "bg-white/[0.05] border-white/5"
-                    : d.level === 1
-                    ? "bg-emerald-900/70 border-emerald-700/50"
-                    : d.level === 2
-                    ? "bg-emerald-700/80 border-emerald-500/50"
-                    : d.level === 3
-                    ? "bg-emerald-500 border-emerald-300/60"
-                    : "bg-cyan-400 border-white";
-                return (
-                  <div
-                    key={d.date}
-                    title={`${d.date}: ${d.count} lượt giải`}
-                    className={`h-5 rounded border ${bg} transition hover:scale-110`}
-                  />
-                );
-              })}
+            <div className="flex max-w-xl gap-2">
+              <div aria-hidden="true" className="grid grid-rows-7 gap-1 text-xs text-slate-400">
+                {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((day) => (
+                  <span key={day} className="self-center">{day}</span>
+                ))}
+              </div>
+              <ul role="list" aria-label="Số lượt luyện theo ngày" className="grid flex-1 auto-cols-fr grid-flow-col grid-rows-7 gap-1">
+                {streakData.heatmapDays.map((day, index) => (
+                  <li
+                    key={day.date}
+                    style={index === 0 ? { gridRowStart: firstActivityRow } : undefined}
+                    title={`${day.date}: ${day.count} lượt luyện`}
+                    className={`min-h-4 rounded-sm sm:min-h-5 ${[
+                      "bg-white/5",
+                      "bg-cyan-300/25",
+                      "bg-cyan-300/50",
+                      "bg-cyan-300/75",
+                      "bg-cyan-300",
+                    ][day.level]} ${index === streakData.heatmapDays.length - 1 ? "ring-1 ring-inset ring-white/70" : ""}`}
+                  >
+                    <span className="sr-only">{day.date}: {day.count} lượt luyện</span>
+                  </li>
+                ))}
+              </ul>
             </div>
+            <p className="text-xs text-slate-400">Ô sáng hơn có nhiều lượt luyện hơn. Viền trắng đánh dấu hôm nay.</p>
           </div>
 
           {/* Personal Achievements & Badges */}
-          <div className="rk-panel rk-report-section space-y-3 p-4 sm:p-5">
-            <h2 className="text-base font-bold flex items-center gap-2">
-              <Award className="w-5 h-5 text-amber-400" />
-              <span>Thành tựu</span>
-            </h2>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rk-panel p-4 sm:p-5">
+            <h2 className="text-base font-semibold">Thành tựu</h2>
+            <ul role="list" className="mt-2 divide-y divide-white/10">
               {achievements.map((ach) => (
-                <div
+                <li
                   key={ach.id}
-                  className={`rounded-xl border p-3.5 flex flex-col justify-between gap-2 ${
-                    ach.unlocked
-                      ? "bg-emerald-500/10 border-emerald-400/40"
-                      : "bg-black/30 border-white/10 opacity-70"
-                  }`}
+                  className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3"
                 >
-                  <div>
-                    <div className="flex items-center justify-between gap-1">
-                      <strong className="text-xs font-bold text-white">
-                        {ach.title}
-                      </strong>
-                      {ach.unlocked && (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-300 mt-1">
-                      {ach.description}
-                    </p>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-white">{ach.title}</p>
+                    <p className="mt-1 text-xs text-slate-400">{ach.description}</p>
                   </div>
-                  <div className="text-[11px] font-mono text-cyan-300">
+                  <div className="flex items-center gap-2 font-mono text-xs tabular-nums text-slate-300">
+                    {ach.unlocked && <CheckCircle2 aria-label="Đã đạt" className="size-4 shrink-0 text-emerald-300" />}
                     {ach.progressText}
                   </div>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         </section>
       )}
@@ -1654,7 +1639,7 @@ export default function AiCoachAndCommunityView({
                 </h1>
                 {isVideoIntake && (
                   <p className="max-w-prose text-pretty text-sm text-slate-300">
-                    Chọn clip có sẵn để tự động ước lượng các mốc CFOP, hoặc quay một lượt giải mới.
+                    RukTimer tự ước lượng các mốc CFOP khi bạn mở clip.
                   </p>
                 )}
               </div>

@@ -1632,7 +1632,7 @@ export default function RukTimerApp() {
               href="https://github.com/Lunatik137/ruk-timer#readme"
               target="_blank"
               rel="noopener noreferrer"
-              className="rk-control justify-between font-medium hover:underline"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm text-slate-300 underline-offset-4 hover:text-white hover:underline"
             >
               Tài liệu
               <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-slate-400" />
@@ -1641,7 +1641,7 @@ export default function RukTimerApp() {
               href="https://github.com/Lunatik137/ruk-timer/issues"
               target="_blank"
               rel="noopener noreferrer"
-              className="rk-control justify-between font-medium hover:underline"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm text-slate-300 underline-offset-4 hover:text-white hover:underline"
             >
               Báo lỗi và góp ý
               <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-slate-400" />
@@ -1681,7 +1681,7 @@ export default function RukTimerApp() {
                 <span className="flex h-6 items-center justify-center gap-0.5">
                   <Icon aria-hidden="true" className="size-4" />
                   {isHistory && (
-                    <span aria-hidden="true" className="rounded bg-white/10 px-1 text-[11px] font-medium tabular-nums">
+                    <span aria-hidden="true" className="font-mono text-[11px] tabular-nums">
                       {solveCount > 99 ? "99+" : solveCount}
                     </span>
                   )}
