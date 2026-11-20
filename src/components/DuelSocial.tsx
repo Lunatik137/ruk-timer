@@ -1,16 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
-import { Copy, MessageCircle, Swords } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { MessageCircle, Search, Swords } from "lucide-react";
 import AuthModal from "@/components/AuthModal";
 import DuelChat, { duelRequest, useDuelRefresh } from "@/components/DuelChat";
-import type { FriendLink } from "@/lib/duel/social";
+import type { FriendLink, FriendSearchResult } from "@/lib/duel/social";
 
 const url = "/api/duel/social";
 const control = "min-h-11 w-full min-w-0 rounded-lg border border-white/15 bg-[var(--rk-canvas)] px-3 text-base";
 type SocialState = {
-  profile: { friend_code: string; display_name: string } | null;
+  profile: { display_name: string; friend_code: string; discoverable: boolean } | null;
   friends: FriendLink[];
   invites: { id: string; room_id: string; name: string }[];
 };
@@ -20,7 +20,10 @@ export default function DuelSocial({ room }: { room?: string }) {
   const [needsLogin, setNeedsLogin] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [display, setDisplay] = useState("");
-  const [code, setCode] = useState("");
+  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState<{ term: string; results: FriendSearchResult[]; error?: string }>();
+  const [searchRetry, setSearchRetry] = useState(0);
+  const term = query.trim();
   const [selected, setSelected] = useState<string>();
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -45,19 +48,38 @@ export default function DuelSocial({ room }: { room?: string }) {
   }, []);
   useDuelRefresh(load, 12000, !needsLogin);
 
+  useEffect(() => {
+    if (term.length < 2) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const response = await duelRequest<{ results: FriendSearchResult[] }>(
+          `${url}?q=${encodeURIComponent(term)}`, undefined, controller.signal,
+        );
+        if (!controller.signal.aborted) setSearch({ term, results: response.results });
+      } catch (failure) {
+        if (!controller.signal.aborted) setSearch({
+          term, results: [], error: failure instanceof Error ? failure.message : "Chưa tìm được người chơi.",
+        });
+      }
+    }, 300);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [term, searchRetry]);
+
   async function action(body: object, text: string) {
-    if (busy) return;
+    if (busy) return false;
     setBusy(true);
     setNotice("");
     setError("");
     try {
       await duelRequest(url, body);
       setNotice(text);
-      if ("action" in body && body.action === "request") setCode("");
       if ("action" in body && body.action === "invite") setConversationKey((value) => value + 1);
       await load();
+      return true;
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Không thực hiện được. Hãy thử lại.");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -71,11 +93,12 @@ export default function DuelSocial({ room }: { room?: string }) {
       <p className="text-sm text-slate-300">Đăng nhập để kết bạn, nhắn tin và gửi lời mời đấu.</p>
       <button type="button" className="rk-primary" onClick={() => setAuthOpen(true)}>Đăng nhập</button>
     </div> : !data ? <p className="text-sm text-slate-300">Đang tải bạn bè…</p> : !profile ? (
-      <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); void action({ action: "profile", name: display }, "Đã tạo mã bạn bè."); }}>
-        <label className="min-w-0 grow basis-44 space-y-1 text-sm">Tên bạn bè sẽ thấy
+      <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); void action({ action: "profile", name: display, discoverable: true }, "Đã lưu tên hiển thị."); }}>
+        <label className="min-w-0 grow basis-44 space-y-1 text-sm">Tên hiển thị cho Bạn bè
           <input className={control} value={display} maxLength={32} required onChange={(event) => setDisplay(event.target.value)} />
         </label>
-        <button type="submit" className="rk-primary" disabled={busy}>Tạo mã bạn bè</button>
+        <button type="submit" className="rk-primary" disabled={busy}>Lưu tên</button>
+        <p className="w-full text-sm text-slate-300">Người chơi RukTimer có thể tìm tên này. Bạn có thể ẩn tên sau.</p>
       </form>
     ) : <>
       {data.invites.length > 0 && <section>
@@ -85,21 +108,45 @@ export default function DuelSocial({ room }: { room?: string }) {
           <Link className="rk-control" href={`/duel?room=${invite.room_id}`}>Mở phòng</Link>
         </li>)}</ul>
       </section>}
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="min-w-0 grow basis-48 space-y-1 text-sm">Mã của bạn
-          <input className={control} readOnly value={profile.friend_code} onFocus={(event) => event.target.select()} />
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+          <span className="min-w-0 text-slate-300">Tên của bạn <strong className="break-words text-slate-100">{profile.display_name}</strong>
+            {" "}<small className="text-slate-400">#{profile.friend_code.slice(0, 6)}</small>
+          </span>
+          <button type="button" className="rk-control" disabled={busy}
+            onClick={() => void action({ action: "discoverable", enabled: !profile.discoverable },
+              profile.discoverable ? "Đã ẩn tên khỏi tìm kiếm." : "Người chơi khác có thể tìm tên bạn.")}>
+            {profile.discoverable ? "Ẩn tên khỏi tìm kiếm" : "Cho phép tìm theo tên"}
+          </button>
+        </div>
+        <label className="block space-y-1 text-sm">Tìm người chơi
+          <span className="relative block">
+            <Search size={16} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input type="search" className={`${control} pl-9`} value={query} maxLength={32}
+              placeholder="Nhập tên hiển thị" onChange={(event) => setQuery(event.target.value)} autoComplete="off" />
+          </span>
         </label>
-        <button type="button" className="rk-control" onClick={async () => {
-          try { await navigator.clipboard.writeText(profile.friend_code); setNotice("Đã sao chép mã."); }
-          catch { setNotice("Chọn và sao chép mã từ ô bên cạnh."); }
-        }}><Copy size={16} aria-hidden="true" /> Sao chép</button>
+        {term.length >= 2 && <div aria-busy={search?.term !== term}>
+          {search?.term !== term ? <p role="status" className="text-sm text-slate-300">Đang tìm…</p>
+            : search.error ? <div className="flex flex-wrap items-center gap-2">
+              <p role="status" className="text-sm text-rose-300">{search.error}</p>
+              <button type="button" className="rk-control" onClick={() => { setSearch(undefined); setSearchRetry((value) => value + 1); }}>Thử lại</button>
+            </div> : search.results.length === 0 ? <p role="status" className="text-sm text-slate-300">Chưa tìm thấy người chơi. Hãy thử phần đầu của tên.</p>
+            : <ul aria-label="Kết quả tìm người chơi" className="divide-y divide-white/10 rounded-lg border border-white/10 px-3">
+              {search.results.map((result) => <li key={result.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span className="min-w-0 break-words text-sm font-medium">{result.name} <small className="text-slate-400">#{result.tag}</small></span>
+                {result.status ? <span className="text-sm text-slate-300">
+                  {result.status === "accepted" ? "Bạn bè" : result.incoming ? "Đã gửi lời mời cho bạn" : "Đã gửi lời mời"}
+                </span> : <button type="button" className="rk-control" disabled={busy} aria-label={`Kết bạn với ${result.name} #${result.tag}`}
+                  onClick={async () => {
+                    if (await action({ action: "request", player: result.id }, "Đã gửi lời mời kết bạn.")) {
+                      setSearchRetry((value) => value + 1);
+                    }
+                  }}>Kết bạn</button>}
+              </li>)}
+            </ul>}
+        </div>}
       </div>
-      <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); void action({ action: "request", code: code.trim().toLowerCase() }, "Đã gửi lời mời kết bạn."); }}>
-        <label className="min-w-0 grow basis-44 space-y-1 text-sm">Mã của người bạn muốn thêm
-          <input className={control} value={code} maxLength={36} required onChange={(event) => setCode(event.target.value)} autoCapitalize="none" spellCheck={false} />
-        </label>
-        <button type="submit" className="rk-primary" disabled={busy}>Kết bạn</button>
-      </form>
       {data.friends.length === 0 && <p className="text-sm text-slate-300">Chưa có bạn bè.</p>}
       <ul className="divide-y divide-white/10">{data.friends.map((item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
         <span className="min-w-0 break-words text-sm font-medium">{item.name}</span>

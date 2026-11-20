@@ -95,6 +95,8 @@ Use the product's Vietnamese terminology and Lucide icons for controls with a cl
 | [Roblox](https://en.help.roblox.com/hc/en-us/articles/32461054421012-Party-FAQ) | Tách cuộc trò chuyện trong trận khỏi cuộc trò chuyện dài hạn. |
 | [Steam](https://help.steampowered.com/en/faqs/view/595C-42F4-3B66-E02F) | Đặt thao tác nhắn tin và mời vào phòng bên cạnh tên bạn. |
 | [PlayStation](https://www.playstation.com/en-ca/support/games/send-messages-ps5/) | Cho lời mời xuất hiện như một thẻ trong cuộc trò chuyện. |
-| [Nintendo Switch](https://en-americas-support.nintendo.com/app/answers/detail/a_id/22326/~/how-to-add-friends) | Dùng mã chia sẻ để gửi yêu cầu, cần người nhận đồng ý. |
+| [Nintendo Switch](https://en-americas-support.nintendo.com/app/answers/detail/a_id/22326/~/how-to-add-friends) | Người nhận chủ động đồng ý yêu cầu kết bạn. |
 
 Dùng [Google Meet](https://support.google.com/meet/answer/10550593?hl=en) và [Zoom](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0063672) làm mẫu bố trí video lớn và ô xem trước. Giữ hai luồng xác thực đang có: cookie phòng cho chat trong phòng, tài khoản Supabase cho bạn bè và tin nhắn riêng. Chỉ cập nhật chat khi khu vực đó đang mở và tab đang hiển thị.
+
+Trong RukTimer, tìm bạn theo đầu tên hiển thị, có hoặc không dấu tiếng Việt. Dùng nhãn ngắn để phân biệt người trùng tên. Hồ sơ cũ giữ quyền riêng tư cho đến khi người chơi bật cho phép tìm theo tên.

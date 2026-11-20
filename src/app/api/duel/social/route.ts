@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { duelDatabase } from "@/lib/duel/database";
 import { isDuelRoomId } from "@/lib/duel/invite";
 import { nameFor, type Room } from "@/lib/duel/room";
-import { chatBody } from "@/lib/duel/social";
+import { chatBody, friendSearchPrefix } from "@/lib/duel/social";
 import { getAuthenticatedServerContext } from "@/lib/supabase/authServer";
 
 const headers = { "Cache-Control": "private, no-store" };
@@ -37,6 +37,33 @@ export async function GET(request: NextRequest) {
     if (!auth?.user || auth.user.is_anonymous) return fail("Đăng nhập để dùng Bạn bè.", 401);
     const user = auth.user.id;
     const db = duelDatabase();
+    const search = request.nextUrl.searchParams.get("q");
+    if (search !== null) {
+      const term = search.trim();
+      if (term.length < 2 || term.length > 32 || /[*\p{C}]/u.test(term)) {
+        return fail("Nhập tên từ 2 đến 32 ký tự.", 400);
+      }
+      const prefix = friendSearchPrefix(term);
+      if (prefix.length < 2) return json({ results: [] });
+      const { data: candidates, error } = await db.from(profiles)
+        .select("user_id,display_name,friend_code").eq("discoverable", true).neq("user_id", user)
+        .like("search_name", `${prefix}%`).order("search_name").order("friend_code").limit(16);
+      if (error) throw error;
+      if (!candidates?.length) return json({ results: [] });
+      const userIds = candidates.map(({ user_id }) => user_id).join(",");
+      const { data: edges, error: linksError } = await db.from(friendships).select("id,requester,recipient,status")
+        .or(`and(requester.eq.${user},recipient.in.(${userIds})),and(recipient.eq.${user},requester.in.(${userIds}))`).returns<Edge[]>();
+      if (linksError) throw linksError;
+      const relationships = new Map(edges?.map((edge) => [edge.requester === user ? edge.recipient : edge.requester, edge]));
+      const results = candidates.flatMap(({ user_id, display_name, friend_code }) => {
+        const relationship = relationships.get(user_id);
+        return relationship?.status === "blocked" ? [] : [{
+          id: friend_code, name: display_name, tag: friend_code.slice(0, 6),
+          status: relationship?.status ?? null, incoming: relationship?.recipient === user,
+        }];
+      });
+      return json({ results: results.slice(0, 8) });
+    }
     const friend = request.nextUrl.searchParams.get("friend");
     if (friend !== null) {
       if (!isDuelRoomId(friend)) return fail("Cuộc trò chuyện không hợp lệ.", 400);
@@ -48,7 +75,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [profile, links] = await Promise.all([
-      db.from(profiles).select("friend_code,display_name").eq("user_id", user).maybeSingle(),
+      db.from(profiles).select("friend_code,display_name,discoverable").eq("user_id", user).maybeSingle(),
       peers(db, user).neq("status", "blocked").order("created_at", { ascending: false }).limit(100).returns<Edge[]>(),
     ]);
     if (profile.error || links.error) throw profile.error ?? links.error;
@@ -90,16 +117,28 @@ export async function POST(request: NextRequest) {
     if (body.action === "profile") {
       const name = typeof body.name === "string" ? body.name.trim() : "";
       if (!name || name.length > 32) return fail("Tên hiển thị cần từ 1 đến 32 ký tự.", 400);
-      const { error } = await db.from(profiles).upsert({ user_id: user, display_name: name });
+      const { error } = await db.from(profiles).upsert({
+        user_id: user, display_name: name.normalize("NFC"),
+        ...(typeof body.discoverable === "boolean" && { discoverable: body.discoverable }),
+      });
+      if (error) throw error;
+      return done();
+    }
+
+    if (body.action === "discoverable" && typeof body.enabled === "boolean") {
+      const { error } = await db.from(profiles).update({ discoverable: body.enabled }).eq("user_id", user);
       if (error) throw error;
       return done();
     }
 
     if (body.action === "request") {
-      if (typeof body.code !== "string" || !isDuelRoomId(body.code)) return fail("Mã bạn bè không hợp lệ.", 400);
-      const { data, error } = await db.from(profiles).select("user_id").eq("friend_code", body.code).maybeSingle();
+      const target = body.player ?? body.code;
+      if (typeof target !== "string" || !isDuelRoomId(target)) return fail("Người chơi không hợp lệ.", 400);
+      let lookup = db.from(profiles).select("user_id").eq("friend_code", target);
+      if (body.player) lookup = lookup.eq("discoverable", true);
+      const { data, error } = await lookup.maybeSingle();
       if (error) throw error;
-      if (!data || data.user_id === user) return fail("Mã bạn bè không hợp lệ.", 400);
+      if (!data || data.user_id === user) return fail("Không tìm thấy người chơi này.", 404);
       const result = await db.from(friendships).insert({ requester: user, recipient: data.user_id });
       if (result.error?.code === "23505") return fail("Đã có lời mời hoặc bạn vừa gửi một yêu cầu. Hãy thử lại sau.", 409);
       if (result.error) throw result.error;
