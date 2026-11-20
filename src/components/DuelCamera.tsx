@@ -57,6 +57,7 @@ export default function DuelCamera({ room, player, canJoin }: { room: string; pl
   const [devices, setDevices] = useState<MediaStream | null>(null);
   const [media, setMedia] = useState<RemoteMedia[]>([]);
   const [error, setError] = useState("");
+  const [canReconnect, setCanReconnect] = useState(false);
   const [pending, setPending] = useState<Device | null>(null);
   const request = useRef(0);
   const local = useRef<MediaStream | null>(null);
@@ -75,6 +76,7 @@ export default function DuelCamera({ room, player, canJoin }: { room: string; pl
     setMedia([]);
     setSession(null);
     setError("");
+    setCanReconnect(false);
   }
 
   useEffect(() => {
@@ -83,11 +85,19 @@ export default function DuelCamera({ room, player, canJoin }: { room: string; pl
 
   function updateDevices(stream: MediaStream | null) {
     setError("");
+    setCanReconnect(false);
     local.current = stream;
     setDevices(stream);
     setMedia([]);
     const id = crypto.randomUUID();
     setSession((active) => active ? { stream, id } : null);
+  }
+
+  function connectMedia() {
+    setError("");
+    setCanReconnect(false);
+    setMedia([]);
+    setSession({ stream: local.current, id: crypto.randomUUID() });
   }
 
   function disable(track: MediaStreamTrack) {
@@ -147,14 +157,18 @@ export default function DuelCamera({ room, player, canJoin }: { room: string; pl
       const pc = new RTCPeerConnection({ iceServers });
       pc.onconnectionstatechange = () => {
         if (!controller.signal.aborted && pc.connectionState === "failed") {
-          setError("Không kết nối được hình và tiếng. Hãy rời cuộc gọi rồi vào lại.");
+          setCanReconnect(true);
+          setError("Hình và tiếng bị ngắt.");
         }
       };
       return pc;
     }
 
     function connectingError() {
-      if (!controller.signal.aborted) setError("Không thiết lập được cuộc gọi. Hãy rời cuộc gọi rồi vào lại.");
+      if (!controller.signal.aborted) {
+        setCanReconnect(true);
+        setError("Chưa kết nối được hình và tiếng.");
+      }
     }
 
     async function watch(peer: CameraPeer, iceServers: RTCIceServer[]) {
@@ -299,10 +313,10 @@ export default function DuelCamera({ room, player, canJoin }: { room: string; pl
           {pending === "audio" ? "Đang xin quyền mic…" : mic ? "Tắt mic" : "Bật mic"}
         </button>
       </>}
-      {!session && canJoin && <button type="button" className="rk-control" disabled={pending !== null} onClick={() => {
-        setError("");
-        setSession({ stream: local.current, id: crypto.randomUUID() });
-      }}>Vào cuộc gọi</button>}
+      {!session && canJoin && <button type="button" className="rk-control" disabled={pending !== null}
+        onClick={connectMedia}>Vào cuộc gọi</button>}
+      {session && canReconnect && <button type="button" className="rk-control" disabled={pending !== null}
+        onClick={connectMedia}>Kết nối lại hình và tiếng</button>}
       {(session || pending) && <button type="button" className="rk-control" onClick={stop}>{session ? "Rời cuộc gọi" : "Hủy yêu cầu"}</button>}
     </div>
     {error && <p role="status" className="text-sm text-amber-200">{error}</p>}

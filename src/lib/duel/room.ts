@@ -15,6 +15,7 @@ export type Room = {
   access_requests?: StoredAccess[];
   completed_at?: string | null;
   expires_at?: string;
+  realtime_topic?: string;
   revision: number;
   state: DuelMatch;
 };

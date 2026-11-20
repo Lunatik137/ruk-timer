@@ -55,7 +55,12 @@ function response(room: Room, key: string | null, token?: string, etag?: string)
     referee, accessAvailable,
     access: ownRequest ? { role: ownRequest.role, status: ownRequest.status } : null,
   };
-  const res = NextResponse.json({ id: room.id, revision: room.revision, view }, {
+  const realtimeTopic = room.realtime_topic && !room.completed_at && room.state.winner === null
+    && room.expires_at && Date.parse(room.expires_at) > Date.now()
+    ? name ? room.realtime_topic
+      : ownRequest?.status === "pending" ? `duel-wait:${room.id}:${ownRequest.id}` : undefined
+    : undefined;
+  const res = NextResponse.json({ id: room.id, revision: room.revision, view, realtimeTopic }, {
     headers: etag ? { ...roomHeaders, ETag: etag } : headers,
   });
   if (token) res.cookies.set(cookie, token, {

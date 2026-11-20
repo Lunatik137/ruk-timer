@@ -61,8 +61,9 @@ Chạy migration [`20261120_duel_rooms.sql`](./supabase/migrations/20261120_duel
 [`20261121_duel_review_history.sql`](./supabase/migrations/20261121_duel_review_history.sql),
 [`20261122_duel_camera_signaling.sql`](./supabase/migrations/20261122_duel_camera_signaling.sql),
 [`20261123_duel_room_roles.sql`](./supabase/migrations/20261123_duel_room_roles.sql),
-[`20261124_duel_active_participants.sql`](./supabase/migrations/20261124_duel_active_participants.sql)
-và [`20261125_duel_room_presence.sql`](./supabase/migrations/20261125_duel_room_presence.sql)
+[`20261124_duel_active_participants.sql`](./supabase/migrations/20261124_duel_active_participants.sql),
+[`20261125_duel_room_presence.sql`](./supabase/migrations/20261125_duel_room_presence.sql)
+và [`20261126_duel_realtime.sql`](./supabase/migrations/20261126_duel_realtime.sql)
 trên cùng dự án Supabase và cấu hình `SUPABASE_SERVICE_ROLE_KEY` ở máy chủ Next.js
 (ví dụ trong môi trường Production của Vercel). Trình duyệt không cần khóa này.
 Tab **Đấu 1v1** nằm trên thanh điều hướng. Có thể mở link mời trực tiếp hoặc dán
@@ -76,6 +77,10 @@ Người xem có thể vào nhiều phòng. Ghế được giải phóng khi r�
 kết thúc trận hoặc phòng hết hạn.
 Khi mạng trở lại, phòng đồng bộ tỉ số, lượt và kết quả đã lưu. Mất mạng không tự
 tính DNF. Làm mới trang trong lúc đồng hồ đang chạy sẽ mất lần bấm giờ chưa gửi.
+Realtime 1v1 dùng Broadcast kênh riêng để báo thay đổi cho thành viên và báo quyết định
+riêng cho người đang chờ duyệt. Dùng khóa
+Supabase publishable hoặc `anon` hiện có trong `NEXT_PUBLIC_SUPABASE_ANON_KEY`. API vẫn
+đồng bộ bằng polling khi chưa áp dụng migration hoặc kênh mất kết nối.
 
 Ở chế độ luân phiên, người đến lượt xác nhận **Đã xáo xong** trước khi mở đồng hồ.
 Phòng có hai ghế đấu, một ghế trọng tài và hai ghế người xem. Chủ phòng và trọng tài

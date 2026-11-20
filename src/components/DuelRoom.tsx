@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronDown, Eye, Link2, ShieldCheck, Swords } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronDown, Eye, Link2, Share2, ShieldCheck, Swords } from "lucide-react";
 import DuelTimer from "@/components/DuelTimer";
 import { isDuelRoomId, readDuelInvite } from "@/lib/duel/invite";
 import { isDuelPuzzle, officialCentiseconds, otherSeat, type DuelActiveRoom, type DuelHistoryItem, type DuelMode, type DuelView, type Result, type Role } from "@/lib/duel/match";
@@ -26,7 +26,7 @@ const roles = [
   { id: "referee", title: "Trọng tài" },
 ] as const;
 
-type Snapshot = { id: string; revision: number; view: DuelView };
+type Snapshot = { id: string; revision: number; view: DuelView; realtimeTopic?: string };
 
 async function readResponse<T = Snapshot>(response: Response): Promise<T> {
   const data = await response.json();
@@ -100,11 +100,13 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const [connection, setConnection] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const [invite, setInvite] = useState("");
+  const [canShareInvite, setCanShareInvite] = useState(false);
   const linkInput = useRef<HTMLInputElement>(null);
   const joinInput = useRef<HTMLInputElement>(null);
   const guestNameInput = useRef<HTMLInputElement>(null);
   const pending = useRef(false);
   const refreshRoom = useRef<(() => void) | null>(null);
+  const realtimeConnected = useRef(false);
   const view = snapshot?.view;
   const member = view?.kind === "member" ? view : null;
   const match = member?.match;
@@ -113,6 +115,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const spectators = view?.spectators ?? [];
   const started = match?.started ?? initialInvite?.started ?? false;
   const simultaneous = settings?.mode === "simultaneous";
+  const realtimeTopic = snapshot?.realtimeTopic;
 
   function receive(next: Snapshot) {
     setSnapshot((current) => !current || current.id !== next.id || next.revision >= current.revision ? next : current);
@@ -161,6 +164,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   useEffect(() => {
     if (!room) return;
     setInvite(new URL(`/duel?room=${encodeURIComponent(room)}`, window.location.origin).href);
+    setCanShareInvite(typeof navigator.share === "function");
   }, [room]);
 
   useEffect(() => {
@@ -169,7 +173,14 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
     let request: AbortController | null = null;
     let stopped = false;
     let validator: string | null = null;
+    let validatedAt = 0;
     let failures = 0;
+    let refreshQueued = false;
+
+    function requestRefresh() {
+      if (request) refreshQueued = true;
+      else void refresh();
+    }
 
     async function refresh() {
       if (stopped || request) return;
@@ -184,7 +195,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
       try {
         const response = await fetch(`/api/duel?room=${encodeURIComponent(room)}`, {
           signal: current.signal, cache: "no-store",
-          headers: validator ? { "If-None-Match": validator } : undefined,
+          headers: validator && Date.now() - validatedAt < 60_000 ? { "If-None-Match": validator } : undefined,
         });
         if (stopped) return;
         if (response.status === 304) {
@@ -201,6 +212,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
         const next = await readResponse(response);
         if (!stopped) {
           validator = response.headers.get("ETag");
+          validatedAt = Date.now();
           failures = 0;
           receive(next);
           setConnection("");
@@ -215,9 +227,11 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
         clearTimeout(deadline);
         request = null;
         if (!stopped && navigator.onLine) {
-          const delay = document.hidden ? 12_000 : failures
-            ? Math.min(12_000, 1200 * 2 ** failures + Math.random() * 400) : 1200;
-          timer = setTimeout(refresh, delay);
+          const delay = failures ? Math.min(12_000, 1200 * 2 ** failures + Math.random() * 400)
+            : realtimeConnected.current ? 15_000 : document.hidden ? 12_000 : 1200;
+          const nextDelay = refreshQueued && !failures ? 0 : delay;
+          refreshQueued = false;
+          timer = setTimeout(refresh, nextDelay);
         }
       }
     }
@@ -225,26 +239,44 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
       if (stopped) return;
       clearTimeout(timer);
       request?.abort();
+      realtimeConnected.current = false;
       setConnection(reconnecting);
     }
     function onVisible() {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible") requestRefresh();
     }
-    window.addEventListener("online", refresh);
+    window.addEventListener("online", requestRefresh);
     window.addEventListener("offline", onOffline);
     document.addEventListener("visibilitychange", onVisible);
-    refreshRoom.current = refresh;
+    refreshRoom.current = requestRefresh;
     void refresh();
     return () => {
       stopped = true;
       refreshRoom.current = null;
       request?.abort();
       clearTimeout(timer);
-      window.removeEventListener("online", refresh);
+      window.removeEventListener("online", requestRefresh);
       window.removeEventListener("offline", onOffline);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [room]);
+
+  useEffect(() => {
+    if (!realtimeTopic) return;
+    const controller = new AbortController();
+    const refresh = () => refreshRoom.current?.();
+    void import("@/lib/duel/realtime")
+      .then(({ subscribeToDuelRoom }) => subscribeToDuelRoom(realtimeTopic, controller.signal, refresh, (connected) => {
+        realtimeConnected.current = connected;
+        refresh();
+      })).catch(() => {});
+    return () => {
+      controller.abort();
+      realtimeConnected.current = false;
+      // After a topic rotation, use fast polling until the new subscription is ready.
+      refresh();
+    };
+  }, [realtimeTopic]);
 
   async function action(values: Record<string, unknown>) {
     if (pending.current) return;
@@ -306,8 +338,17 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
       await navigator.clipboard.writeText(invite);
       setCopyStatus("Đã sao chép link");
     } catch {
+      linkInput.current?.focus();
       linkInput.current?.select();
       setCopyStatus("Hãy sao chép link đã chọn");
+    }
+  }
+
+  async function shareInvite() {
+    try {
+      await navigator.share({ title: "Đấu 1v1 trên RukTimer", url: invite });
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) await copyInvite();
     }
   }
 
@@ -338,8 +379,13 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const playerLabel = (seat: 0 | 1) => match?.players[seat] ?? `Player ${seat + 1}`;
   const inviteControls = <div className="space-y-2">
     <label className={label}>Link mời<input ref={linkInput} readOnly value={invite} className={input} onFocus={(e) => e.target.select()} /></label>
-    <button type="button" onClick={copyInvite} className="rk-control"><Link2 aria-hidden="true" size={16} /> Sao chép link</button>
-    <span role="status" className="ml-2 text-sm text-slate-300">{copyStatus}</span>
+    <div className="flex flex-wrap items-center gap-2">
+      <button type="button" onClick={copyInvite} disabled={!invite} className="rk-control"><Link2 aria-hidden="true" size={16} /> Sao chép link</button>
+      {canShareInvite && <button type="button" onClick={shareInvite} disabled={!invite} className="rk-control">
+        <Share2 aria-hidden="true" size={16} /> Chia sẻ link
+      </button>}
+      <span role="status" className="text-sm text-slate-300">{copyStatus}</span>
+    </div>
   </div>;
 
   return (
@@ -487,7 +533,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
               ? `Đang chờ duyệt vào ${access.role === "referee" ? "làm trọng tài" : "xem trận"}.`
               : "Yêu cầu vào phòng đã bị từ chối."}</p>
             {access.status === "pending" && <p className="text-sm text-slate-300">
-              Giữ tab này mở. Phòng sẽ tự mở khi yêu cầu được duyệt.
+              Phòng sẽ tự mở khi bạn được duyệt.
             </p>}
             {access.status === "pending" && <button type="button" className="rk-control" disabled={busy}
               onClick={() => void action({ action: "cancel-access" })}>Rút yêu cầu</button>}
