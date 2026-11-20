@@ -1,10 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, ChevronDown, Eye, Globe2, Link2, Lock, MessageCircle, RefreshCw, Share2, ShieldCheck, Swords, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, Box, Check, ChevronDown, Eye, Globe2, History, Link2, Lock, MessageCircle, Plus, RefreshCw, Share2, ShieldCheck, SlidersHorizontal, Swords, Users } from "lucide-react";
 import DuelTimer from "@/components/DuelTimer";
 import { isDuelRoomId, readDuelInvite } from "@/lib/duel/invite";
 import { isDuelPuzzle, officialCentiseconds, otherSeat, type DuelActiveRoom, type DuelHistoryItem, type DuelMode, type DuelPublicRoom, type DuelView, type Result, type Role } from "@/lib/duel/match";
@@ -78,14 +79,11 @@ function DuelHistoryList({ matches }: { matches: DuelHistoryItem[] }) {
   ))}</ul>;
 }
 
-export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
+export default function DuelRoom({ initialRoom, lobbyFriends }: { initialRoom: string; lobbyFriends: boolean }) {
   const router = useRouter();
   const [room, setRoom] = useState(initialRoom);
   const [socialOpen, setSocialOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("friends") === "1") setSocialOpen(true);
-  }, []);
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [name, setName] = useState("");
   const [puzzle, setPuzzle] = useState("3x3");
@@ -117,6 +115,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   const [canShareInvite, setCanShareInvite] = useState(false);
   const linkInput = useRef<HTMLInputElement>(null);
   const joinInput = useRef<HTMLInputElement>(null);
+  const createName = useRef<HTMLInputElement>(null);
   const guestNameInput = useRef<HTMLInputElement>(null);
   const pending = useRef(false);
   const refreshRoom = useRef<(() => void) | null>(null);
@@ -147,7 +146,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
   }, []);
 
   useEffect(() => {
-    if (room) return;
+    if (room || lobbyFriends) return;
     const controller = new AbortController();
     let loadingPublic = false;
     async function loadPublicRooms() {
@@ -209,7 +208,7 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
       window.removeEventListener("focus", refreshRooms);
       window.removeEventListener("online", refreshRooms);
     };
-  }, [room]);
+  }, [room, lobbyFriends]);
 
   useEffect(() => {
     if (!room) return;
@@ -463,26 +462,33 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
     </div>
   </div>;
 
+  function jumpToField(event: React.MouseEvent<HTMLAnchorElement>, field: HTMLInputElement | null) {
+    if (!field) return;
+    event.preventDefault();
+    field.closest("form")?.scrollIntoView({ block: "nearest" });
+    field.focus({ preventScroll: true });
+  }
+
   return (
     <div className="rk-shell min-h-dvh text-slate-100" data-theme={theme}>
-      <main className={`mx-auto space-y-5 px-3 py-4 sm:px-6 sm:py-8 ${room ? "max-w-6xl" : "max-w-4xl"}`}>
+      {!room && <a href="#duel-main" className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-2 focus:z-10 focus:rounded-lg focus:bg-cyan-300 focus:px-3 focus:py-2 focus:text-slate-950">Đến nội dung chính</a>}
+      <main id="duel-main" tabIndex={-1} className={`mx-auto px-3 pb-3 pt-3 sm:px-6 ${room ? "max-w-6xl space-y-5 sm:py-8" : "max-w-6xl space-y-4 sm:pt-5"}`}>
         <header className="space-y-2">
-          <nav aria-label="Điều hướng khu đấu" className="mb-3 flex flex-wrap gap-2 border-b border-white/10">
-            <Link href="/" prefetch={false} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm text-slate-300 hover:text-white">
+          <nav aria-label="Điều hướng khu đấu" className={`flex flex-wrap items-center gap-x-2 border-b border-white/10 ${room ? "mb-3" : "sm:gap-x-5"}`}>
+            <Link href="/" prefetch={false} className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-1 text-sm text-slate-300 hover:text-white sm:px-2">
               <ArrowLeft aria-hidden="true" size={16} /> Về Timer
             </Link>
-            <Link href="/duel" aria-current={room ? undefined : "page"} prefetch={false} className="inline-flex min-h-11 items-center border-b-2 border-transparent px-2 text-sm text-slate-300 hover:text-white aria-[current=page]:border-cyan-300 aria-[current=page]:text-white">
+            <Link href="/duel" aria-current={room || lobbyFriends ? undefined : "page"} prefetch={false} className="inline-flex min-h-11 items-center border-b-2 border-transparent px-1 text-sm text-slate-300 hover:text-white aria-[current=page]:border-cyan-300 aria-[current=page]:font-semibold aria-[current=page]:text-cyan-200 sm:px-2">
               Sảnh đấu
             </Link>
-            {!room && <button type="button" aria-expanded={socialOpen} aria-controls="duel-social"
-              className="ml-auto inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm text-slate-300 hover:text-white"
-              onClick={() => setSocialOpen((open) => !open)}>
+            {!room && <Link href="/duel?friends=1" prefetch={false} aria-current={lobbyFriends ? "page" : undefined}
+              className="ml-auto inline-flex min-h-11 items-center gap-1.5 border-b-2 border-transparent px-2 text-sm font-medium text-slate-200 hover:text-white aria-[current=page]:border-cyan-300 aria-[current=page]:text-cyan-200">
               <Users size={16} aria-hidden="true" /> Bạn bè
-            </button>}
+            </Link>}
           </nav>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold text-white">
+          {room && <h1 className="flex items-center gap-2 text-2xl font-semibold text-white">
             <Swords aria-hidden="true" className="size-5 text-cyan-300" /> Đấu 1v1
-          </h1>
+          </h1>}
           {settings && <p className="text-sm text-slate-300">
             {PUZZLES.find((item) => item.id === settings.puzzle)?.label} · Thắng {settings.setsToWin} set · {settings.pointsToWin} điểm/set · {simultaneous ? "Đồng thời" : "Luân phiên"} · {settings.inspection !== false ? "Inspection 15 giây" : "Không Inspection"}
           </p>}
@@ -504,144 +510,214 @@ export default function DuelRoom({ initialRoom }: { initialRoom: string }) {
             onClick={() => refreshRoom.current?.()}>Thử kết nối lại</button>}
         </div>}
 
-        {!room && <section id="duel-social" hidden={!socialOpen} className="rk-panel space-y-2 p-3 sm:p-4">
-          {socialOpen && <><h2 className="text-lg font-semibold">Bạn bè</h2><DuelSocial /></>}
+        {!room && lobbyFriends && <section className="rk-panel min-w-0 p-4 sm:p-6" aria-labelledby="duel-social-title">
+          <h1 id="duel-social-title" className="flex items-center gap-2 text-2xl font-semibold sm:text-3xl">
+            <Users size={23} aria-hidden="true" className="text-cyan-300" /> Bạn bè
+          </h1>
+          <DuelSocial lobby />
         </section>}
 
-        {!room && (sortedRooms.length > 0 || activeError) && <section className="rk-panel space-y-2 p-4 sm:p-5" aria-labelledby="duel-active">
-          <h2 id="duel-active" className="text-lg font-semibold">Quay lại trận</h2>
-          {activeError && <p role="status" className="text-sm text-amber-200">Chưa tải được các phòng của bạn. Bạn vẫn có thể mở bằng link mời.</p>}
-          <ActiveRoomList rooms={sortedRooms.slice(0, 2)} />
-          {sortedRooms.length > 2 && <details className="group border-t border-white/10">
-            <summary className={disclosure}>Xem {sortedRooms.length - 2} phòng khác
-              <ChevronDown className="size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
-            </summary>
-            <ActiveRoomList rooms={sortedRooms.slice(2)} />
-          </details>}
-        </section>}
-
-        {!room && <div className="grid items-start gap-4 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <form className="rk-panel space-y-3 p-4 sm:p-5 md:col-start-1 md:row-start-1" aria-labelledby="duel-join" onSubmit={(event) => {
-            event.preventDefault();
-            const id = readDuelInvite(roomLink, window.location.origin);
-            if (!id) {
-              setRoomLinkError("Dán link mời RukTimer hoặc mã phòng hợp lệ.");
-              joinInput.current?.focus();
-              return;
-            }
-            router.push(`/duel?room=${id}`);
-          }}>
-            <h2 id="duel-join" className="text-lg font-semibold">Vào phòng</h2>
-            <label className={label}>Link mời hoặc mã phòng
-              <input ref={joinInput} className={input} name="room-link" autoComplete="off" autoCapitalize="none" spellCheck={false}
-                aria-invalid={Boolean(roomLinkError)} aria-describedby={roomLinkError ? "duel-link-error" : undefined}
-                value={roomLink} onChange={(event) => { setRoomLink(event.target.value); setRoomLinkError(""); }}
-                placeholder="Dán link hoặc mã phòng" />
-            </label>
-            {roomLinkError && <p id="duel-link-error" role="alert" className="text-sm text-rose-300">{roomLinkError}</p>}
-            <button className="rk-primary">Mở phòng</button>
-          </form>
-          <form className="rk-panel space-y-4 p-4 sm:p-5 md:col-start-2 md:row-span-2 md:row-start-1" aria-labelledby="duel-create" onSubmit={(event) => {
-            event.preventDefault();
-            void action({ action: "create", name, puzzle, setsToWin, pointsToWin, role, mode, inspection, isPublic });
-          }}>
-            <h2 id="duel-create" className="text-lg font-semibold">Tạo phòng</h2>
-            <fieldset>
-              <legend className="mb-2 text-sm text-slate-200">Hiển thị phòng</legend>
-              <div className="grid grid-cols-2 gap-2">
-                {([false, true] as const).map((value) => <label key={String(value)} className="relative min-w-0">
-                  <input type="radio" name="room-visibility" className="peer sr-only" checked={isPublic === value}
-                    disabled={value && (publicRooms === null || publicRooms === undefined)}
-                    onChange={() => setIsPublic(value)} />
-                  <span className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/15 px-2 text-sm peer-checked:border-cyan-300 peer-checked:bg-cyan-300/10 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-cyan-300 peer-disabled:opacity-50">
-                    {value ? <Globe2 size={15} aria-hidden="true" /> : <Lock size={15} aria-hidden="true" />}
-                    {value ? "Công khai" : "Riêng tư"}
-                  </span>
-                </label>)}
+        {!room && !lobbyFriends && <>
+          <section className="rk-duel-hero rk-panel relative isolate overflow-hidden">
+            <div className="rk-duel-hero-media" aria-hidden="true">
+              <Image src="/duel-speedcubes.webp" alt="" fill sizes="(max-width: 639px) 100vw, 59vw" priority className="object-cover object-[62%_51%]" />
+            </div>
+            <div className="relative max-w-lg px-4 py-6 sm:px-8 sm:py-10">
+              <h1 className="text-4xl font-semibold leading-tight tracking-tight text-white sm:text-5xl lg:text-6xl">Đấu Rubik <span className="text-cyan-300">1v1</span></h1>
+              <p className="mt-2 max-w-[30ch] text-sm leading-relaxed text-slate-200 sm:mt-3 sm:text-base">
+                Cùng Scramble, so thời gian qua từng lượt.
+              </p>
+              <div className="mt-5 flex flex-wrap gap-2 sm:gap-3">
+                <a className="rk-primary" href="#duel-create-name" onClick={(event) => jumpToField(event, createName.current)}>
+                  <Plus size={17} aria-hidden="true" /> Tạo phòng
+                </a>
+                <a className="rk-control" href="#duel-invite-input" onClick={(event) => jumpToField(event, joinInput.current)}>
+                  <Link2 size={16} aria-hidden="true" /> Vào bằng link
+                </a>
               </div>
-              <p className="mt-2 text-xs text-slate-300">{isPublic ? "Hiện trong sảnh khi còn ghế đấu." : "Vào bằng link hoặc mã phòng."}</p>
-            </fieldset>
-            <label className={label}>Tên hiển thị<input className={input} required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} /></label>
-            <label className={label}>Loại Rubik<select className={input} value={puzzle} onChange={(e) => setPuzzle(e.target.value)}>
-              {PUZZLES.filter((item) => isDuelPuzzle(item.id)).map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
-            </select></label>
-            <details className="group border-y border-white/10">
-              <summary className={disclosure}>
-                <span>
-                  <span className="block">Tùy chỉnh thể thức</span>
-                  <span className="mt-1 block font-normal text-slate-300">{modeLabel} · {setsToWin} set · {pointsToWin} điểm/set</span>
-                </span>
+            </div>
+          </section>
+
+
+          {(sortedRooms.length > 0 || activeError) && <section className="space-y-1 rounded-xl border border-cyan-300/25 bg-cyan-300/5 px-4 py-2.5 sm:px-5" aria-labelledby="duel-active">
+            <h2 id="duel-active" className="flex items-center gap-2 text-sm font-semibold text-cyan-200">
+              <Swords size={16} aria-hidden="true" /> Quay lại trận
+            </h2>
+            {activeError && <p role="status" className="text-sm text-slate-300">Chưa tải được phòng của bạn. Nếu có link mời, bạn vẫn có thể mở phòng.</p>}
+            <ActiveRoomList rooms={sortedRooms.slice(0, 2)} />
+            {sortedRooms.length > 2 && <details className="group border-t border-white/10">
+              <summary className={disclosure}>Xem {sortedRooms.length - 2} phòng khác
                 <ChevronDown className="size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
               </summary>
-              <div className="space-y-3 pb-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <label className={label}>Set cần thắng<select className={input} value={setsToWin} onChange={(e) => setSets(Number(e.target.value))}>
-                    {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} set</option>)}
-                  </select></label>
-                  <label className={label}>Điểm để thắng set<select className={input} value={pointsToWin} onChange={(e) => setPoints(Number(e.target.value))}>
-                    {[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n} điểm</option>)}
-                  </select></label>
+              <ActiveRoomList rooms={sortedRooms.slice(2)} />
+            </details>}
+          </section>}
+
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,23rem)]">
+            <div className="min-w-0 space-y-4">
+              <form className="rk-panel min-w-0 scroll-m-4 p-4 sm:p-5" aria-labelledby="duel-join" onSubmit={(event) => {
+                event.preventDefault();
+                const id = readDuelInvite(roomLink, window.location.origin);
+                if (!id) {
+                  setRoomLinkError("Dán link mời RukTimer hoặc mã phòng hợp lệ.");
+                  joinInput.current?.focus();
+                  return;
+                }
+                router.push(`/duel?room=${id}`);
+              }}>
+                <h2 id="duel-join" className="flex items-center gap-2 text-lg font-semibold">
+                  <Link2 size={19} aria-hidden="true" className="text-cyan-300" /> Vào phòng
+                </h2>
+                <div className="mt-3 flex flex-wrap items-end gap-2">
+                  <label className={`${label} min-w-0 grow basis-48`}>Link mời hoặc mã phòng
+                    <input ref={joinInput} id="duel-invite-input" className={`${input} max-sm:text-base`} name="room-link" autoComplete="off" autoCapitalize="none" spellCheck={false}
+                      aria-invalid={Boolean(roomLinkError)} aria-describedby={roomLinkError ? "duel-link-error" : undefined}
+                      value={roomLink} onChange={(event) => { setRoomLink(event.target.value); setRoomLinkError(""); }}
+                      placeholder="Dán link hoặc mã phòng" />
+                  </label>
+                  <button type="submit" className="rk-control justify-center max-[380px]:w-full">Mở phòng <ArrowRight size={16} aria-hidden="true" /></button>
                 </div>
-                <label className={label}>Chỗ của bạn<select className={input} value={role} onChange={(e) => setRole(e.target.value as Role)}>
-                  {roles.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}
-                </select></label>
-                <label className={label}>Thể thức<select className={input} value={mode} onChange={(e) => setMode(e.target.value as DuelMode)}>
-                  <option value="alternating">Luân phiên</option>
-                  <option value="simultaneous">Đồng thời</option>
-                </select></label>
-                <p className="text-sm text-slate-300">{mode === "simultaneous"
-                  ? "Cả hai cùng thấy Scramble. Đồng hồ mở khi cả hai đã xáo xong."
-                  : "Mỗi lượt đổi người giải trước."}</p>
-                <label className="flex min-h-11 items-center gap-2 text-sm text-slate-200">
-                  <input type="checkbox" checked={inspection} onChange={(e) => setInspection(e.target.checked)} /> WCA Inspection 15 giây
-                </label>
-              </div>
-            </details>
-            <button disabled={busy} className="rk-primary w-full disabled:opacity-50 sm:w-auto">{busy ? "Đang tạo…" : "Tạo phòng"}</button>
-          </form>
+                {roomLinkError && <p id="duel-link-error" role="alert" className="mt-2 text-sm text-rose-300">{roomLinkError}</p>}
+              </form>
 
-          <section className="rk-panel space-y-3 p-4 sm:p-5 md:col-start-1 md:row-start-2" aria-labelledby="duel-history">
-            <h2 id="duel-history" className="text-lg font-semibold">Lịch sử đấu</h2>
-            {historyError ? <p role="status" className="text-sm text-rose-300">{historyError}</p> : !history
-              ? <p role="status" className="text-sm text-slate-300">Đang tải lịch sử…</p>
-              : history.length === 0 ? <p className="text-sm text-slate-300">Chưa có trận đã hoàn thành trên trình duyệt này.</p>
-              : <>
-                <DuelHistoryList matches={history.slice(0, 3)} />
-                {history.length > 3 && <details className="group border-t border-white/10">
-                  <summary className={disclosure}>Xem {history.length - 3} trận cũ hơn
-                    <ChevronDown className="size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
-                  </summary>
-                  <DuelHistoryList matches={history.slice(3)} />
-                </details>}
-              </>}
-          </section>
-        </div>}
+              {publicRooms !== null && <section className="rk-panel overflow-hidden" aria-labelledby="duel-public" aria-busy={publicLoading}>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-4 py-2.5 sm:px-5">
+                  <h2 id="duel-public" className="flex min-w-0 items-center gap-2 text-lg font-semibold">
+                    <Globe2 size={18} aria-hidden="true" className="shrink-0 text-cyan-300" /> Phòng công khai
+                    {publicRooms && <span className="rounded-md bg-white/5 px-2 py-0.5 font-mono text-xs text-slate-300" aria-label={`${publicRooms.length} phòng`}>{publicRooms.length}</span>}
+                  </h2>
+                  <button type="button" className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm text-slate-300 hover:bg-white/5 disabled:opacity-50"
+                    disabled={publicLoading} onClick={() => refreshPublicRooms.current?.()}>
+                    <RefreshCw size={15} aria-hidden="true" /> Làm mới
+                  </button>
+                </div>
+                {publicError && <p role="status" className="p-4 text-sm text-amber-200 sm:px-5">Chưa tải được danh sách. Bấm Làm mới để thử lại.</p>}
+                {!publicError && (publicRooms === undefined ? <p role="status" className="p-4 text-sm text-slate-300 sm:px-5">Đang tải phòng…</p>
+                  : publicRooms.length === 0 ? <div className="flex gap-3 p-4 sm:px-5 sm:py-6">
+                    <Box size={22} aria-hidden="true" className="mt-0.5 shrink-0 text-slate-400" />
+                    <div className="space-y-1">
+                      <p className="font-medium">Chưa có phòng trống</p>
+                      <p className="text-sm text-slate-300">Bạn có thể tạo phòng công khai và đợi đối thủ.</p>
+                    </div>
+                  </div> : null)}
+                {publicRooms && publicRooms.length > 0 && <ul className="divide-y divide-white/10">
+                  {publicRooms.map((item) => {
+                    const free = item.players.filter((player) => !player).length;
+                    return <li key={item.id}>
+                      <Link href={`/duel?room=${item.id}`} prefetch={false}
+                        className="flex min-h-14 items-center gap-3 px-4 py-2.5 hover:bg-white/5 focus-visible:-outline-offset-2 sm:px-5">
+                        <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-white/10 bg-[var(--rk-canvas)] font-mono text-xs font-semibold text-cyan-200" aria-hidden="true">
+                          {PUZZLES.find((p) => p.id === item.settings.puzzle)?.shortLabel}
+                        </span>
+                        <span className="min-w-0 grow">
+                          <span className="block break-words font-medium">{item.host}</span>
+                          <span className="block text-xs leading-relaxed text-slate-300">
+                            <span className="sr-only">{PUZZLES.find((p) => p.id === item.settings.puzzle)?.shortLabel} · </span>{item.settings.mode === "simultaneous" ? "Đồng thời" : "Luân phiên"} · {item.settings.setsToWin} set · {item.settings.pointsToWin} điểm/set
+                          </span>
+                        </span>
+                        <span className="flex shrink-0 flex-col items-end gap-1 text-xs font-medium text-cyan-200 sm:flex-row sm:items-center sm:gap-2">
+                          Còn {free} chỗ <ArrowRight size={16} aria-hidden="true" />
+                        </span>
+                      </Link>
+                    </li>;
+                  })}
+                </ul>}
+              </section>}
+              <details className="rk-panel group px-4 py-1.5 sm:px-5" open={!!history?.length || undefined}>
+                <summary id="duel-history" className={disclosure}>
+                  <span className="flex items-center gap-2 text-base font-semibold"><History aria-hidden="true" size={18} className="text-cyan-300" /> Lịch sử đấu</span>
+                  <ChevronDown className="size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
+                </summary>
+                {historyError ? <p role="status" className="text-sm text-rose-300">{historyError}</p> : !history
+                  ? <p role="status" className="text-sm text-slate-300">Đang tải lịch sử…</p>
+                  : history.length === 0 ? <p className="text-sm text-slate-300">Trận đã hoàn thành sẽ hiện ở đây.</p>
+                  : <>
+                    <DuelHistoryList matches={history.slice(0, 3)} />
+                    {history.length > 3 && <details className="group border-t border-white/10">
+                      <summary className={disclosure}>Xem {history.length - 3} trận cũ hơn
+                        <ChevronDown className="size-4 shrink-0" aria-hidden="true" />
+                      </summary>
+                      <DuelHistoryList matches={history.slice(3)} />
+                    </details>}
+                  </>}
+              </details>
+            </div>
 
-        {!room && publicRooms !== null && <section className="rk-panel space-y-2 p-4 sm:p-5" aria-labelledby="duel-public">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="duel-public" className="text-lg font-semibold">Phòng công khai</h2>
-            <button type="button" className="rk-control" disabled={publicLoading} onClick={() => refreshPublicRooms.current?.()}>
-              <RefreshCw size={15} aria-hidden="true" /> Làm mới
-            </button>
-          </div>
-          {publicError && <p role="status" className="text-sm text-amber-200">Chưa tải được danh sách phòng. Bạn có thể thử lại.</p>}
-          {!publicError && (publicRooms === undefined ? <p role="status" className="text-sm text-slate-300">Đang tải phòng…</p>
-            : publicRooms.length === 0 ? <p className="text-sm text-slate-300">Chưa có phòng nào còn ghế trống.</p> : null)}
-          {publicRooms && publicRooms.length > 0 && <ul className="divide-y divide-white/10">
-            {publicRooms.map((item) => <li key={item.id}>
-              <Link href={`/duel?room=${item.id}`} prefetch={false}
-                className="flex min-h-11 items-center justify-between gap-3 rounded-lg py-2 hover:text-cyan-200">
-                <span className="min-w-0">
-                  <span className="block break-words font-medium">{item.host}</span>
-                  <span className="block text-sm text-slate-300">
-                    {PUZZLES.find((p) => p.id === item.settings.puzzle)?.shortLabel} · {item.settings.setsToWin} set · {item.settings.pointsToWin} điểm/set · {item.players.filter(Boolean).length}/2 ghế đấu
+            <form className="rk-panel min-w-0 scroll-m-4 space-y-4 p-4 sm:p-5" aria-labelledby="duel-create" onSubmit={(event) => {
+              event.preventDefault();
+              void action({ action: "create", name, puzzle, setsToWin, pointsToWin, role, mode, inspection, isPublic });
+            }}>
+              <h2 id="duel-create" className="flex items-center gap-2 text-lg font-semibold">
+                <Plus size={19} aria-hidden="true" className="text-cyan-300" /> Tạo phòng
+              </h2>
+              <fieldset>
+                <legend className="mb-2 text-sm text-slate-200">Hiển thị phòng</legend>
+                <div className="grid grid-cols-2 gap-2">
+                  {([false, true] as const).map((value) => <label key={String(value)} className="relative min-w-0">
+                    <input type="radio" name="room-visibility" className="peer sr-only" checked={isPublic === value}
+                      disabled={value && (publicRooms === null || publicRooms === undefined)}
+                      onChange={() => setIsPublic(value)} />
+                    <span className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/15 px-2 text-sm peer-checked:border-cyan-300 peer-checked:bg-cyan-300/10 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-cyan-300 peer-disabled:opacity-50">
+                      {value ? <Globe2 size={15} aria-hidden="true" /> : <Lock size={15} aria-hidden="true" />}
+                      {value ? "Công khai" : "Riêng tư"}
+                    </span>
+                  </label>)}
+                </div>
+                <p className="mt-2 text-xs text-slate-300">{isPublic ? "Hiện trong sảnh khi còn ghế đấu." : "Vào bằng link hoặc mã phòng."}</p>
+              </fieldset>
+              <label className={label}>Tên hiển thị<input id="duel-create-name" ref={createName} className={`${input} max-sm:text-base`} autoComplete="nickname" required maxLength={32} value={name} onChange={(e) => setName(e.target.value)} /></label>
+              <label className={label}>Loại Rubik<select className={input} value={puzzle} onChange={(e) => setPuzzle(e.target.value)}>
+                {PUZZLES.filter((item) => isDuelPuzzle(item.id)).map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
+              </select></label>
+              <details className="group border-y border-white/10">
+                <summary className={disclosure}>
+                  <span>
+                    <span className="flex items-center gap-2"><SlidersHorizontal aria-hidden="true" size={15} /> Tùy chỉnh thể thức</span>
+                    <span className="mt-1 block font-normal text-slate-300">{modeLabel} · {setsToWin} set · {pointsToWin} điểm/set</span>
                   </span>
-                </span>
-                <ArrowRight size={16} className="shrink-0" aria-hidden="true" />
-              </Link>
-            </li>)}
-          </ul>}
-        </section>}
+                  <ChevronDown className="size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
+                </summary>
+                <div className="space-y-3 pb-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className={label}>Set cần thắng<select className={input} value={setsToWin} onChange={(e) => setSets(Number(e.target.value))}>
+                      {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} set</option>)}
+                    </select></label>
+                    <label className={label}>Điểm để thắng set<select className={input} value={pointsToWin} onChange={(e) => setPoints(Number(e.target.value))}>
+                      {[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n} điểm</option>)}
+                    </select></label>
+                  </div>
+                  <label className={label}>Chỗ của bạn<select className={input} value={role} onChange={(e) => setRole(e.target.value as Role)}>
+                    {roles.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}
+                  </select></label>
+                  <label className={label}>Thể thức<select className={input} value={mode} onChange={(e) => setMode(e.target.value as DuelMode)}>
+                    <option value="alternating">Luân phiên</option>
+                    <option value="simultaneous">Đồng thời</option>
+                  </select></label>
+                  <p className="text-sm text-slate-300">{mode === "simultaneous"
+                    ? "Cả hai cùng thấy Scramble. Đồng hồ mở khi cả hai đã xáo xong."
+                    : "Mỗi lượt đổi người giải trước."}</p>
+                  <label className="flex min-h-11 items-center gap-2 text-sm text-slate-200">
+                    <input type="checkbox" checked={inspection} onChange={(e) => setInspection(e.target.checked)} /> WCA Inspection 15 giây
+                  </label>
+                </div>
+              </details>
+              <button disabled={busy} className="rk-primary w-full justify-center disabled:opacity-50">
+                {busy ? "Đang tạo phòng…" : "Tạo phòng"} <ArrowRight size={16} aria-hidden="true" />
+              </button>
+            </form>
+          </div>
+
+        </>}
+
+        {!room && <footer className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-white/10 pt-1 text-sm text-slate-300">
+            <span className="font-semibold text-slate-200">RukTimer</span>
+            <nav aria-label="Tài nguyên RukTimer" className="flex flex-wrap gap-x-3">
+              <a href="https://github.com/Lunatik137/ruk-timer#readme" target="_blank" rel="noreferrer"
+                className="inline-flex min-h-11 items-center gap-1 rounded-lg hover:text-white">Tài liệu <ArrowUpRight size={14} aria-hidden="true" /></a>
+              <a href="https://github.com/Lunatik137/ruk-timer/issues" target="_blank" rel="noreferrer"
+                className="inline-flex min-h-11 items-center gap-1 rounded-lg hover:text-white">Báo lỗi và góp ý <ArrowUpRight size={14} aria-hidden="true" /></a>
+            </nav>
+          </footer>}
 
         {room && !view && !connection && <p role="status">Đang tải phòng…</p>}
 

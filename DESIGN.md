@@ -73,7 +73,8 @@ Use the Tailwind 8–16px corner scale for controls and panels. Primary touch co
 - **Quyền vào phòng 1v1** — Give the referee a separate seat. Show pending or denied status on the invitation page. Keep the host and referee’s admission controls below the live match controls.
 - **Quay lại trận 1v1** — Place active rooms above the lobby forms. Use the same room link to restore the server snapshot. Show reconnecting status and retry beside the match without replacing the timer. In the waiting room, tell guests what happens after admission.
 - **Đóng phòng 1v1** — Keep the close action below the match controls. Explain that closing ends the room for everyone and leaves unfinished games unscored. Allow a short reconnection window before an empty room expires.
-- **Sảnh 1v1** — Put link entry before room creation on all widths. Keep name and puzzle visible for quick creation, with the current format summarized on the settings disclosure. List live matches before waiting rooms and keep older matches behind a disclosure. State whether the room still needs players beside the roster.
+- **Sảnh 1v1** — Lead with an original speedcube image and a clear path to creating a room or opening an invite. Link entry, open public rooms and match history share the main column. The room form sits alongside on wide screens. Show the puzzle, format and open seats on public room rows. Show resumable matches above both columns.
+- **Bạn bè** — Give friends their own lobby destination. Pair search with invitations and the friends list on wider screens. Open direct messages on demand. Keep profile visibility and the invite action beside the people they affect.
 
 ## Do's and Don'ts
 
@@ -100,3 +101,6 @@ Use the product's Vietnamese terminology and Lucide icons for controls with a cl
 Dùng [Google Meet](https://support.google.com/meet/answer/10550593?hl=en) và [Zoom](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0063672) làm mẫu bố trí video lớn và ô xem trước. Giữ hai luồng xác thực đang có: cookie phòng cho chat trong phòng, tài khoản Supabase cho bạn bè và tin nhắn riêng. Chỉ cập nhật chat khi khu vực đó đang mở và tab đang hiển thị.
 
 Trong RukTimer, tìm bạn theo đầu tên hiển thị, có hoặc không dấu tiếng Việt. Dùng nhãn ngắn để phân biệt người trùng tên. Hồ sơ cũ giữ quyền riêng tư cho đến khi người chơi bật cho phép tìm theo tên.
+
+
+For the lobby redesign, use [Scrolltide](https://www.scrolltide.co/) as a reference for image-only scroll motion, [Supaste in Navbar Gallery](https://www.navbar.gallery/navbar/supaste) for a simple navigation row, [ESR in Footer Design](https://www.footer.design/sites/esr) for compact utility links, [Neon in CTA Gallery](https://www.cta.gallery/cta/neon) for primary and secondary actions, and [Linear in Refero Styles](https://styles.refero.design/style/90ce5883-bb24-4466-93f7-801cd617b0d1) for quiet dividers and row hierarchy.

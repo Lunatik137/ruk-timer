@@ -200,3 +200,60 @@ body {
     display: none;
   }
 }
+
+.rk-duel-hero-media {
+  position: absolute;
+  inset: 0 0 0 37%;
+  pointer-events: none;
+  mask-image: linear-gradient(to right, transparent, black 35%);
+}
+
+@media (width < 640px) {
+  .rk-duel-hero {
+    display: flex;
+    flex-direction: column-reverse;
+  }
+
+  .rk-duel-hero-media {
+    position: relative;
+    inset: auto;
+    height: clamp(6.25rem, 27vw, 9rem);
+    mask-image: linear-gradient(to bottom, black 56%, transparent);
+  }
+
+  .rk-duel-hero-media + div {
+    padding-block-start: 0.875rem;
+  }
+}
+
+.rk-duel-social {
+  container-type: inline-size;
+}
+
+@container (min-width: 45rem) {
+  .rk-duel-social-workspace {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    column-gap: 1.5rem;
+  }
+
+  .rk-duel-social-workspace > :last-child {
+    border-inline-start: 1px solid var(--rk-border);
+    padding-inline-start: 1.5rem;
+  }
+}
+
+@keyframes rk-duel-photo-exit {
+  to {
+    transform: scale(1.07);
+  }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .rk-duel-hero-media img {
+      animation: rk-duel-photo-exit 1ms linear both;
+      animation-timeline: view();
+      animation-range: exit 0% exit 100%;
+    }
+  }
+}
