@@ -65,6 +65,7 @@ Use the Tailwind 8–16px corner scale for controls and panels. Primary touch co
 - **Video intake** — Use a filled file action and an outlined camera action. Stack them at narrow widths. Explain that selecting a clip starts analysis automatically. Keep the clip and timeline available after opening a file.
 - **Weekly report** — Place the date range above a single grid of metrics, with comparisons below each value. Show an explicit empty state. Put calculation details behind a disclosure. The activity calendar groups days by week, with one cyan scale and a white outline for today. Its section marker fills on entry and stays static with reduced motion or without browser support. List achievements as rows with progress beside each name.
 - **Footer** — Group documentation and feedback as two equal-width links on mobile. Reserve room below the links for the navigation bar and device safe area. Keep the footer out of the focus order during a solve.
+- **Đấu 1v1** — Show the two player seats side by side, with spectator seats and the invite below. Once play starts, prioritise score and turn, then the current player's Scramble and timer. Only show completed round results to the room.
 
 ## Do's and Don'ts
 

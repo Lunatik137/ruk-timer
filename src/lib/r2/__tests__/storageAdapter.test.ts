@@ -51,6 +51,7 @@ describe("Cloudflare R2 private storage isolation & validation", () => {
   it("supports mock object lifecycle (PUT -> HEAD -> GET -> DELETE)", async () => {
     process.env.R2_MOCK = "1";
     const adapter = getObjectStorageAdapter();
+    if (!adapter) throw new Error("Mock storage adapter was not created");
     expect(adapter.mode).toBe("mock");
 
     const key = buildUserObjectKey("user-test-1", "f-lifecycle", "backup.json");

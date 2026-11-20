@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   ArrowUpRight,
   BarChart2,
@@ -10,6 +11,7 @@ import {
   GraduationCap,
   ListOrdered,
   Shuffle,
+  Swords,
   X,
 } from "lucide-react";
 import AiCoachAndCommunityView, {
@@ -1501,6 +1503,14 @@ export default function RukTimerApp() {
                 }
               }}
             />
+
+            {(timerPhase === "idle" || timerPhase === "just_stopped") && (
+              <div className="flex justify-center">
+                <Link href="/duel" prefetch={false} className="rk-control text-xs">
+                  <Swords aria-hidden="true" className="size-4 text-cyan-300" /> Đấu 1v1
+                </Link>
+              </div>
+            )}
 
             {settings.showCubePreview && (
               <>

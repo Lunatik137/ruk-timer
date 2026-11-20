@@ -55,6 +55,15 @@ npm run dev
 ```
 Mở `http://localhost:3000` để trải nghiệm.
 
+### Phòng Đấu 1v1 (web/PWA)
+
+Chạy migration [`20261120_duel_rooms.sql`](./supabase/migrations/20261120_duel_rooms.sql)
+trên cùng dự án Supabase và cấu hình `SUPABASE_SERVICE_ROLE_KEY` ở máy chủ Next.js
+(ví dụ trong môi trường Production của Vercel). Trình duyệt không cần khóa này.
+Nút **Đấu 1v1** nằm dưới timer. Phòng có hai người chơi và tối đa hai người xem,
+dùng link mời và tự hết hạn sau 24 giờ. Hai trình duyệt hoặc hai hồ sơ độc lập
+có thể tham gia với các vai trò khác nhau.
+
 ---
 
 ## Phiên bản Điện thoại (Mobile App — iOS & Android)
